@@ -1,6 +1,6 @@
-# OpenAI credential proxy
+# Host-side API credential proxy
 
-The proxy is implemented and enabled in API-key mode for **new projects**. Existing projects keep their previous credential mode until explicitly edited. Both OpenAI API keys (`openai`) and ChatGPT/Codex subscription OAuth (`openai-codex`) are supported. This is not a general-purpose HTTP proxy.
+The proxy is implemented and enabled in API-key mode for **new projects**. Existing projects keep their previous credential mode until explicitly edited. OpenAI API keys (`openai`), Berget (`berget`), host-managed OpenAI-compatible custom endpoints (`custom`), and ChatGPT/Codex subscription OAuth (`openai-codex`) are supported. This is not a general-purpose HTTP proxy.
 
 This page primarily describes API-key setup and shared policies. For host Codex sign-in/import/refresh and synthetic JWTs, see [Codex subscription setup](codex.md).
 
@@ -35,9 +35,29 @@ pis -- --model openai/<model-id>
 
 Replace `<model-id>` with an OpenAI model supported by Pi. The same proxy is available in `pis --bash` and `pis --exec`.
 
-`keyEnv` may name another host variable. Its value is never passed into the container. A missing key stops launch: there is **no fallback** to direct credential forwarding. `pis --build`, `--check`, and `--show` do not require a key.
+`keyEnv` may name another host variable. Its value is never passed into the container. A missing key stops launch: there is **no fallback** to direct credential forwarding. `pis --build`, `--check`, and `--show` do not require a key. OpenAI and Berget can instead reference a private host profile; a profile always takes precedence and never falls back to an environment key.
 
 `credentials.env` must be empty when proxy mode is enabled, preventing accidentally forwarding the real key alongside the dummy credential. To deliberately use direct credentials instead, remove `proxy` and configure `env`; those credentials will then be visible inside the sandbox.
+
+## Host API-key profiles
+
+Manage host-only API-key profiles explicitly:
+
+```sh
+pis --login openai       # fixed OpenAI URL, hidden key prompt
+pis --login berget       # Berget URL, hidden key prompt
+pis --login custom       # trusted custom endpoint and model setup, then hidden key
+pis --login-status       # provider/profile presence only, no values
+pis --logout berget      # removes local copy; does not revoke the provider key
+```
+
+Profiles live in `$PIS_HOME/auth/` (default `~/.local/share/pis/auth/`), are written atomically with mode 0600 inside a 0700 directory, and are never mounted into the container or included in image builds. Login does not make a paid API request. Cancellation or invalid input does not save a partial profile. `pis --show` and `--login-status` report profile/provider and credential presence only, never key values.
+
+To select a stored Berget profile in a project, set `credentials.env` to `[]` and use `{ "provider": "berget", "profile": "berget" }`. To select the environment-key route instead, use `{ "provider": "berget", "keyEnv": "BERGET_API_KEY" }`. These are mutually exclusive; a missing selected credential fails closed.
+
+`pis --login custom` asks for an HTTPS API base URL ending in `/v1`, confirmation of tool-call support, verified model IDs, published context/output limits, image-input and reasoning capabilities, and a hidden API key. Only OpenAI Chat Completions is supported; no discovery, model-list, or live validation request is made. The custom model catalog belongs to the host profile, not `credentials.proxy.models`. Project config contains only `provider: "custom"` and `profile: "custom"`, never the endpoint or key.
+
+Custom destinations must use HTTPS on port 443, with no URL credentials, query, or fragment, and a safe path prefix ending in `/v1`. IP literals, local hostnames, and DNS results in private/special-use ranges are rejected. DNS answers are resolved and pinned when the host proxy starts; requests use only `/v1/chat/completions` with the configured base path prefix and never follow redirects. Loopback HTTP remains available only to the internal fake-service test seam. This does not constrain container egress generally.
 
 ## Architecture
 
@@ -52,13 +72,13 @@ Container
 
 Request → validate capability, route, model, and limits
         → replace Authorization with the real host key
-        → fixed HTTPS provider upstream (api.openai.com or chatgpt.com)
+        → fixed provider upstream or explicit host-profile HTTPS endpoint
 Response → stream back without exposing authentication headers
 ```
 
 There is **no host TCP listener**, published port, host network mode, or requirement to make host localhost reachable through Podman networking. Each launch gets an independent capability, socket, and request budget. The capability is invalid after shutdown.
 
-Only the Unix socket, dummy credentials, and container relay/configuration files are mounted at `/pis/proxy`. The host proxy implementation and real key are not mounted. The source key variable (and host `OPENAI_API_KEY`) is also removed from Podman build/run subprocess environments; the runtime gets only the explicit dummy value. The runtime directory is private (0700), its files/socket are 0600, and normal shutdown removes it. Forced process death can leave inert runtime files. They do not contain the host proxy credential, but preserved entries for other sandbox providers may contain previously stored secrets, so treat leftover runtime directories as sensitive.
+Only the Unix socket, dummy credentials, and container relay/configuration files are mounted at `/pis/proxy`. The host proxy implementation and real key are not mounted. The selected source key variable, host `OPENAI_API_KEY`, and host `BERGET_API_KEY` are removed from Podman build/run subprocess environments; the runtime gets only dummy values. The runtime directory is private (0700), its files/socket are 0600, and normal shutdown removes it. Forced process death can leave inert runtime files. They do not contain the host proxy credential, but preserved entries for other sandbox providers may contain previously stored secrets, so treat leftover runtime directories as sensitive.
 
 The container entry process starts the relay, launches Pi/Bash/the selected program, forwards signals, and stops the relay when that program exits. The host wrapper stops the proxy after container cleanup.
 
@@ -69,7 +89,7 @@ Pi's built-in OpenAI provider is redirected using per-run **read-only file overl
 - `/pis/home/.pi/agent/models.json`
 - `/pis/home/.pi/agent/auth.json`
 
-The selected `openai` or `openai-codex` provider/auth entries are replaced with the appropriate loopback endpoint and dummy capability. Other provider entries are retained. Original files remain unchanged (empty JSON files are initialized when absent).
+The selected `openai`, `berget`, `custom`, or `openai-codex` provider/auth entries are replaced with the appropriate loopback endpoint and dummy capability. Other provider entries are retained. Original files remain unchanged (empty JSON files are initialized when absent).
 
 Consequences:
 
@@ -90,16 +110,18 @@ Allowed upstream requests:
 | `openai` | POST | `/v1/responses` |
 | `openai` | POST | `/v1/chat/completions` |
 | `openai` | GET | `/v1/models` |
+| `berget` | POST | `/v1/chat/completions` |
+| `custom` | POST | `/v1/chat/completions` |
 | `openai-codex` | POST | `/backend-api/codex/responses` |
 | `openai-codex` | GET | `/backend-api/wham/usage` |
 
-Modes are separate: a Codex capability cannot call the standard API routes, or vice versa. Codex routes are fixed to `https://chatgpt.com`; API routes are fixed to `https://api.openai.com`.
+Modes are separate: a Codex capability cannot call the standard API routes, or vice versa. Codex routes are fixed to `https://chatgpt.com`; OpenAI routes are fixed to `https://api.openai.com`; Berget routes are fixed to `https://api.berget.ai`. A custom destination is available only through the explicit, private host profile described above.
 
-All other paths, query strings, absolute URLs, HTTP CONNECT, and WebSocket upgrades are rejected. File management, response retrieval/deletion, images, audio, and Decisions/classifier endpoints are not supported yet. Requests cannot select another upstream; the CLI and project JSON provide no upstream override.
+All other paths, query strings, absolute URLs, HTTP CONNECT, and WebSocket upgrades are rejected. File management, response retrieval/deletion, images, audio, and Decisions/classifier endpoints are not supported yet. Sandbox requests and project JSON cannot select another upstream; only an explicitly managed host profile can configure a custom destination.
 
 The Codex usage endpoint returns only validated numeric quota/reset windows; identity, email, plan metadata, arbitrary fields, and tokens are discarded. It supports the image usage-bar extension through a narrow container-only fetch adapter. Usage polls use the same capability, host refresh, limits, and request budget; no extra real credential is supplied to extensions.
 
-`models` is an exact allowlist for POST request model IDs; an empty array allows any model. `/v1/models` is not filtered, so selecting a model outside the allowlist results in a rejection when generating a response.
+`credentials.proxy.models` is an exact allowlist for POST request model IDs; an empty array allows any model. `/v1/models` is available only in OpenAI mode and is not filtered, so selecting a model outside the allowlist results in a rejection when generating a response. Berget and custom modes use a host-side Pi model catalog; those definitions are separate from the request allowlist.
 
 - `maxRequests`: total upstream attempts per launch, default 1000, configurable 1–100000. Model-list requests, failed upstream attempts, and SDK retries count too.
 - `maxConcurrent`: simultaneous accepted requests/uploads, default 4, configurable 1–64.
@@ -107,7 +129,7 @@ The Codex usage endpoint returns only validated numeric quota/reset windows; ide
 - Response limit: 64 MiB.
 - Per-request total timeout: five minutes, including streaming; request/header upload timeouts are also bounded.
 
-The proxy rebuilds upstream headers rather than forwarding cookies, client-supplied organization/project/account headers, Host, proxy authorization, or forwarding headers. Codex account identity is derived from the current real host token, never a client header. Redirects are never followed. Upstream non-success bodies and headers are not exposed; errors report a generic status instead. Successful SSE/JSON responses stream with backpressure, with exact occurrences of the real key redacted even across chunk boundaries.
+The proxy rebuilds upstream headers rather than forwarding cookies, client-supplied organization/project/account headers, Host, proxy authorization, or forwarding headers. Berget and custom credentials are treated as opaque printable API keys; the proxy does not assume OpenAI's `sk-` prefix. Codex account identity is derived from the current real host token, never a client header. Redirects are never followed. Upstream non-success bodies and headers are not exposed; errors report a generic status instead. Successful SSE/JSON responses stream with backpressure, with exact occurrences of the real key redacted even across chunk boundaries.
 
 The proxy logs no request bodies, headers, credentials, or upstream URLs. It deliberately provides less detailed error information than a direct upstream connection.
 

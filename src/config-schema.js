@@ -2,7 +2,7 @@
 import { DEFAULT_EXTENSIONS } from './extensions.js';
 export const SCHEMA_REFERENCE = './project.schema.json';
 export const HINTS = {
-  credentials: 'Choose one mode: proxy.provider=openai with keyEnv, proxy.provider=openai-codex without keyEnv, or remove proxy for direct env forwarding. Examples below are inert.',
+  credentials: 'Choose one mode: OpenAI/Berget with keyEnv or a matching host profile (not both), custom with the custom host profile, openai-codex with host OAuth, or no proxy for direct env forwarding. Examples below are inert.',
   extensions: 'Pi install sources baked into the image, e.g. npm:pi-web-access@0.40.0. Use [] to disable defaults. Changes rebuild the image; no source paths or -e flags are needed.',
   image: 'packages are apt names; extraInstructions are trusted single-line RUN instructions. Never put credentials here.',
   mounts: 'Explicit extra directories at identical absolute paths. Access defaults to read-only. The project root is already shared read-write.',
@@ -36,13 +36,14 @@ export const PROJECT_SCHEMA = {
         proxy: {
           type: 'object', additionalProperties: false, required: ['provider'],
           properties: {
-            provider: { enum: ['openai', 'openai-codex'], description: 'API-key or host OAuth proxy.' },
-            keyEnv: { type: 'string', default: 'OPENAI_API_KEY', description: 'OpenAI API mode only; remove for Codex.' },
+            provider: { enum: ['openai', 'berget', 'custom', 'openai-codex'], description: 'API-key or host OAuth proxy.' },
+            keyEnv: { type: 'string', description: 'Host environment variable. Default: OPENAI_API_KEY or BERGET_API_KEY. Remove for a profile or Codex.' },
+            profile: { enum: ['openai', 'berget', 'custom'], description: 'Host-managed profile matching provider, instead of keyEnv.' },
             models: { type: 'array', items: { type: 'string' }, default: [], description: 'Exact model allowlist; empty allows any model.' },
             maxRequests: { type: 'integer', minimum: 1, maximum: 100000, default: 1000 },
             maxConcurrent: { type: 'integer', minimum: 1, maximum: 64, default: 4 },
           },
-          allOf: [{ if: { properties: { provider: { const: 'openai-codex' } } }, then: { not: { required: ['keyEnv'] } } }],
+          allOf: [{ if: { properties: { provider: { const: 'openai-codex' } } }, then: { not: { anyOf: [{ required: ['keyEnv'] }, { required: ['profile'] }] } } }, { if: { properties: { provider: { const: 'custom' } } }, then: { properties: { profile: { const: 'custom' } }, required: ['profile'], not: { required: ['keyEnv'] } } }, { not: { required: ['keyEnv', 'profile'] } }],
         },
       },
     },

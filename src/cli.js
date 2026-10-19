@@ -4,6 +4,7 @@ import { randomBytes } from 'node:crypto';
 import { createInterface } from 'node:readline/promises';
 import { Store } from './store.js';
 import { hasCodexCredential, importCodexCredential, loginCodex, logoutCodex } from './codex-auth.js';
+import { apiProfileStatus, promptApiProfile, logoutApiProfile, readApiProfile } from './api-auth.js';
 import { validate } from './config.js';
 import { CONTAINER_HOME, BASE_IMAGE, PI_VERSION, imagePlan, inspectPodman, launch, piCommand } from './container.js';
 import { assert, directory, readJson, run, splitCommand, within, writeJson } from './util.js';
@@ -23,6 +24,9 @@ Usage:
   pis --login-codex
   pis --import-codex FILE
   pis --logout-codex
+  pis --login openai|berget|custom
+  pis --logout openai|berget|custom
+  pis --login-status
 
 By default runs pi --continue; --fresh starts without continuation.
 Pi arguments belong after --. Explicit Pi session selectors override continuation.
@@ -35,6 +39,10 @@ Storage: $PIS_HOME, otherwise $XDG_DATA_HOME/pis or ~/.local/share/pis.
 New projects use the host OpenAI key proxy. Existing direct-mode projects are unchanged.
 Codex subscription proxy: set provider to openai-codex (without keyEnv), then
 --login-codex on the host, or --import-codex ~/.pi/agent/auth.json / ~/.codex/auth.json.
+Berget: set credentials.proxy.provider=berget, and use BERGET_API_KEY on the host,
+or run --login berget and set credentials.proxy.profile=berget (remove keyEnv).
+Custom endpoints: run --login custom, then set provider=custom and profile=custom.
+Only an explicit trusted host profile can select a custom destination.
 Never run as root. Mounted files and explicitly forwarded keys are accessible to the sandbox.
 `;
 
@@ -48,10 +56,10 @@ export function parse(argv) {
     const token = wrapper[i];
     const equals = token.indexOf('=');
     const key = equals === -1 ? token : token.slice(0, equals);
-    if (['--project', '--name', '--relocate', '--import-codex'].includes(key)) {
+    if (['--project', '--name', '--relocate', '--import-codex', '--login', '--logout'].includes(key)) {
       const value = equals === -1 ? wrapper[++i] : token.slice(equals + 1);
       assert(value && !value.startsWith('-'), `${key} requires a value.`);
-      if (key === '--relocate' || key === '--import-codex') {
+      if (['--relocate', '--import-codex', '--login', '--logout'].includes(key)) {
         assert(!action, 'Choose only one management action.');
         action = key.slice(2); options.target = value;
       } else {
@@ -63,7 +71,7 @@ export function parse(argv) {
       assert(!options.fresh, 'Repeated option: --fresh'); options.fresh = true;
     } else if (['--bash', '--exec'].includes(key) && equals === -1) {
       assert(!mode, 'Choose either --bash or --exec.'); mode = key.slice(2);
-    } else if (['--new', '--list', '--edit', '--check', '--show', '--build', '--rebuild', '--extensions-list', '--doctor', '--login-codex', '--logout-codex', '--help', '-h', '--version'].includes(key) && equals === -1) {
+    } else if (['--new', '--list', '--edit', '--check', '--show', '--build', '--rebuild', '--extensions-list', '--doctor', '--login-codex', '--logout-codex', '--login-status', '--help', '-h', '--version'].includes(key) && equals === -1) {
       assert(!action, 'Choose only one management action.'); action = key === '-h' ? 'help' : key.slice(2);
     } else throw new Error(`Unknown pis option: ${token}. Pass Pi arguments after --; see pis --help.`);
   }
@@ -74,7 +82,7 @@ export function parse(argv) {
   assert(!options.fresh || (!action && !mode), '--fresh is only valid when running Pi.');
   assert(!args.length || (!action && mode !== 'bash'), 'Trailing arguments are only valid for Pi or --exec.');
   assert(mode !== 'exec' || args.length > 0, '--exec requires a command after --.');
-  assert(!options.project || !['new', 'list', 'relocate', 'doctor', 'login-codex', 'logout-codex', 'import-codex', 'help', 'version'].includes(action), '--project is not valid with this action.');
+  assert(!options.project || !['new', 'list', 'relocate', 'doctor', 'login-codex', 'logout-codex', 'import-codex', 'login', 'logout', 'login-status', 'help', 'version'].includes(action), '--project is not valid with this action.');
   return options;
 }
 
@@ -119,6 +127,21 @@ export async function main(argv = process.argv.slice(2)) {
   assert(process.getuid() !== 0, 'Run pis as your normal user, not root or sudo.');
   const store = new Store();
   const cwd = directory(process.cwd());
+  if (options.action === 'login') {
+    await promptApiProfile(store, options.target);
+    console.log(`Saved host ${options.target} API-key profile. Set credentials.proxy.profile to ${options.target} and remove keyEnv in pis --edit.`);
+    return 0;
+  }
+  if (options.action === 'logout') {
+    await logoutApiProfile(store, options.target);
+    console.log(`Removed host ${options.target} API-key profile (the key is not revoked at the provider).`);
+    return 0;
+  }
+  if (options.action === 'login-status') {
+    const codexPresent = hasCodexCredential(store);
+    console.log(JSON.stringify([...apiProfileStatus(store), { provider: 'openai-codex', profilePresent: codexPresent, credentialPresent: codexPresent }], null, 2));
+    return 0;
+  }
   if (options.action === 'login-codex') {
     const controller = new AbortController();
     const cancel = () => controller.abort();
@@ -170,12 +193,12 @@ export async function main(argv = process.argv.slice(2)) {
   if (options.action === 'show') {
     const plan = imagePlan(config);
     const workdir = within(config.root, cwd) ? cwd : config.root;
-    const proxyKeyEnv = config.credentials.proxy?.keyEnv || 'OPENAI_API_KEY';
+    const proxyKeyEnv = config.credentials.proxy?.keyEnv || (config.credentials.proxy?.provider === 'berget' ? 'BERGET_API_KEY' : 'OPENAI_API_KEY');
     const isCodex = config.credentials.proxy?.provider === 'openai-codex';
     const credentialVariables = config.credentials.proxy
-      ? (isCodex ? [] : [{ name: proxyKeyEnv, present: Boolean(process.env[proxyKeyEnv]), handling: 'host-proxy' }])
+      ? (isCodex || config.credentials.proxy.profile ? [] : [{ name: proxyKeyEnv, present: Boolean(process.env[proxyKeyEnv]), handling: 'host-proxy' }])
       : config.credentials.env.map(name => ({ name, present: Boolean(process.env[name]), handling: 'forwarded' }));
-    const credentialSource = isCodex ? { kind: 'host-oauth', provider: 'openai-codex', present: hasCodexCredential(store) } : undefined;
+    const credentialSource = isCodex ? { kind: 'host-oauth', provider: 'openai-codex', present: hasCodexCredential(store) } : config.credentials.proxy?.profile ? { kind: 'host-api-key', provider: config.credentials.proxy.profile, present: Boolean(readApiProfile(store, config.credentials.proxy.profile)) } : undefined;
     console.log(JSON.stringify({ config, configurationFile: store.configPath(config.id), image: plan.image, workingDirectory: workdir, containerHome: CONTAINER_HOME, piCommand: piCommand(), mounts: [{ source: config.root, target: config.root, access: 'read-write' }, ...config.mounts.map(m => ({ source: m.source, target: m.source, access: m.access || 'read-only' }))], credentialVariables, credentialSource }, null, 2));
     return 0;
   }

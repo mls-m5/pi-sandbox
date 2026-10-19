@@ -3,6 +3,7 @@ import path from 'node:path';
 import { assert, privateDir, writeJson } from './util.js';
 import { DEFAULT_PROXY, startOpenAIProxy } from './proxy.js';
 import { getCodexCredential, readCodexCredential } from './codex-auth.js';
+import { publicHostLookup, readApiProfile } from './api-auth.js';
 
 export const PROXY_BASE_URL = 'http://127.0.0.1:43127/v1';
 export const CODEX_PROXY_BASE_URL = 'http://127.0.0.1:43127/backend-api';
@@ -37,8 +38,9 @@ export async function prepareProxy(store, config, { upstream, codexAuthFetch } =
   const settings = { ...DEFAULT_PROXY, ...config.credentials.proxy };
   const isCodex = settings.provider === 'openai-codex';
   const credential = isCodex ? readCodexCredential(store) : undefined;
-  const apiKey = isCodex ? credential.access : process.env[settings.keyEnv];
-  assert(apiKey, `Set ${settings.keyEnv} on the host before starting this proxy-enabled project.`);
+  const apiProfile = settings.profile ? readApiProfile(store, settings.profile) : undefined;
+  const apiKey = isCodex ? credential.access : settings.profile ? apiProfile?.key : process.env[settings.keyEnv || (settings.provider === 'berget' ? 'BERGET_API_KEY' : 'OPENAI_API_KEY')];
+  assert(apiKey, settings.profile ? `Host profile ${settings.profile} is missing. Run pis --login ${settings.profile}.` : `Set ${settings.keyEnv || (settings.provider === 'berget' ? 'BERGET_API_KEY' : 'OPENAI_API_KEY')} on the host before starting this proxy-enabled project.`);
   const baseUrl = isCodex ? CODEX_PROXY_BASE_URL : PROXY_BASE_URL;
   const getCredentials = isCodex ? async signal => ({ apiKey: (await getCodexCredential(store, { signal, fetchImpl: codexAuthFetch })).access }) : undefined;
   // Fixed short parent avoids AF_UNIX path-length limits even for deeply nested project storage.
@@ -46,7 +48,9 @@ export async function prepareProxy(store, config, { upstream, codexAuthFetch } =
   privateDir(runtimeDir);
   let proxy;
   try {
-    proxy = await startOpenAIProxy({ ...settings, socketPath: path.join(runtimeDir, 'api.sock'), apiKey, getCredentials, ...(upstream ? { upstream } : {}) });
+    const lookup = settings.provider === 'custom' && !upstream ? await publicHostLookup(new URL(apiProfile.url).hostname) : undefined;
+    proxy = await startOpenAIProxy({ ...settings, socketPath: path.join(runtimeDir, 'api.sock'), apiKey, getCredentials,
+      ...(apiProfile ? { upstreamBaseUrl: apiProfile.url } : {}), ...(lookup ? { lookup } : {}), ...(upstream ? { upstream } : {}) });
     const state = path.join(store.projectDir(config.id), 'state');
     privateDir(state);
     const agent = stateDirectory(stateDirectory(state, '.pi'), 'agent');
@@ -57,7 +61,10 @@ export async function prepareProxy(store, config, { upstream, codexAuthFetch } =
     // the selected provider/auth entry so old endpoints/headers cannot win.
     // A full Codex Responses URL also works with pi-web-access's provider-URL reuse.
     const modelBaseUrl = isCodex ? `${baseUrl}/codex/responses` : baseUrl;
-    const modelSnapshot = { ...models, providers: { ...models.providers, [settings.provider]: { baseUrl: modelBaseUrl, apiKey: proxy.token } } };
+    const providerModels = settings.provider === 'berget' ? { api: 'openai-completions', models: [
+      { id: 'google/gemma-4-31B-it', name: 'Gemma 4 31B (Berget)', reasoning: false, input: ['text', 'image'], contextWindow: 262144, maxTokens: 8192 },
+    ] } : settings.provider === 'custom' ? { api: apiProfile.api, models: apiProfile.models } : {};
+    const modelSnapshot = { ...models, providers: { ...models.providers, [settings.provider]: { baseUrl: modelBaseUrl, apiKey: proxy.token, ...providerModels } } };
     // Usage extensions read access/accountId directly; keep the api_key type so
     // Pi never tries to refresh this synthetic credential inside the container.
     const authSnapshot = { ...auth, [settings.provider]: { type: 'api_key', key: proxy.token, ...(isCodex ? { access: proxy.token, accountId: 'pis-proxy-account' } : {}) } };

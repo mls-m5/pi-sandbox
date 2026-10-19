@@ -35,6 +35,9 @@ test('CLI parsing forwards arguments and rejects ambiguous combinations', () => 
   assert.deepEqual(parse(['--fresh', '--', '-p', 'hello']), { action: 'run', mode: 'pi', fresh: true, args: ['-p', 'hello'] });
   assert.equal(parse(['--project=abc12', '--bash']).project, 'abc12');
   assert.equal(parse(['--exec', '--', 'printf', '%s', 'hello']).mode, 'exec');
+  assert.deepEqual(parse(['--login', 'custom']), { action: 'login', mode: 'pi', fresh: false, args: [], target: 'custom' });
+  assert.equal(parse(['--logout', 'berget']).action, 'logout');
+  assert.equal(parse(['--login-status']).action, 'login-status');
   for (const args of [['--wat'], ['--name', 'app'], ['--exec'], ['--bash', '--fresh'], ['--bash', '--', 'args'], ['--new', '--list'], ['--new', '--project', 'x'], ['--project'], ['--fresh', '--build'], ['--bash', '--exec'], ['--edit', '--', '-p']]) {
     assert.throws(() => parse(args), undefined, args.join(' '));
   }
@@ -61,6 +64,11 @@ test('help does not initialize storage and registration/show/list/check work', t
   assert.match(invoke(['--list']).stdout, /example/);
   assert.equal(invoke(['--check']).status, 0);
   assert.match(invoke(['--extensions-list']).stdout, /npm:pi-web-access@0\.40\.0/);
+  const status = invoke(['--login-status']);
+  assert.equal(status.status, 0, status.stderr);
+  assert.deepEqual(JSON.parse(status.stdout).find(entry => entry.provider === 'berget'), { provider: 'berget', profilePresent: false, environmentVariable: 'BERGET_API_KEY', environmentPresent: false, credentialPresent: false });
+  assert.ok(status.stdout.includes('"environmentPresent": true'));
+  assert.ok(!status.stdout.includes(env.OPENAI_API_KEY));
 });
 
 test('editor saves valid changes and retains invalid drafts without damaging config', t => {

@@ -65,8 +65,9 @@ export function inspectPodman() {
 export function podmanEnvironment(config) {
   const env = { ...process.env };
   if (config.credentials.proxy) {
-    delete env[config.credentials.proxy.keyEnv || 'OPENAI_API_KEY'];
+    delete env[config.credentials.proxy.keyEnv || (config.credentials.proxy.provider === 'berget' ? 'BERGET_API_KEY' : 'OPENAI_API_KEY')];
     delete env.OPENAI_API_KEY;
+    delete env.BERGET_API_KEY;
   }
   return env;
 }
@@ -114,6 +115,7 @@ export function launchArgs(store, config, command, { cwd, image, proxy, network,
     const isCodex = config.credentials.proxy.provider === 'openai-codex';
     args.push('--env', `PIS_PROXY_TOKEN=${proxy.token}`, '--env', `PIS_PROXY_BASE_URL=${proxy.baseUrl}`, '--env', `PIS_PROXY_PROVIDER=${proxy.provider}`,
       '--env', `OPENAI_API_KEY=${isCodex ? '' : proxy.token}`, '--env', `OPENAI_BASE_URL=${isCodex ? '' : proxy.baseUrl}`,
+      '--env', `BERGET_API_KEY=${proxy.provider === 'berget' ? proxy.token : ''}`, '--env', `BERGET_BASE_URL=${proxy.provider === 'berget' ? proxy.baseUrl : ''}`,
       '--volume', `${proxy.directory}:/pis/proxy:ro${sharedLabel}`,
       '--volume', `${proxy.directory}/models.json:${CONTAINER_HOME}/.pi/agent/models.json:ro${sharedLabel}`,
       '--volume', `${proxy.directory}/auth.json:${CONTAINER_HOME}/.pi/agent/auth.json:ro${sharedLabel}`);

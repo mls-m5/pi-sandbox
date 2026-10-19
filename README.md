@@ -2,7 +2,7 @@
 
 `pis` is a Linux-only CLI that runs the entire [Pi coding agent](https://pi.dev) inside a rootless Podman container.
 
-**Status: working initial implementation.** Project registration, editable configuration, custom images, additional mounts, persistent Pi state, shell/exec modes, and diagnostics are implemented. The host-side OpenAI API-key proxy is the default for new projects; ChatGPT/Codex OAuth proxy mode is also implemented. JSON extension install sources, build-time installation, and automatic configuration hints/schema completion are implemented.
+**Status: working initial implementation.** Project registration, editable configuration, custom images, additional mounts, persistent Pi state, shell/exec modes, and diagnostics are implemented. Host-side OpenAI and Berget API-key proxy modes and ChatGPT/Codex OAuth proxy mode are implemented. JSON extension install sources, build-time installation, and automatic configuration hints/schema completion are implemented.
 
 ## Requirements
 
@@ -99,6 +99,31 @@ Remove any old `keyEnv` field; keep the rest of the project configuration. Then 
 
 Prefer a dedicated sign-in: importing copies rotating tokens without synchronizing the original client. See [Codex setup, imports, and limitations](docs/codex.md). Live subscription sign-in is not covered by the fake-service tests.
 
+## Berget AI and host API-key profiles
+
+Berget uses the host-side credential proxy; its real API key stays in private host storage or a host environment variable. To save the key interactively and use the built-in Berget model preset:
+
+```sh
+pis --login berget                 # prompts for URL and hidden key
+pis --login-status                 # provider/profile presence only; never prints keys
+pis --edit
+```
+
+Set the active credential configuration to:
+
+```json
+{
+  "credentials": {
+    "env": [],
+    "proxy": { "provider": "berget", "profile": "berget", "models": [], "maxRequests": 1000, "maxConcurrent": 4 }
+  }
+}
+```
+
+Then run `pis --fresh -- --model berget/google/gemma-4-31B-it`. The initial Berget route is Chat Completions only; `/v1/models` and Responses are intentionally not enabled. Alternatively use `BERGET_API_KEY` on the host with `provider: "berget"` and `keyEnv: "BERGET_API_KEY"` (the default). `pis --logout berget` removes the stored profile; it does not revoke the provider key.
+
+Other API-key profiles can be managed with `pis --login openai` / `pis --logout openai`. For an OpenAI-compatible custom endpoint, `pis --login custom` asks for an HTTPS base URL ending in `/v1`, tool-call support, verified model IDs and metadata, then a hidden key. Custom profiles support only OpenAI Chat Completions, require public DNS addresses on port 443, and reject local/private destinations. Project config references the host profile (`provider` and `profile` both `custom`); the URL, model catalog, and key are not stored in project JSON. There is no automatic model discovery or connection test. See [proxy behavior and limits](docs/proxy.md#host-api-key-profiles).
+
 ## Project discovery
 
 Projects are explicitly registered, not inferred from Git repositories.
@@ -163,7 +188,7 @@ Generated configuration also contains an **inert `examples` section**. Copy exam
 - Changes to image settings or extension install sources trigger a build on the next launch; mounts, credentials, hints, and formatting do not.
 - Tools installed into the disposable root filesystem disappear with the container. Manual Pi packages installed into the persistent sandbox home remain in project state.
 - Credential configuration stores host environment variable **names**, never values. Proxy mode requires its host key and never falls back to exposing it. Deliberate direct mode remains available by removing `proxy` and setting `env`; those keys are visible inside the container.
-- API-key mode supports Responses, Chat Completions, and model listing; Codex mode supports its separate ChatGPT Responses endpoint with host OAuth refresh. Both have optional exact model restrictions and per-run request/concurrency limits. See [proxy behavior and limitations](docs/proxy.md).
+- OpenAI API-key mode supports Responses, Chat Completions, and model listing; Berget and custom profiles initially support Chat Completions only; Codex mode supports its separate ChatGPT Responses endpoint with host OAuth refresh. Project config selects either a host profile or an environment-key source; a selected source never silently falls back to the other. All modes have per-run request/concurrency limits; POST model allowlists are optional. See [proxy behavior and limitations](docs/proxy.md).
 
 ```sh
 pis --check                    # Validate configuration and active paths
@@ -212,6 +237,9 @@ Default: `~/.local/share/pis/`. Override with `$PIS_HOME`, or `$XDG_DATA_HOME/pi
 ~/.local/share/pis/
   index.json                    # Rebuildable cache; configs are authoritative
   auth/openai-codex.json         # Private host OAuth credentials; NEVER mounted
+  auth/openai-api-key.json       # Optional private API-key profile; NEVER mounted
+  auth/berget-api-key.json       # Optional private API-key profile; NEVER mounted
+  auth/custom-api-key.json       # Optional private endpoint/model/key profile; NEVER mounted
   projects/k7m2q/
     project.json
     project.schema.json         # Generated editor descriptions/completions
@@ -239,7 +267,7 @@ No project deletion or image garbage-collection command exists yet. Do not edit 
 
 **A writable mount permits Pi to change or delete those host files.** Secrets already in mounted directories, including `.env` files, remain accessible. Symlinks do not grant access to unmounted external targets. Resource limits are not configured yet.
 
-**Proxy mode keeps the host-provided API key or Codex OAuth tokens outside the sandbox**, using a private Unix socket and a per-run dummy capability. No host TCP port is opened. Pi's selected provider auth/model entries are replaced with read-only per-run overlays; originals are unchanged. Direct-mode forwarded keys, other stored credentials, or secrets in mounted files remain visible. The proxy does not retroactively scrub old state.
+**Proxy mode keeps host-provided API keys or Codex OAuth tokens outside the sandbox**, using a private Unix socket and a per-run dummy capability. Custom API profile destinations are host-selected HTTPS URLs, resolved to pinned public IPs, and limited to the profile's allowed route. No host TCP port is opened. Pi's selected provider auth/model entries are replaced with read-only per-run overlays; originals are unchanged. Direct-mode forwarded keys, other stored credentials, or secrets in mounted files remain visible. The proxy does not retroactively scrub old state.
 
 Hiding keys does not prevent API spending: sandboxed commands and extensions can use the capability within its host-enforced route/model/request limits. Outbound networking remains enabled; this is not a host/LAN access filter or exfiltration defense. Containers share the host kernel, not a VM-level boundary. Custom build instructions are trusted code; runtime keys and source are not supplied to builds. See [the proxy security notes](docs/proxy.md#security-boundaries-and-limitations).
 
@@ -252,11 +280,12 @@ npm run test:integration       # Builds and runs real rootless Podman containers
 
 Integration tests require the runtime prerequisites plus `script` from util-linux. They use fake credentials and a local fake OpenAI upstream, make no paid/external model API requests, remove temporary containers/project data/image tags, and may leave reusable Podman build caches/base images.
 
-Real-container coverage includes package/custom instruction builds, absolute working directories, UID/GID ownership, extra mount permissions, credential selection, persistent state, Pi startup, pipes, exit codes, PTY Bash, project exclusivity, bounded shutdown, the Unix socket proxy, Pi API-key/Codex streaming against fake upstreams, host OAuth refresh, and TypeScript extensions seeing only dummy credentials. The Codex integration runs without container networking.
+Real-container coverage includes package/custom instruction builds, absolute working directories, UID/GID ownership, extra mount permissions, credential selection, persistent state, Pi startup, pipes, exit codes, PTY Bash, project exclusivity, bounded shutdown, the Unix socket proxy, Pi API-key/Codex streaming against fake upstreams, host OAuth refresh, and TypeScript extensions seeing only dummy credentials. Berget/custom profiles have fast fake-upstream route/streaming coverage but no real-container tool-round-trip coverage yet. The Codex integration runs without container networking.
 
 ## Further documentation
 
-- [OpenAI proxy: setup and security](docs/proxy.md)
+- [API proxy: OpenAI, Berget, custom profiles, and security](docs/proxy.md)
+- [Berget/API-key implementation notes](docs/berget-plan.md)
 - [Codex subscription sign-in and proxy](docs/codex.md)
 - [Image extension setup and remaining plans](docs/extensions-plan.md)
 - [Design and configuration](docs/design.md)

@@ -75,6 +75,7 @@ Initial default layout:
 ```
 
 - `auth/openai-codex.json` is an optional private, user-global host OAuth store, never mounted or included in builds; see [Codex sign-in](codex.md).
+- `auth/{openai,berget,custom}-api-key.json` are optional private host API-key profiles, never mounted or included in builds; custom profiles include a trusted HTTPS endpoint and verified model catalog.
 - `project.json` is authoritative.
 - `index.json` is a rebuildable lookup cache for roots, IDs, and names.
 - `project.schema.json` is a generated editor schema referenced by the completed configuration's `$schema`.
@@ -274,9 +275,9 @@ New projects use `credentials.proxy` for OpenAI and have an empty `credentials.e
 
 Read-only per-run `models.json` and `auth.json` overlays redirect Pi's selected provider to the relay and replace its OpenAI credentials without changing existing files. Runtime files contain no host-supplied key and are removed on normal shutdown. Host reads of sandbox-controlled state reject symlinked directories/files and non-regular or oversized JSON files.
 
-API-key mode fixes the upstream to `https://api.openai.com` and allows only Responses/Chat Completions/model-list routes. Codex mode (`provider: "openai-codex"`, without `keyEnv`) uses private host OAuth sign-in/import/refresh and only `https://chatgpt.com/backend-api/codex/responses`, injecting the real account header on the host. Pi receives a synthetic JWT, and its automatic transport falls back to SSE; bounded zstd requests are decoded before validation. See [Codex setup](codex.md).
+OpenAI API-key mode fixes the upstream to `https://api.openai.com` and allows Responses/Chat Completions/model-list routes. Berget fixes the upstream to `https://api.berget.ai` and initially allows only Chat Completions. Custom API profiles select a host-trusted HTTPS `/v1` base URL with public-DNS pinning and only Chat Completions; profile credentials/endpoints never enter project configuration. Codex mode (`provider: "openai-codex"`, without `keyEnv`) uses private host OAuth sign-in/import/refresh and only `https://chatgpt.com/backend-api/codex/responses`, injecting the real account header on the host. Pi receives a synthetic JWT, and its automatic transport falls back to SSE; bounded zstd requests are decoded before validation. See [Codex setup](codex.md).
 
-Both modes reject redirects, rebuild request headers, and bound request size, response size, time, concurrency, and per-run request count. It supports streaming and cancellation and does not log payloads or credentials. See [proxy configuration and limits](proxy.md).
+All proxy modes reject redirects, rebuild request headers, and bound request size, response size, time, concurrency, and per-run request count. They support streaming and cancellation and do not log payloads or credentials. See [proxy configuration and limits](proxy.md).
 
 Codex sign-in is explicit through host-only `--login-codex`, `--import-codex FILE`, and `--logout-codex`. Refresh rotation is serialized across projects using the shared host sign-in, with atomic writes and cancellation. Nothing imports or mounts host Pi credentials automatically.
 

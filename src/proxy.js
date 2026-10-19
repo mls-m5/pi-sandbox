@@ -9,8 +9,10 @@ import { assert } from './util.js';
 
 export const OPENAI_UPSTREAM = 'https://api.openai.com';
 export const CODEX_UPSTREAM = 'https://chatgpt.com';
+export const BERGET_UPSTREAM = 'https://api.berget.ai';
 export const DEFAULT_PROXY = { provider: 'openai', keyEnv: 'OPENAI_API_KEY', models: [], maxRequests: 1000, maxConcurrent: 4 };
 const API_ROUTES = new Set(['POST /v1/responses', 'POST /v1/chat/completions', 'GET /v1/models']);
+const BERGET_ROUTES = new Set(['POST /v1/chat/completions']);
 const CODEX_ROUTES = new Set(['POST /backend-api/codex/responses', 'GET /backend-api/wham/usage']);
 
 export function codexUsageSummary(data) {
@@ -35,7 +37,7 @@ export function codexUsageSummary(data) {
 
 function credentialFor(provider, apiKey) {
   if (provider === 'openai-codex') return { apiKey, ...codexClaims(apiKey) };
-  assert(typeof apiKey === 'string' && /^[A-Za-z0-9_-]+$/.test(apiKey), 'Missing or invalid host OpenAI API key.');
+  assert(typeof apiKey === 'string' && apiKey.length >= 8 && apiKey.length <= 4096 && /^[\x21-\x7e]+$/.test(apiKey), 'Missing or invalid host API key.');
   return { apiKey };
 }
 
@@ -106,19 +108,28 @@ function body(req, maxBytes) {
   });
 }
 
-/** Host-only service. Production callers always use the fixed OpenAI upstream.
- * The upstream parameter and limit overrides exist for local fake-server tests.
+/** Host-only credential service. Production callers use fixed OpenAI/Berget
+ * destinations or an explicitly stored, validated custom API profile. The
+ * upstream parameter and limit overrides exist only for local fake-service tests.
  * No headers, URLs, payloads, or credentials are logged or included in errors.
  */
-export async function startOpenAIProxy({ socketPath, apiKey, provider = 'openai', getCredentials, token, models = [], maxRequests = 1000, maxConcurrent = 4, upstream, maxBodyBytes = 16 * 1024 * 1024, timeoutMs = 300_000 }) {
-  assert(['openai', 'openai-codex'].includes(provider), 'Unsupported proxy provider.');
+export async function startOpenAIProxy({ socketPath, apiKey, provider = 'openai', getCredentials, token, models = [], maxRequests = 1000, maxConcurrent = 4, upstream, upstreamBaseUrl, lookup, maxBodyBytes = 16 * 1024 * 1024, timeoutMs = 300_000 }) {
+  assert(['openai', 'openai-codex', 'berget', 'custom'].includes(provider), 'Unsupported proxy provider.');
   const initialCredential = credentialFor(provider, apiKey);
   token ??= provider === 'openai-codex' ? dummyCodexToken() : `sk-pis-${randomBytes(32).toString('hex')}`;
   assert(typeof token === 'string' && token.length >= 16 && token !== apiKey, 'Invalid proxy capability.');
-  const routes = provider === 'openai-codex' ? CODEX_ROUTES : API_ROUTES;
-  const origin = new URL(upstream || (provider === 'openai-codex' ? CODEX_UPSTREAM : OPENAI_UPSTREAM));
-  assert(!origin.username && !origin.password && origin.pathname === '/' && !origin.search && !origin.hash, 'Upstream must be an origin.');
-  assert(origin.protocol === 'https:' || (origin.protocol === 'http:' && origin.hostname === '127.0.0.1'), 'Upstream requires HTTPS (loopback HTTP is test-only).');
+  const routes = provider === 'openai-codex' ? CODEX_ROUTES : ['berget', 'custom'].includes(provider) ? BERGET_ROUTES : API_ROUTES;
+  const fixedBase = provider === 'openai-codex' ? CODEX_UPSTREAM : provider === 'berget' ? `${BERGET_UPSTREAM}/v1` : `${OPENAI_UPSTREAM}/v1`;
+  const targetBase = upstreamBaseUrl || fixedBase;
+  const origin = new URL(upstream || targetBase);
+  const testUpstream = Boolean(upstream);
+  assert(!origin.username && !origin.password && !origin.search && !origin.hash, 'Upstream URL is invalid.');
+  assert(origin.protocol === 'https:' || (testUpstream && origin.protocol === 'http:' && origin.hostname === '127.0.0.1'), 'Upstream requires HTTPS (loopback HTTP is test-only).');
+  if (provider === 'openai-codex') assert(origin.pathname === '/', 'Codex upstream must be an origin.');
+  else if (!testUpstream) assert(/^\/(?:[A-Za-z0-9._~-]+\/)*v1$/.test(origin.pathname), 'API upstream must use a safe /v1 base path.');
+  else assert(origin.pathname === '/', 'Fake upstream must be an origin.');
+  const apiBasePath = provider === 'openai-codex' ? '' : testUpstream ? (upstreamBaseUrl ? new URL(upstreamBaseUrl).pathname : '/v1') : origin.pathname;
+  const upstreamLookup = lookup ? { lookup } : {};
   const expected = Buffer.from(`Bearer ${token}`);
   const active = new Set(), sockets = new Set();
   let concurrent = 0, used = 0;
@@ -178,8 +189,10 @@ export async function startOpenAIProxy({ socketPath, apiKey, provider = 'openai'
         }
       }
       const request = origin.protocol === 'https:' ? https.request : http.request;
-      outgoing = request(new URL(req.url, origin), {
+      const targetPath = provider === 'openai-codex' ? req.url : `${apiBasePath.replace(/\/$/, '')}${req.url.slice(3)}`;
+      outgoing = request(new URL(targetPath, origin.origin), {
         method: req.method,
+        ...upstreamLookup,
         headers: {
           authorization: `Bearer ${credential.apiKey}`,
           ...(provider === 'openai-codex' ? { 'chatgpt-account-id': credential.accountId, originator: 'pi', 'openai-beta': 'responses=experimental', ...sessionHeaders } : {}),
@@ -195,7 +208,7 @@ export async function startOpenAIProxy({ socketPath, apiKey, provider = 'openai'
         if (status < 200 || status >= 300) {
           upstreamResponse.destroy();
           // In particular, never follow redirects or expose upstream error bodies/headers.
-          return reply(res, status >= 400 && status <= 599 ? status : 502, `OpenAI upstream returned status ${status}.`);
+          return reply(res, status >= 400 && status <= 599 ? status : 502, `Provider upstream returned status ${status}.`);
         }
         if (upstreamResponse.headers['content-encoding'] && upstreamResponse.headers['content-encoding'] !== 'identity') {
           upstreamResponse.destroy();
@@ -215,7 +228,7 @@ export async function startOpenAIProxy({ socketPath, apiKey, provider = 'openai'
         pipeline(upstreamResponse, new SecretRedactor(credential.apiKey), res, () => finish());
       });
       active.add(outgoing);
-      outgoing.on('error', () => reply(res, 502, 'OpenAI upstream connection failed.'));
+      outgoing.on('error', () => reply(res, 502, 'Provider upstream connection failed.'));
       outgoing.end(payload);
     } catch (error) {
       reply(res, error.status || 400, error.status === 413 ? 'Request body too large.' : 'Invalid or interrupted request.');
