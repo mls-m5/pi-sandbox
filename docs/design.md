@@ -1,6 +1,6 @@
 # Design
 
-This document records the agreed direction for `pis`. The core registry, CLI, editor, image generation, and container runner are now implemented; see [the README](../README.md) for current usage and [the roadmap](roadmap.md) for remaining work. The credential proxy and advanced hardening remain planned. Details marked open still need to be settled.
+This document records the agreed direction for `pis`. The core registry, CLI, editor, image generation, and container runner are now implemented; see [the README](../README.md) for current usage and [the roadmap](roadmap.md) for remaining work. The OpenAI credential proxy is implemented; declarative extension management and advanced hardening remain planned. See [proxy details](proxy.md) and [the extension plan](extensions-plan.md). Details marked open still need to be settled.
 
 ## 1. Scope and architecture
 
@@ -103,7 +103,14 @@ Proposed active configuration:
   },
   "mounts": [],
   "credentials": {
-    "env": ["OPENAI_API_KEY"]
+    "env": [],
+    "proxy": {
+      "provider": "openai",
+      "keyEnv": "OPENAI_API_KEY",
+      "models": [],
+      "maxRequests": 1000,
+      "maxConcurrent": 4
+    }
   },
   "examples": {
     "mounts": [
@@ -246,24 +253,17 @@ Baseline runtime:
 
 Verify support and practical behavior on the target Linux system rather than assuming identical Podman versions or cgroup capabilities.
 
-### Initial API-key handling
+### Credential modes
 
-Pass only explicitly selected provider environment variables, initially `OPENAI_API_KEY`. Configuration stores variable names, never their values. Missing required credentials should produce clear diagnostics without printing values. Avoid logging credentials in commands or diagnostic output.
+New projects use `credentials.proxy` for OpenAI and have an empty `credentials.env`. The host reads the key from the named variable, creates a private per-run Unix-socket HTTP proxy, and gives the container only a random temporary dummy capability. A container-local relay listens on loopback; no host TCP port is opened.
 
-These keys are accessible to Pi and other processes inside the container. Per-project state can also contain sensitive credentials and transcripts. This first version does not provide a credential boundary against sandboxed commands.
+Read-only per-run `models.json` and `auth.json` overlays redirect Pi's OpenAI provider to the relay and replace its OpenAI credentials without changing existing files. Runtime files contain no host-supplied key and are removed on normal shutdown. Host reads of sandbox-controlled state reject symlinked directories/files and non-regular or oversized JSON files.
 
-### Future OpenAI credential proxy
+The proxy fixes the upstream to `https://api.openai.com`, allows only Responses/Chat Completions/model-list routes, rejects redirects, rebuilds request headers, and bounds request size, response size, time, concurrency, and per-run request count. It supports streaming and cancellation and does not log payloads or credentials. See [proxy configuration and limits](proxy.md).
 
-```text
-Sandbox Pi with dummy key
-  → host-managed proxy
-  → real OpenAI credential inserted by proxy
-  → fixed OpenAI upstream
-```
+Existing projects are not silently migrated. Direct mode remains available by omitting `proxy` and configuring explicitly selected environment variables in `env`. Directly forwarded keys and other stored credentials are accessible inside the container. The two modes cannot be mixed.
 
-The real key remains outside the container. The proxy should restrict upstreams and endpoints, redact authentication from logs, handle streaming correctly, and avoid becoming an open forwarding proxy. Endpoint configuration must work with Pi's provider configuration.
-
-Dummy keys do not prevent API use or spending by sandboxed commands. Add authentication/scoping, quotas, and network restrictions as needed. Reachability from the sandbox must not require broadly exposing unrelated host services.
+Dummy capabilities do not prevent API spending by sandboxed commands or extensions. Counts are not monetary quotas. This does not scrub previously exposed secrets or secrets in mounted files, and it does not impose general network restrictions.
 
 ### Network limitations
 
@@ -279,4 +279,5 @@ Stronger egress controls, host/LAN restrictions, and proxy-only access are a sep
 - Mount overlap is currently rejected entirely, including overlaps with project root, pis storage, and reserved container paths; evaluate whether narrower exceptions are useful.
 - Resource-limit defaults and read-only root filesystem feasibility.
 - Project deletion, image cleanup, and state-retention commands; these must never delete project source files accidentally.
-- XDG overrides and configuration schema migration strategy.
+- Configuration schema migration strategy; XDG/PIS_HOME storage overrides are implemented.
+- Declarative extension support is designed in [the extension plan](extensions-plan.md), but is not implemented yet. Explicit Pi extension flags and package commands already work inside the sandbox.

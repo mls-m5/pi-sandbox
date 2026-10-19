@@ -2,7 +2,7 @@
 
 `pis` is a Linux-only CLI that runs the entire [Pi coding agent](https://pi.dev) inside a rootless Podman container.
 
-**Status: working initial implementation.** Project registration, editable configuration, custom images, additional mounts, persistent Pi state, shell/exec modes, and diagnostics are implemented. The credential proxy is planned, not implemented.
+**Status: working initial implementation.** Project registration, editable configuration, custom images, additional mounts, persistent Pi state, shell/exec modes, and diagnostics are implemented. The host-side OpenAI credential proxy is implemented and is the default for new projects. Declarative extension management is planned.
 
 ## Requirements
 
@@ -51,7 +51,7 @@ pis
 
 The first launch builds an image with Node, Pi, Bash, Git, ripgrep, and CA certificates. Later launches reuse it. `pis --new` registers the directory; it does not launch Pi or build the image.
 
-By default `pis` runs **`pi --continue`**. Pi uses sandbox-local state, not your host Pi installation or configuration.
+By default `pis` runs **`pi --continue`**. Pi uses sandbox-local state, not your host Pi installation or configuration. New projects keep the host OpenAI key outside the container and give Pi a temporary dummy key. Existing projects retain their previous credential settings; see [enabling the proxy](docs/proxy.md#enable-it) to switch.
 
 ```sh
 pis -- --model <model-id>       # Continue with additional Pi arguments
@@ -103,7 +103,14 @@ Configuration includes these editable fields:
     { "source": "/home/mattias/Data/test-fixtures", "access": "read-write" }
   ],
   "credentials": {
-    "env": ["OPENAI_API_KEY"]
+    "env": [],
+    "proxy": {
+      "provider": "openai",
+      "keyEnv": "OPENAI_API_KEY",
+      "models": [],
+      "maxRequests": 1000,
+      "maxConcurrent": 4
+    }
   }
 }
 ```
@@ -116,7 +123,8 @@ Generated configuration also contains an **inert `examples` section**. Copy exam
 - Advanced customization supports single-line `RUN` instructions only, without trailing continuations or build mounts. These are trusted executable code.
 - Changes to image settings trigger a build on the next launch; mount/credential changes do not.
 - Manually installed packages disappear when the container is removed.
-- Credentials are environment variable **names**, never values. Missing values are warned about when launching Pi, allowing sandbox-local login as an alternative.
+- Credential configuration stores host environment variable **names**, never values. Proxy mode requires its host key and never falls back to exposing it. Deliberate direct mode remains available by removing `proxy` and setting `env`; those keys are visible inside the container.
+- The proxy supports OpenAI Responses, Chat Completions, and model listing, with optional exact model restrictions and per-run request/concurrency limits. See [proxy behavior and limitations](docs/proxy.md).
 
 ```sh
 pis --check                    # Validate configuration and active paths
@@ -126,6 +134,20 @@ pis --rebuild                  # Rebuild without cached build steps
 ```
 
 The Node base image is digest-pinned and Pi is pinned to 1.2.0. apt repositories and npm transitive dependencies are not fully locked, so uncached builds are not guaranteed to be bit-for-bit reproducible. Updating pinned versions currently requires a source change in `src/container.js`.
+
+## Extensions
+
+Pi extensions already run inside the sandbox:
+
+```sh
+pis -- -e ./tools/my-extension.ts
+pis -- install npm:@example/pi-tools@1.2.3  # Replace with an actual trusted package
+pis -- list
+```
+
+Local files must already be available through the project or an explicit extra mount. Package installs persist in this project's Pi state, not your host Pi installation. Extensions see only the proxy dummy key, but can use it for permitted API calls.
+
+See [the extension support plan](docs/extensions-plan.md) for current usage and proposed declarative project configuration, pinned package synchronization, and trust rules. The proposed configuration fields and management commands are not implemented yet.
 
 ## Storage
 
@@ -160,9 +182,9 @@ No project deletion or image garbage-collection command exists yet. Do not edit 
 
 **A writable mount permits Pi to change or delete those host files.** Secrets already in mounted directories, including `.env` files, remain accessible. Symlinks do not grant access to unmounted external targets. Resource limits are not configured yet.
 
-**Selected API keys are visible to processes inside the sandbox.** Outbound networking is enabled and is not a host/LAN access filter or exfiltration defense. Containers share the host kernel, not a VM-level boundary. Custom build instructions are trusted code and may access the network; runtime provider keys and project source are not supplied to the build.
+**Proxy mode keeps the host-provided OpenAI key outside the sandbox**, using a private Unix socket and a per-run dummy capability. No host TCP port is opened. Pi's OpenAI auth/model entries are replaced with read-only per-run overlays; originals are unchanged. Direct-mode forwarded keys, other stored credentials, or secrets in mounted files remain visible. The proxy does not retroactively scrub old state.
 
-A future host-side OpenAI proxy will accept dummy keys and substitute real credentials. It is not available yet, and hiding keys alone will not prevent API spending by sandboxed processes.
+Hiding keys does not prevent API spending: sandboxed commands and extensions can use the capability within its host-enforced route/model/request limits. Outbound networking remains enabled; this is not a host/LAN access filter or exfiltration defense. Containers share the host kernel, not a VM-level boundary. Custom build instructions are trusted code; runtime keys and source are not supplied to builds. See [the proxy security notes](docs/proxy.md#security-boundaries-and-limitations).
 
 ## Development and tests
 
@@ -171,12 +193,14 @@ npm run check                  # Syntax checks + fast tests; no model calls
 npm run test:integration       # Builds and runs real rootless Podman containers
 ```
 
-Integration tests require the runtime prerequisites plus `script` from util-linux. They use dummy credentials, make no model API requests, remove their temporary containers/project data/image tag, and may leave reusable Podman build caches/base images.
+Integration tests require the runtime prerequisites plus `script` from util-linux. They use fake credentials and a local fake OpenAI upstream, make no paid/external model API requests, remove temporary containers/project data/image tags, and may leave reusable Podman build caches/base images.
 
-Real-container coverage includes package/custom instruction builds, absolute working directories, UID/GID ownership, extra mount permissions, credential selection, persistent state, Pi startup, piped input, exit codes, interactive Bash via a PTY, project exclusivity, and bounded termination of an uncooperative process.
+Real-container coverage includes package/custom instruction builds, absolute working directories, UID/GID ownership, extra mount permissions, credential selection, persistent state, Pi startup, pipes, exit codes, PTY Bash, project exclusivity, bounded shutdown, the Unix socket proxy, Pi streaming against a fake upstream, and a TypeScript extension seeing only a dummy key.
 
 ## Further documentation
 
+- [OpenAI proxy: setup and security](docs/proxy.md)
+- [Extension usage and implementation plan](docs/extensions-plan.md)
 - [Design and configuration](docs/design.md)
 - [Implementation roadmap and acceptance tests](docs/roadmap.md)
 

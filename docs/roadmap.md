@@ -6,8 +6,9 @@ The core program is implemented. Continue development in small, tested commits.
 
 - **Milestones 1–3:** core functionality implemented and covered by fast tests plus an opt-in real-Podman integration test.
 - **Milestone 4:** rootless diagnostics, baseline privilege restrictions, per-project exclusivity, bounded shutdown, and crash-lock guidance implemented. Resource limits, read-only root, broader compatibility testing, safe deletion/cleanup, and migration/update workflows remain.
-- **Milestone 5:** credential proxy not implemented.
-- **Verification:** tested on Ubuntu 24.04, Podman 4.9.3, crun, and cgroups v2. Real-container tests cover identity, mount permissions, custom builds, credentials, state, Pi startup, pipes, exit codes, PTY Bash, concurrent-use rejection, and SIGTERM cleanup. No model API calls were made. SELinux-enforcing behavior and an actual model conversation remain unverified.
+- **Milestone 5:** OpenAI host credential proxy implemented with a private Unix socket, per-run dummy capability, fixed upstream/routes, model restrictions, count/concurrency limits, streaming, and cancellation. Monetary quotas and proxy-only egress remain future work.
+- **Extensions:** explicit Pi loading/package commands work now; declarative configuration and pinned synchronization are [planned](extensions-plan.md).
+- **Verification:** tested on Ubuntu 24.04, Podman 4.9.3, crun, and cgroups v2. Real-container tests cover identity, mount permissions, custom builds, credentials, state, Pi startup, pipes, exit codes, PTY Bash, concurrent-use rejection, and SIGTERM cleanup. An actual Pi streamed conversation and an explicit TypeScript extension are tested against a local fake OpenAI service; no external/paid model API calls are made. SELinux-enforcing behavior and live-provider compatibility still need verification.
 
 The sections below retain the full milestone checklist, including acceptance goals that extend beyond current coverage.
 
@@ -105,7 +106,7 @@ Acceptance tests:
 - Configure Pi to use the proxy endpoint with dummy credentials.
 - Restrict upstreams, routes, and sandbox access to the proxy.
 - Support streaming and normal OpenAI error behavior.
-- Add credential-safe logs, quotas, and request limits.
+- Add credential-safe error handling and request/concurrency limits (implemented); monetary/token quotas remain future work.
 - Evaluate proxy-only egress and host/LAN access restrictions.
 
 Acceptance tests:
@@ -127,4 +128,4 @@ Acceptance tests:
 
 ## Suggested first vertical slice
 
-Completed: registration, same-path mounts, current UID/GID, persistent Pi state, default continuation, fresh mode, Bash/exec, image customization, and real rootless Podman verification. Next priorities are interactive user feedback, SELinux verification, operational hardening, and the credential proxy.
+Completed: registration, same-path mounts, current UID/GID, persistent Pi state, default continuation, fresh mode, Bash/exec, image customization, and real rootless Podman verification. The OpenAI credential proxy is also implemented and tested with a fake upstream. Next priorities are interactive user feedback, SELinux verification, declarative extension support, and operational hardening.
