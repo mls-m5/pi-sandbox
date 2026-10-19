@@ -11,7 +11,27 @@ export const OPENAI_UPSTREAM = 'https://api.openai.com';
 export const CODEX_UPSTREAM = 'https://chatgpt.com';
 export const DEFAULT_PROXY = { provider: 'openai', keyEnv: 'OPENAI_API_KEY', models: [], maxRequests: 1000, maxConcurrent: 4 };
 const API_ROUTES = new Set(['POST /v1/responses', 'POST /v1/chat/completions', 'GET /v1/models']);
-const CODEX_ROUTES = new Set(['POST /backend-api/codex/responses']);
+const CODEX_ROUTES = new Set(['POST /backend-api/codex/responses', 'GET /backend-api/wham/usage']);
+
+export function codexUsageSummary(data) {
+  assert(data?.rate_limit && typeof data.rate_limit === 'object', 'Invalid Codex usage response.');
+  const rate_limit = {};
+  for (const name of ['primary_window', 'secondary_window']) {
+    const value = data.rate_limit[name];
+    if (value === undefined || value === null) { rate_limit[name] = null; continue; }
+    assert(Number.isFinite(value.used_percent) && value.used_percent >= 0 && value.used_percent <= 100, 'Invalid Codex usage window.');
+    const window = { used_percent: value.used_percent };
+    for (const key of ['limit_window_seconds', 'reset_at', 'reset_after_seconds']) {
+      if (value[key] !== undefined) {
+        assert(Number.isFinite(value[key]) && value[key] >= 0 && value[key] <= 1e12, 'Invalid Codex usage window.');
+        window[key] = value[key];
+      }
+    }
+    assert(window.reset_at !== undefined || window.reset_after_seconds !== undefined, 'Missing Codex usage reset.');
+    rate_limit[name] = window;
+  }
+  return { rate_limit };
+}
 
 function credentialFor(provider, apiKey) {
   if (provider === 'openai-codex') return { apiKey, ...codexClaims(apiKey) };
@@ -166,11 +186,11 @@ export async function startOpenAIProxy({ socketPath, apiKey, provider = 'openai'
           'content-type': 'application/json',
           accept: 'application/json, text/event-stream',
           'accept-encoding': 'identity',
-          'user-agent': 'pis-credential-proxy/0.1',
+          'user-agent': req.url === '/backend-api/wham/usage' ? 'codex-cli' : 'pis-credential-proxy/0.1',
           ...(payload ? { 'content-length': payload.length } : {}),
         },
         // No client-supplied Host, organization, project, cookies, proxy, or forwarding headers.
-      }, upstreamResponse => {
+      }, async upstreamResponse => {
         const status = upstreamResponse.statusCode || 502;
         if (status < 200 || status >= 300) {
           upstreamResponse.destroy();
@@ -180,6 +200,16 @@ export async function startOpenAIProxy({ socketPath, apiKey, provider = 'openai'
         if (upstreamResponse.headers['content-encoding'] && upstreamResponse.headers['content-encoding'] !== 'identity') {
           upstreamResponse.destroy();
           return reply(res, 502, 'Unsupported upstream content encoding.');
+        }
+        if (req.url === '/backend-api/wham/usage') {
+          try {
+            const summary = codexUsageSummary(JSON.parse((await body(upstreamResponse, 128 * 1024)).toString('utf8')));
+            if (!res.destroyed && !res.writableEnded) {
+              res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+              res.end(JSON.stringify(summary));
+            }
+          } catch { reply(res, 502, 'Invalid Codex usage response.'); }
+          return;
         }
         res.writeHead(status, { 'content-type': String(upstreamResponse.headers['content-type']).startsWith('text/event-stream') ? 'text/event-stream' : 'application/json', 'cache-control': 'no-store' });
         pipeline(upstreamResponse, new SecretRedactor(credential.apiKey), res, () => finish());

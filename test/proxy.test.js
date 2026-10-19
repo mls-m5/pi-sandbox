@@ -163,6 +163,23 @@ test('Codex injects host JWT/account headers, accepts bounded zstd, and forbids 
   assert.equal((await request('/backend-api/codex/responses?account=attacker')).status, 403);
 });
 
+test('Codex usage returns only quota windows, never identity or token metadata', async t => {
+  const access = fakeCodexAccess();
+  const { request } = await fixture(t, (req, res) => {
+    assert.equal(req.url, '/backend-api/wham/usage');
+    assert.equal(req.headers.authorization, `Bearer ${access}`);
+    assert.equal(req.headers['chatgpt-account-id'], 'host-account-only');
+    res.end(JSON.stringify({ email: 'private@example.test', access_token: access, account_id: 'host-account-only', rate_limit: { primary_window: { used_percent: 25, limit_window_seconds: 18000, reset_after_seconds: 120, private_field: access }, secondary_window: null } }));
+  }, { provider: 'openai-codex', apiKey: access });
+  const result = await request('/backend-api/wham/usage', '', {}, 'GET');
+  assert.equal(result.status, 200);
+  assert.deepEqual(JSON.parse(result.body), { rate_limit: { primary_window: { used_percent: 25, limit_window_seconds: 18000, reset_after_seconds: 120 }, secondary_window: null } });
+  assert.ok(!result.body.includes(access));
+  assert.ok(!result.body.includes('private@example.test'));
+  assert.ok(!result.body.includes('host-account-only'));
+  assert.equal((await request('/backend-api/wham/usage?account=other', '', {}, 'GET')).status, 403);
+});
+
 test('Codex compressed size limits and failed host refresh never forward or expose credentials', async t => {
   let forwarded = 0;
   const { request } = await fixture(t, (_req, res) => { forwarded++; res.end('{}'); }, { provider: 'openai-codex', apiKey: fakeCodexAccess(), maxBodyBytes: 128, getCredentials: async () => { throw new Error('private-refresh-token'); } });

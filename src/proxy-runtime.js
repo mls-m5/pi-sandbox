@@ -55,8 +55,12 @@ export async function prepareProxy(store, config, { upstream, codexAuthFetch } =
     assert(models.providers === undefined || (models.providers && typeof models.providers === 'object' && !Array.isArray(models.providers)), 'models.json providers must be an object.');
     // Per-run read-only file overlays leave the original files unchanged. Replace
     // the selected provider/auth entry so old endpoints/headers cannot win.
-    const modelSnapshot = { ...models, providers: { ...models.providers, [settings.provider]: { baseUrl, apiKey: proxy.token } } };
-    const authSnapshot = { ...auth, [settings.provider]: { type: 'api_key', key: proxy.token } };
+    // A full Codex Responses URL also works with pi-web-access's provider-URL reuse.
+    const modelBaseUrl = isCodex ? `${baseUrl}/codex/responses` : baseUrl;
+    const modelSnapshot = { ...models, providers: { ...models.providers, [settings.provider]: { baseUrl: modelBaseUrl, apiKey: proxy.token } } };
+    // Usage extensions read access/accountId directly; keep the api_key type so
+    // Pi never tries to refresh this synthetic credential inside the container.
+    const authSnapshot = { ...auth, [settings.provider]: { type: 'api_key', key: proxy.token, ...(isCodex ? { access: proxy.token, accountId: 'pis-proxy-account' } : {}) } };
     const snapshot = JSON.stringify([modelSnapshot, authSnapshot]);
     assert(![apiKey, credential?.refresh].filter(Boolean).some(secret => snapshot.includes(secret)), 'Existing Pi configuration contains host proxy credentials outside the selected provider entry. Remove them before enabling the proxy.');
     writeJson(path.join(runtimeDir, 'models.json'), modelSnapshot);

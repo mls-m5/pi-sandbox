@@ -77,7 +77,7 @@ test('Codex snapshots and environment contain only synthetic credentials, never 
   const proxy = await prepareProxy(store, config);
   try {
     const models = JSON.parse(fs.readFileSync(path.join(proxy.directory, 'models.json')));
-    assert.equal(models.providers['openai-codex'].baseUrl, CODEX_PROXY_BASE_URL);
+    assert.equal(models.providers['openai-codex'].baseUrl, `${CODEX_PROXY_BASE_URL}/codex/responses`);
     const invocation = launchArgs(store, config, ['pi'], { cwd: root, image: 'test', proxy });
     assert.ok(invocation.args.includes('OPENAI_API_KEY='));
     assert.ok(invocation.args.includes(`PIS_PROXY_TOKEN=${proxy.token}`));
