@@ -6,9 +6,9 @@ The core program is implemented. Continue development in small, tested commits.
 
 - **Milestones 1–3:** core functionality implemented and covered by fast tests plus an opt-in real-Podman integration test.
 - **Milestone 4:** rootless diagnostics, baseline privilege restrictions, per-project exclusivity, bounded shutdown, and crash-lock guidance implemented. Resource limits, read-only root, broader compatibility testing, safe deletion/cleanup, and migration/update workflows remain.
-- **Milestone 5:** OpenAI host credential proxy implemented with a private Unix socket, per-run dummy capability, fixed upstream/routes, model restrictions, count/concurrency limits, streaming, and cancellation. Monetary quotas and proxy-only egress remain future work.
+- **Milestone 5:** OpenAI API-key and Codex OAuth host proxies implemented with private Unix sockets, per-run dummy capabilities, fixed upstream/routes, model restrictions, count/concurrency limits, streaming, and cancellation. Codex includes host sign-in/import, private storage, serialized token refresh, synthetic JWTs, and bounded zstd decoding. Monetary quotas and proxy-only egress remain future work.
 - **Extensions:** explicit Pi loading/package commands work now; declarative configuration and pinned synchronization are [planned](extensions-plan.md).
-- **Verification:** tested on Ubuntu 24.04, Podman 4.9.3, crun, and cgroups v2. Real-container tests cover identity, mount permissions, custom builds, credentials, state, Pi startup, pipes, exit codes, PTY Bash, concurrent-use rejection, and SIGTERM cleanup. An actual Pi streamed conversation and an explicit TypeScript extension are tested against a local fake OpenAI service; no external/paid model API calls are made. SELinux-enforcing behavior and live-provider compatibility still need verification.
+- **Verification:** tested on Ubuntu 24.04, Podman 4.9.3, crun, and cgroups v2. Real-container tests cover identity, mount permissions, custom builds, credentials, state, Pi startup, pipes, exit codes, PTY Bash, concurrent-use rejection, and SIGTERM cleanup. Actual Pi API-key and Codex streamed conversations and explicit TypeScript extensions are tested against local fake services, including host OAuth refresh with container networking disabled; no external/paid model API calls are made. SELinux-enforcing behavior and live-provider compatibility still need verification.
 
 The sections below retain the full milestone checklist, including acceptance goals that extend beyond current coverage.
 
@@ -100,9 +100,10 @@ Acceptance tests:
 - Missing/moved roots require explicit correction rather than guessing.
 - Builds, editors, and interrupted launches leave recoverable state.
 
-## Milestone 5: Host-side OpenAI credential proxy
+## Milestone 5: Host-side OpenAI and Codex credential proxies
 
-- Keep real OpenAI API keys in a host-managed proxy.
+- Keep real OpenAI API keys and Codex access/refresh tokens in host-managed proxy/credential storage.
+- Provide explicit host Codex login/import/logout and coordinated refresh without exposing tokens/account identity to container configuration.
 - Configure Pi to use the proxy endpoint with dummy credentials.
 - Restrict upstreams, routes, and sandbox access to the proxy.
 - Support streaming and normal OpenAI error behavior.
@@ -128,4 +129,4 @@ Acceptance tests:
 
 ## Suggested first vertical slice
 
-Completed: registration, same-path mounts, current UID/GID, persistent Pi state, default continuation, fresh mode, Bash/exec, image customization, and real rootless Podman verification. The OpenAI credential proxy is also implemented and tested with a fake upstream. Next priorities are interactive user feedback, SELinux verification, declarative extension support, and operational hardening.
+Completed: registration, same-path mounts, current UID/GID, persistent Pi state, default continuation, fresh mode, Bash/exec, image customization, and real rootless Podman verification. The OpenAI API-key and Codex OAuth proxies are also implemented and tested with fake upstream/auth services. Next priorities are interactive user feedback, SELinux verification, declarative extension support, and operational hardening.

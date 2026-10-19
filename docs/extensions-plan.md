@@ -58,7 +58,7 @@ These commands run inside the container and skip implicit `--continue`. Personal
 
 Pi also supports one-shot sources such as `pis -- -e npm:@example/pi-tools@1.2.3`. An explicitly supplied `-e` loads even with Pi's `--no-extensions`; that option disables discovered/configured extensions, not explicit command-line ones.
 
-In proxy mode, the host key must be available for launching this environment, even when invoking a package command. Extensions and installers see only the dummy OpenAI key. They can still spend through the permitted proxy endpoints, access shared files, and use the allowed network.
+In proxy mode, the host API key or stored Codex sign-in must be available for launching this environment, even when invoking a package command. Extensions and installers see only the dummy key/synthetic Codex token. They can still spend through the permitted proxy endpoints, access shared files, and use the allowed network.
 
 ## Proposed declarative configuration
 
@@ -130,7 +130,7 @@ Normal runs should not fetch package updates. Changing local paths or enabling/d
 - Wrapper-managed declarations live in host project configuration, not repository-controlled settings.
 - Pi's existing project trust decision still applies to repository `.pi` resources. Do not pass `--approve` automatically.
 - Explicit wrapper-managed local paths are user-approved executable code, analogous to explicit `-e` arguments. Document that they bypass discovery-based trust gating.
-- Extensions can inspect prompts, files, conversations, and the dummy capability. They must not receive the real OpenAI key, even if an extension registers its own provider or calls APIs directly.
+- Extensions can inspect prompts, files, conversations, and the dummy capability. They must not receive the real API key or Codex access/refresh tokens, even if an extension registers its own provider or calls APIs directly.
 - The proxy's upstream, endpoint/model policy, and request budget stay on the host, independent of extension code. An extension can use the capability but cannot change that host policy.
 - A custom provider extension using a different protocol/upstream requires separate credential/routing support; never silently forward host keys as a fallback.
 
@@ -154,7 +154,7 @@ Normal runs should not fetch package updates. Changing local paths or enabling/d
 - An extension cannot redirect the host proxy upstream or bypass its route/model limits through request headers.
 - Existing manual Pi settings/packages are preserved when managed packages are added or removed.
 
-The real-Podman proxy test already loads an explicit local TypeScript extension and verifies its UID and dummy-key view. Declarative configuration and package lifecycle tests will be added as the stages above are implemented.
+The real-Podman API-key and Codex proxy tests already load explicit local TypeScript extensions and verify their UID and dummy-only credential view. Declarative configuration and package lifecycle tests will be added as the stages above are implemented.
 
 ## Pi references
 

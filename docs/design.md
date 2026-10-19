@@ -1,6 +1,6 @@
 # Design
 
-This document records the agreed direction for `pis`. The core registry, CLI, editor, image generation, and container runner are now implemented; see [the README](../README.md) for current usage and [the roadmap](roadmap.md) for remaining work. The OpenAI credential proxy is implemented; declarative extension management and advanced hardening remain planned. See [proxy details](proxy.md) and [the extension plan](extensions-plan.md). Details marked open still need to be settled.
+This document records the agreed direction for `pis`. The core registry, CLI, editor, image generation, and container runner are now implemented; see [the README](../README.md) for current usage and [the roadmap](roadmap.md) for remaining work. The OpenAI API-key and Codex OAuth credential proxies are implemented; declarative extension management and advanced hardening remain planned. See [proxy details](proxy.md) and [the extension plan](extensions-plan.md). Details marked open still need to be settled.
 
 ## 1. Scope and architecture
 
@@ -63,6 +63,8 @@ Initial default layout:
 ```text
 ~/.local/share/pis/
   index.json
+  auth/
+    openai-codex.json
   projects/
     k7m2q/
       project.json
@@ -71,6 +73,7 @@ Initial default layout:
       state/
 ```
 
+- `auth/openai-codex.json` is an optional private, user-global host OAuth store, never mounted or included in builds; see [Codex sign-in](codex.md).
 - `project.json` is authoritative.
 - `index.json` is a rebuildable lookup cache for roots, IDs, and names.
 - `Containerfile` is generated and marked as such.
@@ -257,9 +260,13 @@ Verify support and practical behavior on the target Linux system rather than ass
 
 New projects use `credentials.proxy` for OpenAI and have an empty `credentials.env`. The host reads the key from the named variable, creates a private per-run Unix-socket HTTP proxy, and gives the container only a random temporary dummy capability. A container-local relay listens on loopback; no host TCP port is opened.
 
-Read-only per-run `models.json` and `auth.json` overlays redirect Pi's OpenAI provider to the relay and replace its OpenAI credentials without changing existing files. Runtime files contain no host-supplied key and are removed on normal shutdown. Host reads of sandbox-controlled state reject symlinked directories/files and non-regular or oversized JSON files.
+Read-only per-run `models.json` and `auth.json` overlays redirect Pi's selected provider to the relay and replace its OpenAI credentials without changing existing files. Runtime files contain no host-supplied key and are removed on normal shutdown. Host reads of sandbox-controlled state reject symlinked directories/files and non-regular or oversized JSON files.
 
-The proxy fixes the upstream to `https://api.openai.com`, allows only Responses/Chat Completions/model-list routes, rejects redirects, rebuilds request headers, and bounds request size, response size, time, concurrency, and per-run request count. It supports streaming and cancellation and does not log payloads or credentials. See [proxy configuration and limits](proxy.md).
+API-key mode fixes the upstream to `https://api.openai.com` and allows only Responses/Chat Completions/model-list routes. Codex mode (`provider: "openai-codex"`, without `keyEnv`) uses private host OAuth sign-in/import/refresh and only `https://chatgpt.com/backend-api/codex/responses`, injecting the real account header on the host. Pi receives a synthetic JWT, and its automatic transport falls back to SSE; bounded zstd requests are decoded before validation. See [Codex setup](codex.md).
+
+Both modes reject redirects, rebuild request headers, and bound request size, response size, time, concurrency, and per-run request count. It supports streaming and cancellation and does not log payloads or credentials. See [proxy configuration and limits](proxy.md).
+
+Codex sign-in is explicit through host-only `--login-codex`, `--import-codex FILE`, and `--logout-codex`. Refresh rotation is serialized across projects using the shared host sign-in, with atomic writes and cancellation. Nothing imports or mounts host Pi credentials automatically.
 
 Existing projects are not silently migrated. Direct mode remains available by omitting `proxy` and configuring explicitly selected environment variables in `env`. Directly forwarded keys and other stored credentials are accessible inside the container. The two modes cannot be mixed.
 

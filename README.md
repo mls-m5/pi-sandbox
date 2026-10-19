@@ -2,7 +2,7 @@
 
 `pis` is a Linux-only CLI that runs the entire [Pi coding agent](https://pi.dev) inside a rootless Podman container.
 
-**Status: working initial implementation.** Project registration, editable configuration, custom images, additional mounts, persistent Pi state, shell/exec modes, and diagnostics are implemented. The host-side OpenAI credential proxy is implemented and is the default for new projects. Declarative extension management is planned.
+**Status: working initial implementation.** Project registration, editable configuration, custom images, additional mounts, persistent Pi state, shell/exec modes, and diagnostics are implemented. The host-side OpenAI API-key proxy is the default for new projects; ChatGPT/Codex OAuth proxy mode is also implemented. Declarative extension management is planned.
 
 ## Requirements
 
@@ -66,6 +66,30 @@ printf 'Explain this project' | pis --fresh -- -p
 
 Arguments after `--` are passed unchanged to Pi, or to the program selected by `--exec`. Shell interpretation only occurs when you explicitly invoke a shell. Pi management subcommands such as `pis -- auth check --provider openai` do not receive implicit continuation.
 
+## Codex subscription sign-in
+
+For Pi's `openai-codex` provider, sign in on the **host**:
+
+```sh
+pis --login-codex
+# Or explicitly copy an existing host OAuth sign-in:
+pis --import-codex ~/.pi/agent/auth.json
+# Codex CLI file-based ~/.codex/auth.json is also supported.
+```
+
+Use `pis --edit` to set `credentials` to:
+
+```json
+{
+  "env": [],
+  "proxy": { "provider": "openai-codex" }
+}
+```
+
+Remove any old `keyEnv` field; keep the rest of the project configuration. Then select `pis -- --model openai-codex/<model-id>`. The real access/refresh tokens remain in private host storage and refresh there automatically; Pi and extensions get only a synthetic proxy token. `pis --logout-codex` removes the shared host sign-in.
+
+Prefer a dedicated sign-in: importing copies rotating tokens without synchronizing the original client. See [Codex setup, imports, and limitations](docs/codex.md). Live subscription sign-in is not covered by the fake-service tests.
+
 ## Project discovery
 
 Projects are explicitly registered, not inferred from Git repositories.
@@ -124,7 +148,7 @@ Generated configuration also contains an **inert `examples` section**. Copy exam
 - Changes to image settings trigger a build on the next launch; mount/credential changes do not.
 - Manually installed packages disappear when the container is removed.
 - Credential configuration stores host environment variable **names**, never values. Proxy mode requires its host key and never falls back to exposing it. Deliberate direct mode remains available by removing `proxy` and setting `env`; those keys are visible inside the container.
-- The proxy supports OpenAI Responses, Chat Completions, and model listing, with optional exact model restrictions and per-run request/concurrency limits. See [proxy behavior and limitations](docs/proxy.md).
+- API-key mode supports Responses, Chat Completions, and model listing; Codex mode supports its separate ChatGPT Responses endpoint with host OAuth refresh. Both have optional exact model restrictions and per-run request/concurrency limits. See [proxy behavior and limitations](docs/proxy.md).
 
 ```sh
 pis --check                    # Validate configuration and active paths
@@ -145,7 +169,7 @@ pis -- install npm:@example/pi-tools@1.2.3  # Replace with an actual trusted pac
 pis -- list
 ```
 
-Local files must already be available through the project or an explicit extra mount. Package installs persist in this project's Pi state, not your host Pi installation. Extensions see only the proxy dummy key, but can use it for permitted API calls.
+Local files must already be available through the project or an explicit extra mount. Package installs persist in this project's Pi state, not your host Pi installation. Extensions see only the proxy dummy key/token, but can use it for permitted requests.
 
 See [the extension support plan](docs/extensions-plan.md) for current usage and proposed declarative project configuration, pinned package synchronization, and trust rules. The proposed configuration fields and management commands are not implemented yet.
 
@@ -156,6 +180,7 @@ Default: `~/.local/share/pis/`. Override with `$PIS_HOME`, or `$XDG_DATA_HOME/pi
 ```text
 ~/.local/share/pis/
   index.json                    # Rebuildable cache; configs are authoritative
+  auth/openai-codex.json         # Private host OAuth credentials; NEVER mounted
   projects/k7m2q/
     project.json
     Containerfile               # Generated; do not edit
@@ -182,7 +207,7 @@ No project deletion or image garbage-collection command exists yet. Do not edit 
 
 **A writable mount permits Pi to change or delete those host files.** Secrets already in mounted directories, including `.env` files, remain accessible. Symlinks do not grant access to unmounted external targets. Resource limits are not configured yet.
 
-**Proxy mode keeps the host-provided OpenAI key outside the sandbox**, using a private Unix socket and a per-run dummy capability. No host TCP port is opened. Pi's OpenAI auth/model entries are replaced with read-only per-run overlays; originals are unchanged. Direct-mode forwarded keys, other stored credentials, or secrets in mounted files remain visible. The proxy does not retroactively scrub old state.
+**Proxy mode keeps the host-provided API key or Codex OAuth tokens outside the sandbox**, using a private Unix socket and a per-run dummy capability. No host TCP port is opened. Pi's selected provider auth/model entries are replaced with read-only per-run overlays; originals are unchanged. Direct-mode forwarded keys, other stored credentials, or secrets in mounted files remain visible. The proxy does not retroactively scrub old state.
 
 Hiding keys does not prevent API spending: sandboxed commands and extensions can use the capability within its host-enforced route/model/request limits. Outbound networking remains enabled; this is not a host/LAN access filter or exfiltration defense. Containers share the host kernel, not a VM-level boundary. Custom build instructions are trusted code; runtime keys and source are not supplied to builds. See [the proxy security notes](docs/proxy.md#security-boundaries-and-limitations).
 
@@ -195,11 +220,12 @@ npm run test:integration       # Builds and runs real rootless Podman containers
 
 Integration tests require the runtime prerequisites plus `script` from util-linux. They use fake credentials and a local fake OpenAI upstream, make no paid/external model API requests, remove temporary containers/project data/image tags, and may leave reusable Podman build caches/base images.
 
-Real-container coverage includes package/custom instruction builds, absolute working directories, UID/GID ownership, extra mount permissions, credential selection, persistent state, Pi startup, pipes, exit codes, PTY Bash, project exclusivity, bounded shutdown, the Unix socket proxy, Pi streaming against a fake upstream, and a TypeScript extension seeing only a dummy key.
+Real-container coverage includes package/custom instruction builds, absolute working directories, UID/GID ownership, extra mount permissions, credential selection, persistent state, Pi startup, pipes, exit codes, PTY Bash, project exclusivity, bounded shutdown, the Unix socket proxy, Pi API-key/Codex streaming against fake upstreams, host OAuth refresh, and TypeScript extensions seeing only dummy credentials. The Codex integration runs without container networking.
 
 ## Further documentation
 
 - [OpenAI proxy: setup and security](docs/proxy.md)
+- [Codex subscription sign-in and proxy](docs/codex.md)
 - [Extension usage and implementation plan](docs/extensions-plan.md)
 - [Design and configuration](docs/design.md)
 - [Implementation roadmap and acceptance tests](docs/roadmap.md)
