@@ -18,6 +18,19 @@ function fixture(t) {
   return { base, root, env, invoke };
 }
 
+test('unsupported Node versions fail before loading modern built-ins or initializing storage', t => {
+  const { env } = fixture(t);
+  for (const version of ['18.17.1', '20.19.0', '22.18.0']) {
+    const preload = `data:text/javascript,${encodeURIComponent(`Object.defineProperty(process.versions, 'node', { value: '${version}' });`)}`;
+    const rejected = spawnSync(process.execPath, ['--import', preload, cli, '--help'], { env, encoding: 'utf8' });
+    assert.equal(rejected.status, 1);
+    assert.match(rejected.stderr, /Node.js 22.19 or newer is required/);
+    assert.ok(rejected.stderr.includes(version));
+    assert.doesNotMatch(rejected.stderr, /SyntaxError|ModuleJob|zstdDecompressSync/);
+  }
+  assert.ok(!fs.existsSync(env.PIS_HOME));
+});
+
 test('CLI parsing forwards arguments and rejects ambiguous combinations', () => {
   assert.deepEqual(parse(['--fresh', '--', '-p', 'hello']), { action: 'run', mode: 'pi', fresh: true, args: ['-p', 'hello'] });
   assert.equal(parse(['--project=abc12', '--bash']).project, 'abc12');

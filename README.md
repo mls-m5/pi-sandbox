@@ -17,6 +17,15 @@ Tested on Ubuntu 24.04 with rootless Podman 4.9.3 and crun. SELinux behavior is 
 
 The CLI has **no npm dependencies** and runs directly from the checkout.
 
+If your terminal selects an older Node, check `node --version` and put a compatible Node on PATH. If Pi's bundled Node is installed at the following path, you can use it temporarily:
+
+```sh
+export PATH="$HOME/.local/share/pi-node/current/bin:$PATH"
+node --version
+```
+
+The launcher checks the Node version before loading modules that require newer built-ins.
+
 ## Try without installing
 
 ```sh
