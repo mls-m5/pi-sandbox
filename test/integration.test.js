@@ -40,13 +40,14 @@ test('real rootless Podman: build, identity, mounts, credentials, state, Pi, pip
   projectId = config.id;
   // Keep coverage for explicitly opted-in legacy/direct credential forwarding.
   config.credentials = { env: ['OPENAI_API_KEY'] };
+  config.extensions = [];
   config.image.packages = ['jq'];
   config.image.extraInstructions = ['RUN printf customization-works > /opt/pis-build-marker'];
   config.mounts = [{ source: shared }, { source: writable, access: 'read-write' }];
   fs.writeFileSync(shown.configurationFile, JSON.stringify(config));
   image = JSON.parse(success(['--show']).stdout).image;
   success(['--build']);
-  assert.deepEqual(fs.readdirSync(path.join(path.dirname(shown.configurationFile), 'build')), ['Containerfile']);
+  assert.deepEqual(fs.readdirSync(path.join(path.dirname(shown.configurationFile), 'build')).sort(), ['Containerfile', 'extensions.json', 'fetch-bridge.mjs', 'image-entry.mjs', 'pi-launcher']);
 
   const script = `
     const fs = require('fs');

@@ -45,7 +45,10 @@ test('only image configuration affects image fingerprint', () => {
   changed.image.packages.push('python3');
   assert.notEqual(imagePlan(changed).image, first.image);
   assert.match(first.content, /npm install -g --ignore-scripts/);
-  assert.match(first.content, /ENTRYPOINT \["pi"\]/);
+  assert.match(first.content, /image-entry\.mjs/);
+  assert.match(first.content, /pi install 'npm:pi-web-access@0\.40\.0'/);
+  changed.extensions = [];
+  assert.notEqual(imagePlan(changed).image, first.image);
   assert.doesNotMatch(first.content, /OPENAI_API_KEY|\/work\/project/);
 });
 
@@ -64,7 +67,7 @@ test('launch preserves paths, identity, isolation flags, and literal arguments',
   assert.ok(!args.includes('--tty'));
   assert.ok(args.includes('/work/project:/work/project:rw'));
   assert.ok(args.includes(`/storage/projects/abc12/state:${CONTAINER_HOME}:rw`));
-  assert.deepEqual(args.slice(-4), ['image', 'bash', '-c', 'echo "$HOME"']);
+  assert.deepEqual(args.slice(-4), ['/opt/pis/image-entry.mjs', 'bash', '-c', 'echo "$HOME"']);
   assert.equal(launchArgs(store, config, ['pi'], { cwd: '/elsewhere', image: 'image' }).workdir, config.root);
 });
 

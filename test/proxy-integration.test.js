@@ -35,6 +35,7 @@ test('real Podman proxy: private socket, dummy-only sandbox, HTTP access, and Pi
   const store = new Store(path.join(base, 'storage'));
   const config = await store.register(root, 'proxy-integration');
   config.credentials.proxy.models = ['gpt-4o'];
+  config.extensions = [];
   await store.save(config, store.load(config.id));
   const image = imagePlan(config).image;
   const oldKey = process.env.OPENAI_API_KEY;

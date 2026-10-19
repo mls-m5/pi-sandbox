@@ -18,6 +18,7 @@ Usage:
   pis --list
   pis --relocate ID_OR_NAME
   pis [--project ID_OR_NAME] --edit | --check | --show | --build | --rebuild
+  pis [--project ID_OR_NAME] --extensions-list
   pis --doctor
   pis --login-codex
   pis --import-codex FILE
@@ -62,7 +63,7 @@ export function parse(argv) {
       assert(!options.fresh, 'Repeated option: --fresh'); options.fresh = true;
     } else if (['--bash', '--exec'].includes(key) && equals === -1) {
       assert(!mode, 'Choose either --bash or --exec.'); mode = key.slice(2);
-    } else if (['--new', '--list', '--edit', '--check', '--show', '--build', '--rebuild', '--doctor', '--login-codex', '--logout-codex', '--help', '-h', '--version'].includes(key) && equals === -1) {
+    } else if (['--new', '--list', '--edit', '--check', '--show', '--build', '--rebuild', '--extensions-list', '--doctor', '--login-codex', '--logout-codex', '--help', '-h', '--version'].includes(key) && equals === -1) {
       assert(!action, 'Choose only one management action.'); action = key === '-h' ? 'help' : key.slice(2);
     } else throw new Error(`Unknown pis option: ${token}. Pass Pi arguments after --; see pis --help.`);
   }
@@ -161,6 +162,10 @@ export async function main(argv = process.argv.slice(2)) {
   const config = await store.refresh(selected.id);
   if (options.action === 'edit') return edit(store, config);
   validate(config, { storage: store.root });
+  if (options.action === 'extensions-list') {
+    console.log(config.extensions.length ? `Image extension install sources:\n${config.extensions.join('\n')}` : 'No image extensions configured (extensions: []).');
+    return 0;
+  }
   if (options.action === 'check') { console.log(`Valid: ${store.configPath(config.id)}`); return 0; }
   if (options.action === 'show') {
     const plan = imagePlan(config);
