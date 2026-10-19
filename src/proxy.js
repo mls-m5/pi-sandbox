@@ -3,11 +3,21 @@ import http from 'node:http';
 import https from 'node:https';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { Transform, pipeline } from 'node:stream';
+import { zstdDecompressSync } from 'node:zlib';
+import { codexClaims, dummyCodexToken } from './codex-auth.js';
 import { assert } from './util.js';
 
 export const OPENAI_UPSTREAM = 'https://api.openai.com';
+export const CODEX_UPSTREAM = 'https://chatgpt.com';
 export const DEFAULT_PROXY = { provider: 'openai', keyEnv: 'OPENAI_API_KEY', models: [], maxRequests: 1000, maxConcurrent: 4 };
-const ROUTES = new Set(['POST /v1/responses', 'POST /v1/chat/completions', 'GET /v1/models']);
+const API_ROUTES = new Set(['POST /v1/responses', 'POST /v1/chat/completions', 'GET /v1/models']);
+const CODEX_ROUTES = new Set(['POST /backend-api/codex/responses']);
+
+function credentialFor(provider, apiKey) {
+  if (provider === 'openai-codex') return { apiKey, ...codexClaims(apiKey) };
+  assert(typeof apiKey === 'string' && /^[A-Za-z0-9_-]+$/.test(apiKey), 'Missing or invalid host OpenAI API key.');
+  return { apiKey };
+}
 
 // Holds a short suffix between chunks so even a split credential is never emitted.
 export class SecretRedactor extends Transform {
@@ -17,6 +27,12 @@ export class SecretRedactor extends Transform {
     this.pending = Buffer.alloc(0);
     this.bytes = 0;
     this.maxBytes = maxBytes;
+    this.prefix = new Uint32Array(this.secret.length);
+    for (let i = 1, matched = 0; i < this.secret.length; i++) {
+      while (matched && this.secret[i] !== this.secret[matched]) matched = this.prefix[matched - 1];
+      if (this.secret[i] === this.secret[matched]) matched++;
+      this.prefix[i] = matched;
+    }
   }
   _transform(chunk, encoding, callback) {
     this.bytes += chunk.length;
@@ -28,7 +44,15 @@ export class SecretRedactor extends Transform {
       this.push('[REDACTED]');
       this.pending = this.pending.subarray(index + this.secret.length);
     }
-    const safeLength = this.pending.length - this.secret.length + 1;
+    // Retain only a suffix matching a secret prefix, not an entire JWT's worth
+    // of normal SSE bytes. KMP bounds the work and preserves first-token latency.
+    let keep = 0;
+    const tail = this.pending.subarray(Math.max(0, this.pending.length - this.secret.length + 1));
+    for (const byte of tail) {
+      while (keep && byte !== this.secret[keep]) keep = this.prefix[keep - 1];
+      if (byte === this.secret[keep]) keep++;
+    }
+    const safeLength = this.pending.length - keep;
     if (safeLength > 0) {
       this.push(this.pending.subarray(0, safeLength));
       this.pending = this.pending.subarray(safeLength);
@@ -66,10 +90,13 @@ function body(req, maxBytes) {
  * The upstream parameter and limit overrides exist for local fake-server tests.
  * No headers, URLs, payloads, or credentials are logged or included in errors.
  */
-export async function startOpenAIProxy({ socketPath, apiKey, token = `sk-pis-${randomBytes(32).toString('hex')}`, models = [], maxRequests = 1000, maxConcurrent = 4, upstream = OPENAI_UPSTREAM, maxBodyBytes = 16 * 1024 * 1024, timeoutMs = 300_000 }) {
-  assert(typeof apiKey === 'string' && /^[A-Za-z0-9_-]+$/.test(apiKey), 'Missing or invalid host OpenAI API key.');
+export async function startOpenAIProxy({ socketPath, apiKey, provider = 'openai', getCredentials, token, models = [], maxRequests = 1000, maxConcurrent = 4, upstream, maxBodyBytes = 16 * 1024 * 1024, timeoutMs = 300_000 }) {
+  assert(['openai', 'openai-codex'].includes(provider), 'Unsupported proxy provider.');
+  const initialCredential = credentialFor(provider, apiKey);
+  token ??= provider === 'openai-codex' ? dummyCodexToken() : `sk-pis-${randomBytes(32).toString('hex')}`;
   assert(typeof token === 'string' && token.length >= 16 && token !== apiKey, 'Invalid proxy capability.');
-  const origin = new URL(upstream);
+  const routes = provider === 'openai-codex' ? CODEX_ROUTES : API_ROUTES;
+  const origin = new URL(upstream || (provider === 'openai-codex' ? CODEX_UPSTREAM : OPENAI_UPSTREAM));
   assert(!origin.username && !origin.password && origin.pathname === '/' && !origin.search && !origin.hash, 'Upstream must be an origin.');
   assert(origin.protocol === 'https:' || (origin.protocol === 'http:' && origin.hostname === '127.0.0.1'), 'Upstream requires HTTPS (loopback HTTP is test-only).');
   const expected = Buffer.from(`Bearer ${token}`);
@@ -80,10 +107,11 @@ export async function startOpenAIProxy({ socketPath, apiKey, token = `sk-pis-${r
     const supplied = Buffer.from(req.headers.authorization || '');
     if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) return reply(res, 401, 'Invalid proxy capability.');
     // Exact raw path matching rejects queries, absolute URLs, traversal, and alternate destinations.
-    if (!ROUTES.has(`${req.method} ${req.url}`)) return reply(res, 403, 'Endpoint not allowed.');
+    if (!routes.has(`${req.method} ${req.url}`)) return reply(res, 403, 'Endpoint not allowed.');
     if (concurrent >= maxConcurrent) return reply(res, 429, 'Proxy concurrency limit reached.');
     if (used >= maxRequests) return reply(res, 429, 'Proxy request budget exhausted.');
     concurrent++;
+    const controller = new AbortController();
     const timeout = setTimeout(() => {
       reply(res, 504, 'Upstream request timed out.');
       outgoing?.destroy();
@@ -93,7 +121,7 @@ export async function startOpenAIProxy({ socketPath, apiKey, token = `sk-pis-${r
     let finished = false;
     const finish = () => {
       if (finished) return;
-      finished = true; clearTimeout(timeout); concurrent--;
+      finished = true; clearTimeout(timeout); concurrent--; controller.abort();
       if (outgoing) { active.delete(outgoing); outgoing.destroy(); }
     };
     res.once('close', finish);
@@ -102,6 +130,12 @@ export async function startOpenAIProxy({ socketPath, apiKey, token = `sk-pis-${r
       if (req.method === 'POST') {
         if (!/^application\/json(?:\s*;|$)/i.test(req.headers['content-type'] || '')) return reply(res, 415, 'JSON content type required.');
         payload = await body(req, maxBodyBytes);
+        const encoding = req.headers['content-encoding'];
+        if (encoding && encoding !== 'identity') {
+          if (provider !== 'openai-codex' || encoding !== 'zstd') return reply(res, 415, 'Unsupported request encoding.');
+          try { payload = zstdDecompressSync(payload, { maxOutputLength: maxBodyBytes }); }
+          catch { return reply(res, 413, 'Invalid or oversized compressed request.'); }
+        }
         let parsed;
         try { parsed = JSON.parse(payload.toString('utf8')); } catch { return reply(res, 400, 'Invalid JSON request.'); }
         if (!parsed || typeof parsed.model !== 'string' || !parsed.model) return reply(res, 400, 'A model is required.');
@@ -111,11 +145,24 @@ export async function startOpenAIProxy({ socketPath, apiKey, token = `sk-pis-${r
       // Recheck after asynchronous body collection so parallel uploads cannot overspend the request count.
       if (used >= maxRequests) return reply(res, 429, 'Proxy request budget exhausted.');
       used++;
+      let credential = initialCredential;
+      if (getCredentials) {
+        try { credential = credentialFor(provider, (await getCredentials(controller.signal)).apiKey); }
+        catch { return reply(res, 503, 'Host credentials unavailable. For Codex, run pis --login-codex on the host.'); }
+      }
+      if (finished || res.destroyed || res.writableEnded) return;
+      const sessionHeaders = {};
+      if (provider === 'openai-codex') {
+        for (const name of ['session-id', 'x-client-request-id']) {
+          if (typeof req.headers[name] === 'string' && /^[A-Za-z0-9._:-]{1,128}$/.test(req.headers[name])) sessionHeaders[name] = req.headers[name];
+        }
+      }
       const request = origin.protocol === 'https:' ? https.request : http.request;
       outgoing = request(new URL(req.url, origin), {
         method: req.method,
         headers: {
-          authorization: `Bearer ${apiKey}`,
+          authorization: `Bearer ${credential.apiKey}`,
+          ...(provider === 'openai-codex' ? { 'chatgpt-account-id': credential.accountId, originator: 'pi', 'openai-beta': 'responses=experimental', ...sessionHeaders } : {}),
           'content-type': 'application/json',
           accept: 'application/json, text/event-stream',
           'accept-encoding': 'identity',
@@ -135,7 +182,7 @@ export async function startOpenAIProxy({ socketPath, apiKey, token = `sk-pis-${r
           return reply(res, 502, 'Unsupported upstream content encoding.');
         }
         res.writeHead(status, { 'content-type': String(upstreamResponse.headers['content-type']).startsWith('text/event-stream') ? 'text/event-stream' : 'application/json', 'cache-control': 'no-store' });
-        pipeline(upstreamResponse, new SecretRedactor(apiKey), res, () => finish());
+        pipeline(upstreamResponse, new SecretRedactor(credential.apiKey), res, () => finish());
       });
       active.add(outgoing);
       outgoing.on('error', () => reply(res, 502, 'OpenAI upstream connection failed.'));

@@ -6,6 +6,8 @@ import path from 'node:path';
 import http from 'node:http';
 import { Readable } from 'node:stream';
 import { SecretRedactor, startOpenAIProxy } from '../src/proxy.js';
+import { zstdCompressSync } from 'node:zlib';
+import { fakeCodexAccess } from './fixtures/codex.js';
 
 const KEY = 'sk-real-host-key-never-expose-this';
 async function fixture(t, handler, options = {}) {
@@ -28,7 +30,7 @@ async function fixture(t, handler, options = {}) {
       res.on('error', reject);
     });
     req.on('error', reject);
-    req.end(payload === undefined ? undefined : typeof payload === 'string' ? payload : JSON.stringify(payload));
+    req.end(payload === undefined ? undefined : (typeof payload === 'string' || Buffer.isBuffer(payload)) ? payload : JSON.stringify(payload));
   });
   return { request, proxy, socketPath };
 }
@@ -137,6 +139,59 @@ test('upstream timeout is generic and disconnect cancels upstream work', async t
   await waiting;
   client.destroy();
   await Promise.race([closed, new Promise((_, reject) => { const timer = setTimeout(() => reject(new Error('Upstream was not cancelled.')), 1000); timer.unref(); })]);
+});
+
+test('Codex injects host JWT/account headers, accepts bounded zstd, and forbids API routes', async t => {
+  const access = fakeCodexAccess();
+  let received;
+  const { request, proxy } = await fixture(t, (req, res) => {
+    const chunks = [];
+    req.on('data', chunk => chunks.push(chunk));
+    req.on('end', () => { received = { headers: req.headers, body: JSON.parse(Buffer.concat(chunks)) }; res.end('{}'); });
+  }, { provider: 'openai-codex', apiKey: access });
+  assert.notEqual(proxy.token, access);
+  const compressed = zstdCompressSync(Buffer.from('{"model":"allowed","stream":true}'));
+  assert.equal((await request('/backend-api/codex/responses', compressed, { 'content-encoding': 'zstd', 'chatgpt-account-id': 'attacker-account', originator: 'attacker', 'session-id': 'safe-session' })).status, 200);
+  assert.equal(received.headers.authorization, `Bearer ${access}`);
+  assert.equal(received.headers['chatgpt-account-id'], 'host-account-only');
+  assert.equal(received.headers.originator, 'pi');
+  assert.equal(received.headers['openai-beta'], 'responses=experimental');
+  assert.equal(received.headers['session-id'], 'safe-session');
+  assert.equal(received.headers['content-encoding'], undefined);
+  assert.equal(received.body.model, 'allowed');
+  assert.equal((await request('/v1/responses')).status, 403);
+  assert.equal((await request('/backend-api/codex/responses?account=attacker')).status, 403);
+});
+
+test('Codex compressed size limits and failed host refresh never forward or expose credentials', async t => {
+  let forwarded = 0;
+  const { request } = await fixture(t, (_req, res) => { forwarded++; res.end('{}'); }, { provider: 'openai-codex', apiKey: fakeCodexAccess(), maxBodyBytes: 128, getCredentials: async () => { throw new Error('private-refresh-token'); } });
+  const bomb = zstdCompressSync(Buffer.from(JSON.stringify({ model: 'allowed', data: 'x'.repeat(1000) })));
+  assert.equal((await request('/backend-api/codex/responses', bomb, { 'content-encoding': 'zstd' })).status, 413);
+  const failed = await request('/backend-api/codex/responses');
+  assert.equal(failed.status, 503);
+  assert.ok(!failed.body.includes('private-refresh-token'));
+  assert.equal(forwarded, 0);
+});
+
+test('each Codex request uses the latest host credential and redacts that access token', async t => {
+  const access = fakeCodexAccess({ signature: 'refreshed-signature' });
+  const { request } = await fixture(t, (req, res) => {
+    assert.equal(req.headers.authorization, `Bearer ${access}`);
+    res.end(access);
+  }, { provider: 'openai-codex', apiKey: fakeCodexAccess(), getCredentials: async () => ({ apiKey: access }) });
+  const result = await request('/backend-api/codex/responses');
+  assert.equal(result.status, 200);
+  assert.equal(result.body, '[REDACTED]');
+});
+
+test('long JWT redaction does not buffer ordinary SSE frames until stream completion', () => {
+  const secret = fakeCodexAccess({ signature: 'x'.repeat(4000) });
+  const redactor = new SecretRedactor(secret);
+  const frame = 'data: hello\\n\\n';
+  redactor.write(frame);
+  assert.equal(redactor.read().toString(), frame);
+  redactor.end();
 });
 
 test('redactor preserves ordinary bytes and masks repeated credentials split at every boundary', async () => {
