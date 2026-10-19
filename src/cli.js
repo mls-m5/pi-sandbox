@@ -4,8 +4,8 @@ import { randomBytes } from 'node:crypto';
 import { createInterface } from 'node:readline/promises';
 import { Store } from './store.js';
 import { validate } from './config.js';
-import { CONTAINER_HOME, BASE_IMAGE, PI_VERSION, imagePlan, inspectPodman, launch, launchArgs, piCommand } from './container.js';
-import { assert, directory, readJson, run, splitCommand, writeJson } from './util.js';
+import { CONTAINER_HOME, BASE_IMAGE, PI_VERSION, imagePlan, inspectPodman, launch, piCommand } from './container.js';
+import { assert, directory, readJson, run, splitCommand, within, writeJson } from './util.js';
 
 export const HELP = `pis — project-scoped Pi sandbox (Linux / rootless Podman)
 
@@ -27,7 +27,8 @@ Pi arguments belong after --. Explicit Pi session selectors override continuatio
 --rebuild disables build cache. Runtime containers are disposable.
 
 Storage: $PIS_HOME, otherwise $XDG_DATA_HOME/pis or ~/.local/share/pis.
-Never run as root. Mounted files and forwarded keys are accessible to the sandbox.
+New projects use the host OpenAI key proxy. Existing direct-mode projects are unchanged.
+Never run as root. Mounted files and explicitly forwarded keys are accessible to the sandbox.
 `;
 
 export function parse(argv) {
@@ -137,8 +138,12 @@ export async function main(argv = process.argv.slice(2)) {
   if (options.action === 'check') { console.log(`Valid: ${store.configPath(config.id)}`); return 0; }
   if (options.action === 'show') {
     const plan = imagePlan(config);
-    const invocation = launchArgs(store, config, piCommand(), { cwd, image: plan.image });
-    console.log(JSON.stringify({ config, configurationFile: store.configPath(config.id), image: plan.image, workingDirectory: invocation.workdir, containerHome: CONTAINER_HOME, piCommand: piCommand(), mounts: [{ source: config.root, target: config.root, access: 'read-write' }, ...config.mounts.map(m => ({ source: m.source, target: m.source, access: m.access || 'read-only' }))], credentialVariables: config.credentials.env.map(name => ({ name, present: Boolean(process.env[name]) })) }, null, 2));
+    const workdir = within(config.root, cwd) ? cwd : config.root;
+    const proxyKeyEnv = config.credentials.proxy?.keyEnv || 'OPENAI_API_KEY';
+    const credentialVariables = config.credentials.proxy
+      ? [{ name: proxyKeyEnv, present: Boolean(process.env[proxyKeyEnv]), handling: 'host-proxy' }]
+      : config.credentials.env.map(name => ({ name, present: Boolean(process.env[name]), handling: 'forwarded' }));
+    console.log(JSON.stringify({ config, configurationFile: store.configPath(config.id), image: plan.image, workingDirectory: workdir, containerHome: CONTAINER_HOME, piCommand: piCommand(), mounts: [{ source: config.root, target: config.root, access: 'read-write' }, ...config.mounts.map(m => ({ source: m.source, target: m.source, access: m.access || 'read-only' }))], credentialVariables }, null, 2));
     return 0;
   }
   return launch(store, config, { ...options, cwd, rebuild: options.action === 'rebuild', buildOnly: ['build', 'rebuild'].includes(options.action) });

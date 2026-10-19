@@ -38,6 +38,8 @@ test('real rootless Podman: build, identity, mounts, credentials, state, Pi, pip
   const shown = JSON.parse(success(['--show']).stdout);
   const config = shown.config;
   projectId = config.id;
+  // Keep coverage for explicitly opted-in legacy/direct credential forwarding.
+  config.credentials = { env: ['OPENAI_API_KEY'] };
   config.image.packages = ['jq'];
   config.image.extraInstructions = ['RUN printf customization-works > /opt/pis-build-marker'];
   config.mounts = [{ source: shared }, { source: writable, access: 'read-write' }];

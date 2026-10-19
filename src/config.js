@@ -1,6 +1,7 @@
 import path from 'node:path';
 import os from 'node:os';
 import { assert, directory, within, overlap } from './util.js';
+import { DEFAULT_PROXY } from './proxy.js';
 
 export const ID_PATTERN = /^[a-z0-9]{5}$/;
 export const NAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/;
@@ -41,11 +42,21 @@ export function validate(config, { storage, home = os.homedir(), identity, paths
     assert(!/[\n\r]/.test(instruction) && /^RUN\s+\S/.test(instruction) && !/\\\s*$/.test(instruction), 'extraInstructions supports single-line RUN instructions only (no trailing continuation).');
     assert(!/^RUN\s+--mount\b/.test(instruction), 'Build mounts are not supported in extraInstructions.');
   }
-  object(config.credentials, ['env'], 'credentials');
+  object(config.credentials, ['env', 'proxy'], 'credentials');
   strings(config.credentials.env, 'credentials.env');
   for (const name of config.credentials.env) {
     assert(/^[A-Z_][A-Z0-9_]*$/.test(name), `Invalid credential variable name: ${name}`);
     assert(!['HOME', 'PATH', 'USER', 'LOGNAME', 'SHELL', 'ENV', 'BASH_ENV', 'NODE_OPTIONS', 'NODE_PATH', 'LD_PRELOAD', 'LD_LIBRARY_PATH', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_CACHE_HOME'].includes(name) && !name.startsWith('PI_') && !name.startsWith('PIS_'), `Reserved environment variable: ${name}`);
+  }
+  if (config.credentials.proxy !== undefined) {
+    const proxy = config.credentials.proxy;
+    object(proxy, ['provider', 'keyEnv', 'models', 'maxRequests', 'maxConcurrent'], 'credentials.proxy');
+    assert(proxy.provider === 'openai', 'Only the openai credential proxy is supported.');
+    assert(proxy.keyEnv === undefined || (typeof proxy.keyEnv === 'string' && /^[A-Z_][A-Z0-9_]*$/.test(proxy.keyEnv)), 'Invalid proxy keyEnv variable name.');
+    assert(config.credentials.env.length === 0, 'Proxy mode requires credentials.env to be empty; never forward real credentials alongside the proxy.');
+    if (proxy.models !== undefined) strings(proxy.models, 'credentials.proxy.models');
+    if (proxy.maxRequests !== undefined) assert(Number.isInteger(proxy.maxRequests) && proxy.maxRequests >= 1 && proxy.maxRequests <= 100_000, 'proxy.maxRequests must be an integer between 1 and 100000.');
+    if (proxy.maxConcurrent !== undefined) assert(Number.isInteger(proxy.maxConcurrent) && proxy.maxConcurrent >= 1 && proxy.maxConcurrent <= 64, 'proxy.maxConcurrent must be an integer between 1 and 64.');
   }
   assert(Array.isArray(config.mounts), 'mounts must be an array.');
   const sources = [config.root];
@@ -81,7 +92,7 @@ export function defaults(id, root, name) {
   return {
     version: 1, id, ...(name ? { name } : {}), root,
     image: { packages: [], extraInstructions: [] },
-    mounts: [], credentials: { env: ['OPENAI_API_KEY'] },
+    mounts: [], credentials: { env: [], proxy: { ...DEFAULT_PROXY, models: [] } },
     examples: {
       mounts: [
         { source: path.join(os.homedir(), 'Projects/shared-library'), access: 'read-only' },

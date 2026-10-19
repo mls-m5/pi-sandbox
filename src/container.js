@@ -3,6 +3,7 @@ import path from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { assert, atomicWrite, directory, privateDir, run, within } from './util.js';
+import { prepareProxy, PROXY_BASE_URL } from './proxy-runtime.js';
 
 // Multi-architecture manifest digest; updates are intentional source changes.
 export const BASE_IMAGE = 'docker.io/library/node:24.14.0-bookworm-slim@sha256:d8e448a56fc63242f70026718378bd4b00f8c82e78d20eefb199224a4d8e33d8';
@@ -71,7 +72,7 @@ export async function ensureImage(store, config, { rebuild = false } = {}) {
   return plan;
 }
 
-export function launchArgs(store, config, command, { cwd, image, selinux = false, tty = Boolean(process.stdin.isTTY && process.stdout.isTTY && interactiveOutput(command)), uid = process.getuid(), gid = process.getgid(), name = `pis-${config.id}-${randomBytes(5).toString('hex')}` } = {}) {
+export function launchArgs(store, config, command, { cwd, image, proxy, selinux = false, tty = Boolean(process.stdin.isTTY && process.stdout.isTTY && interactiveOutput(command)), uid = process.getuid(), gid = process.getgid(), name = `pis-${config.id}-${randomBytes(5).toString('hex')}` } = {}) {
   const workdir = within(config.root, cwd) ? cwd : config.root;
   const state = path.join(store.projectDir(config.id), 'state');
   const sharedLabel = selinux ? ',z' : '';
@@ -85,9 +86,17 @@ export function launchArgs(store, config, command, { cwd, image, selinux = false
     '--volume', `${config.root}:${config.root}:rw${sharedLabel}`,
     '--volume', `${state}:${CONTAINER_HOME}:rw${privateLabel}`];
   for (const mount of config.mounts) args.push('--volume', `${mount.source}:${mount.source}:${mount.access === 'read-write' ? 'rw' : 'ro'}${sharedLabel}`);
-  for (const variable of config.credentials.env) if (process.env[variable]) args.push('--env', variable);
+  if (config.credentials.proxy) {
+    assert(proxy, 'Proxy-enabled launches require an active host proxy.');
+    args.push('--env', `OPENAI_API_KEY=${proxy.token}`, '--env', `OPENAI_BASE_URL=${PROXY_BASE_URL}`,
+      '--volume', `${proxy.directory}:/pis/proxy:ro${sharedLabel}`,
+      '--volume', `${proxy.directory}/models.json:${CONTAINER_HOME}/.pi/agent/models.json:ro${sharedLabel}`,
+      '--volume', `${proxy.directory}/auth.json:${CONTAINER_HOME}/.pi/agent/auth.json:ro${sharedLabel}`);
+  } else {
+    for (const variable of config.credentials.env) if (process.env[variable]) args.push('--env', variable);
+  }
   for (const variable of ['TERM', 'COLORTERM']) if (process.env[variable]) args.push('--env', variable);
-  args.push('--entrypoint', '/usr/bin/env', image, ...command);
+  args.push('--entrypoint', proxy ? '/usr/local/bin/node' : '/usr/bin/env', image, ...(proxy ? ['/pis/proxy/entry.mjs'] : []), ...command);
   return { args, name, workdir };
 }
 
@@ -100,17 +109,22 @@ export async function launch(store, config, options) {
     const plan = await ensureImage(store, config, options);
     if (options.buildOnly) return 0;
     const command = options.mode === 'bash' ? ['bash', '-i'] : options.mode === 'exec' ? options.args : piCommand(options.args, options.fresh);
-    if (options.mode === 'pi') {
+    if (options.mode === 'pi' && !config.credentials.proxy) {
       const missing = config.credentials.env.filter(variable => !process.env[variable]);
       if (missing.length) console.error(`pis: credentials not set: ${missing.join(', ')}. Set them on the host, adjust pis --edit, or use sandbox-local Pi login.`);
     }
     const state = path.join(store.projectDir(config.id), 'state');
     privateDir(state);
-    const invocation = launchArgs(store, config, command, { cwd: options.cwd, image: plan.image, selinux: info.host.security.selinuxEnabled });
-    try { return await run('podman', invocation.args); }
-    finally {
+    let proxy, invocation;
+    try {
+      // proxyUpstream is an internal fake-server test seam, never a CLI/config option.
+      if (config.credentials.proxy) proxy = await prepareProxy(store, config, { upstream: options.proxyUpstream });
+      invocation = launchArgs(store, config, command, { cwd: options.cwd, image: plan.image, proxy, selinux: info.host.security.selinuxEnabled });
+      return await run('podman', invocation.args);
+    } finally {
       // Covers interrupted attached clients that leave their container running.
-      spawnSync('podman', ['rm', '--force', '--time', '1', invocation.name], { stdio: 'ignore', timeout: 15_000 });
+      if (invocation) spawnSync('podman', ['rm', '--force', '--time', '1', invocation.name], { stdio: 'ignore', timeout: 15_000 });
+      if (proxy) await proxy.close();
     }
   });
 }

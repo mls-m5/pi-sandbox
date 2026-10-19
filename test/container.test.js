@@ -4,7 +4,7 @@ import path from 'node:path';
 import { defaults } from '../src/config.js';
 import { piCommand, interactiveOutput, imagePlan, launchArgs, CONTAINER_HOME } from '../src/container.js';
 
-const config = defaults('abc12', '/work/project', 'app');
+const config = { ...defaults('abc12', '/work/project', 'app'), credentials: { env: ['OPENAI_API_KEY'] } };
 const store = { projectDir: id => `/storage/projects/${id}` };
 
 test('Pi continues by default and respects explicit session selection/subcommands', () => {
