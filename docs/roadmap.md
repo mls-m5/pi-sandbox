@@ -1,10 +1,19 @@
 # Implementation roadmap
 
-The repository currently contains planning documentation only. Implement in small, testable milestones.
+The core program is implemented. Continue development in small, tested commits.
+
+## Current progress
+
+- **Milestones 1–3:** core functionality implemented and covered by fast tests plus an opt-in real-Podman integration test.
+- **Milestone 4:** rootless diagnostics, baseline privilege restrictions, per-project exclusivity, bounded shutdown, and crash-lock guidance implemented. Resource limits, read-only root, broader compatibility testing, safe deletion/cleanup, and migration/update workflows remain.
+- **Milestone 5:** credential proxy not implemented.
+- **Verification:** tested on Ubuntu 24.04, Podman 4.9.3, crun, and cgroups v2. Real-container tests cover identity, mount permissions, custom builds, credentials, state, Pi startup, pipes, exit codes, PTY Bash, concurrent-use rejection, and SIGTERM cleanup. No model API calls were made. SELinux-enforcing behavior and an actual model conversation remain unverified.
+
+The sections below retain the full milestone checklist, including acceptance goals that extend beyond current coverage.
 
 ## Milestone 1: Project registry and configuration
 
-- Set up the CLI and automated tests, likely in TypeScript.
+- Set up the CLI and automated tests (implemented using dependency-free Node.js ES modules).
 - Implement private host storage and versioned configuration validation.
 - Generate collision-checked five-character IDs and optional unique names.
 - Implement `--new`, `--list`, `--project`, and nearest-ancestor discovery.
@@ -118,4 +127,4 @@ Acceptance tests:
 
 ## Suggested first vertical slice
 
-Implement registration, a fixed minimal image, same-path mounting, correct identity, persistent Pi state, and `pis` / `pis --fresh` / `pis --bash`. Validate this on a real rootless Podman host before expanding image customization and proxy features.
+Completed: registration, same-path mounts, current UID/GID, persistent Pi state, default continuation, fresh mode, Bash/exec, image customization, and real rootless Podman verification. Next priorities are interactive user feedback, SELinux verification, operational hardening, and the credential proxy.

@@ -1,12 +1,12 @@
 # Design
 
-This document records the agreed direction for `pis`. It describes intended behavior, not an existing implementation. Details marked open need to be settled during implementation.
+This document records the agreed direction for `pis`. The core registry, CLI, editor, image generation, and container runner are now implemented; see [the README](../README.md) for current usage and [the roadmap](roadmap.md) for remaining work. The credential proxy and advanced hardening remain planned. Details marked open still need to be settled.
 
 ## 1. Scope and architecture
 
 Build a Linux-only host CLI that launches the entire Pi process in rootless Podman. Pi extensions, tools, shell commands, and child processes run inside the container, rather than delegating only selected tools from a host Pi process.
 
-Proposed implementation language: TypeScript, with a small dependency footprint. Pi SDK integration is not needed for the initial wrapper.
+Implementation language: native Node.js ES modules, with no npm dependencies or compilation step. This replaces the initial TypeScript proposal to keep installation and the first working version simple. Pi SDK integration is not needed for the wrapper.
 
 ```text
 Host pis CLI
@@ -79,9 +79,9 @@ Initial default layout:
 
 Keep these directories private to the user. Writes to configuration and index files should be atomic. Registration and index changes need locking to avoid concurrent corruption.
 
-Host `~/.pi/agent` is never automatically mounted. The container uses a separate home/state location, outside host project paths. The precise container home path and ownership initialization are implementation details to verify with rootless Podman.
+Host `~/.pi/agent` is never automatically mounted. Project `state/` is mounted at `/pis/home`, with `HOME` set accordingly. `PI_CODING_AGENT_DIR` points at `/pis/home/.pi/agent`; `PI_CODING_AGENT_SESSION_DIR` points at its `sessions` directory so invocations from subdirectories share project conversation storage. Ownership is preserved by `--userns=keep-id` plus an explicit current UID/GID; this is tested with real rootless Podman.
 
-Open: whether to support XDG overrides immediately or keep a single initial storage root. The layout above is the agreed initial default.
+`PIS_HOME` overrides storage, followed by `XDG_DATA_HOME/pis`; otherwise use the layout above. Overrides must be absolute.
 
 ## 4. Project configuration
 
@@ -178,7 +178,7 @@ Use a pinned base image and pinned Pi version. The base image should provide Nod
 }
 ```
 
-These are trusted executable build instructions, not a security-restricted package format. Insert them in a defined customization section before wrapper-controlled final runtime instructions. The wrapper owns the final entrypoint, working-directory behavior, and runtime user selection. Exact supported instruction restrictions remain to be specified; a simple denylist is not a security boundary.
+These are trusted executable build instructions, not a security-restricted package format. Only single-line `RUN` instructions are supported, without trailing continuations or `RUN --mount`. Insert them before wrapper-controlled final runtime instructions. The wrapper owns the final entrypoint, working-directory behavior, and runtime user selection. These syntax restrictions are not a security boundary against malicious build code.
 
 Build context must not include project files, persistent state, API keys, or the entire project configuration directory. Never pass runtime credentials as build arguments or build environment by default.
 
@@ -193,7 +193,7 @@ Before launching a project:
 
 Mount and credential changes do not trigger image rebuilds. Package and custom instruction changes do. Build failure must stop startup rather than silently running an outdated environment.
 
-`pis --build` ensures the image exists. `pis --rebuild` explicitly forces rebuilding; exact cache-refresh semantics must be documented during implementation.
+`pis --build` ensures the image exists. `pis --rebuild` explicitly rebuilds with `--no-cache`. The Node 24.14.0 Bookworm-slim base is digest-pinned and Pi is pinned to 1.2.0 in source; apt packages and npm transitive dependencies are not fully locked. Updating pinned versions currently requires a source change.
 
 Packages installed manually in a disposable running container do not persist. Add permanent tools to configuration.
 
@@ -218,7 +218,7 @@ Packages installed manually in a disposable running container do not persist. Ad
 | `pis --doctor` | Diagnose rootless Podman and host prerequisites |
 | `pis --relocate ID_OR_NAME` | Associate an existing project with the current directory |
 
-Explicit Pi session-selection options should suppress implicit `--continue`. Verify the supported Pi version's CLI options and argument forms before implementing this detection. Forward Pi arguments unchanged otherwise.
+Explicit Pi session-selection options suppress implicit `--continue`: `--continue`/`-c`, `--resume`/`-r`, `--session`, `--session-id`, `--fork`, and `--no-session`. Pi management subcommands also skip implicit continuation. Arguments following a Pi-level `--` are not interpreted as session selectors. Forward Pi arguments unchanged otherwise.
 
 `--fresh` starts a conversation; `--new` creates a registered project. They must not be confused.
 
@@ -239,7 +239,8 @@ Baseline runtime:
 - Rootless Podman only; no automatic sudo fallback.
 - Current UID/GID via `--userns=keep-id`, with writable state initialized correctly.
 - Drop Linux capabilities and set `no-new-privileges`.
-- Keep default seccomp and SELinux protections.
+- Keep default seccomp and SELinux protections. Use shared SELinux labels for project/extra mounts and private labels for per-project state; relabeling changes host file labels.
+- Use Podman's init helper for signal forwarding and child reaping. Bound SIGTERM/SIGHUP client shutdown, then forcibly clean up any remaining container.
 - No host PID/network namespace, privileged mode, host container socket, or automatic SSH agent sharing.
 - Mount only the registered root, approved additional directories, and required sandbox state.
 
@@ -272,12 +273,10 @@ Stronger egress controls, host/LAN restrictions, and proxy-only access are a sep
 
 ## 8. Open implementation decisions
 
-- Exact pinned Pi and base image versions, update workflow, and supported Podman versions.
-- Container home/state paths and safe UID/GID initialization.
-- SELinux handling for projects shared by multiple concurrent containers.
-- Concurrent Pi invocations and state locking policy.
-- Fine-grained mount overlap policy and protection of reserved container paths.
-- Supported custom Containerfile instruction contract.
+- Version update workflow and a broader supported Podman compatibility matrix; the current implementation is tested on Podman 4.9.3.
+- Verification on an SELinux-enforcing host. Shared project labels are implemented, but not tested there yet.
+- Concurrent Pi invocations within one project are currently rejected with a per-project lock; independent projects can run concurrently. Crash-left locks require explicit manual recovery.
+- Mount overlap is currently rejected entirely, including overlaps with project root, pis storage, and reserved container paths; evaluate whether narrower exceptions are useful.
 - Resource-limit defaults and read-only root filesystem feasibility.
 - Project deletion, image cleanup, and state-retention commands; these must never delete project source files accidentally.
 - XDG overrides and configuration schema migration strategy.
