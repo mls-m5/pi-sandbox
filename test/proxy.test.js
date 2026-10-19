@@ -80,6 +80,16 @@ test('proxy does not follow redirects or expose upstream error bodies and header
   }
 });
 
+test('unexpected response compression fails closed rather than bypassing redaction', async t => {
+  const { request } = await fixture(t, (_req, res) => {
+    res.writeHead(200, { 'content-encoding': 'gzip' });
+    res.end(KEY);
+  });
+  const response = await request();
+  assert.equal(response.status, 502);
+  assert.ok(!response.body.includes(KEY));
+});
+
 test('streaming response survives chunk boundaries and redacts a split key', async t => {
   const { request } = await fixture(t, (_req, res) => {
     res.writeHead(200, { 'content-type': 'text/event-stream', 'x-secret': KEY });

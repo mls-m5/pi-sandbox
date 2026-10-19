@@ -107,7 +107,7 @@ export async function startOpenAIProxy({ socketPath, apiKey, token = `sk-pis-${r
         if (!parsed || typeof parsed.model !== 'string' || !parsed.model) return reply(res, 400, 'A model is required.');
         if (models.length && !models.includes(parsed.model)) return reply(res, 403, 'Model not allowed.');
       }
-      if (finished || res.destroyed) return;
+      if (finished || res.destroyed || res.writableEnded) return;
       // Recheck after asynchronous body collection so parallel uploads cannot overspend the request count.
       if (used >= maxRequests) return reply(res, 429, 'Proxy request budget exhausted.');
       used++;
@@ -129,6 +129,10 @@ export async function startOpenAIProxy({ socketPath, apiKey, token = `sk-pis-${r
           upstreamResponse.destroy();
           // In particular, never follow redirects or expose upstream error bodies/headers.
           return reply(res, status >= 400 && status <= 599 ? status : 502, `OpenAI upstream returned status ${status}.`);
+        }
+        if (upstreamResponse.headers['content-encoding'] && upstreamResponse.headers['content-encoding'] !== 'identity') {
+          upstreamResponse.destroy();
+          return reply(res, 502, 'Unsupported upstream content encoding.');
         }
         res.writeHead(status, { 'content-type': String(upstreamResponse.headers['content-type']).startsWith('text/event-stream') ? 'text/event-stream' : 'application/json', 'cache-control': 'no-store' });
         pipeline(upstreamResponse, new SecretRedactor(apiKey), res, () => finish());
