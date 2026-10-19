@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { defaults } from '../src/config.js';
-import { piCommand, imagePlan, launchArgs, CONTAINER_HOME } from '../src/container.js';
+import { piCommand, interactiveOutput, imagePlan, launchArgs, CONTAINER_HOME } from '../src/container.js';
 
 const config = defaults('abc12', '/work/project', 'app');
 const store = { projectDir: id => `/storage/projects/${id}` };
@@ -16,6 +16,16 @@ test('Pi continues by default and respects explicit session selection/subcommand
   }
   for (const command of ['auth', 'install', 'update', 'config', 'mcp', 'list']) assert.deepEqual(piCommand([command, '--help']), ['pi', command, '--help']);
   assert.deepEqual(piCommand(['--', '--resume']), ['pi', '--continue', '--', '--resume']);
+});
+
+test('noninteractive Pi modes never request a TTY that merges protocol streams', () => {
+  for (const args of [['--mode', 'rpc'], ['--mode', 'json'], ['--mode=json'], ['-p', 'prompt'], ['--print'], ['--export', 'session'], ['--version']]) {
+    assert.equal(interactiveOutput(piCommand(args)), false, args.join(' '));
+  }
+  assert.equal(interactiveOutput(piCommand()), true);
+  assert.equal(interactiveOutput(piCommand(['--mode', 'text'])), true);
+  assert.equal(interactiveOutput(piCommand(['--', '--mode', 'json'])), true);
+  assert.equal(interactiveOutput(['bash', '-i']), true);
 });
 
 test('only image configuration affects image fingerprint', () => {
@@ -35,6 +45,7 @@ test('launch preserves paths, identity, isolation flags, and literal arguments',
   const { args } = invocation;
   assert.equal(invocation.workdir, '/work/project/sub directory');
   assert.ok(args.includes('--userns=keep-id'));
+  assert.ok(args.includes('--init'));
   assert.equal(args[args.indexOf('--user') + 1], '1234:5678');
   assert.ok(args.includes('--cap-drop=all'));
   assert.ok(args.includes('--security-opt=no-new-privileges'));

@@ -71,9 +71,9 @@ export function parse(argv) {
 }
 
 async function edit(store, original) {
+  const [editor, ...editorArgs] = splitCommand(process.env.VISUAL || process.env.EDITOR || 'vim');
   const draft = path.join(store.projectDir(original.id), `edit-${randomBytes(6).toString('hex')}.json`);
   writeJson(draft, original);
-  const [editor, ...editorArgs] = splitCommand(process.env.VISUAL || process.env.EDITOR || 'vim');
   let saved = false;
   try {
     while (true) {
