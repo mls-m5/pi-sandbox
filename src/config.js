@@ -6,6 +6,7 @@ import { DEFAULT_PROXY } from './proxy.js';
 export const ID_PATTERN = /^[a-z0-9]{5}$/;
 export const NAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/;
 const RESERVED = ['/etc', '/usr', '/bin', '/sbin', '/lib', '/lib64', '/proc', '/sys', '/dev', '/run', '/root', '/pis'];
+const RESERVED_ENV = ['HOME', 'PATH', 'USER', 'LOGNAME', 'SHELL', 'ENV', 'BASH_ENV', 'NODE_OPTIONS', 'NODE_PATH', 'LD_PRELOAD', 'LD_LIBRARY_PATH', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_CACHE_HOME'];
 
 function object(value, keys, label) {
   assert(value && typeof value === 'object' && !Array.isArray(value), `${label} must be an object.`);
@@ -46,13 +47,13 @@ export function validate(config, { storage, home = os.homedir(), identity, paths
   strings(config.credentials.env, 'credentials.env');
   for (const name of config.credentials.env) {
     assert(/^[A-Z_][A-Z0-9_]*$/.test(name), `Invalid credential variable name: ${name}`);
-    assert(!['HOME', 'PATH', 'USER', 'LOGNAME', 'SHELL', 'ENV', 'BASH_ENV', 'NODE_OPTIONS', 'NODE_PATH', 'LD_PRELOAD', 'LD_LIBRARY_PATH', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_CACHE_HOME'].includes(name) && !name.startsWith('PI_') && !name.startsWith('PIS_'), `Reserved environment variable: ${name}`);
+    assert(!RESERVED_ENV.includes(name) && !name.startsWith('PI_') && !name.startsWith('PIS_'), `Reserved environment variable: ${name}`);
   }
   if (config.credentials.proxy !== undefined) {
     const proxy = config.credentials.proxy;
     object(proxy, ['provider', 'keyEnv', 'models', 'maxRequests', 'maxConcurrent'], 'credentials.proxy');
     assert(proxy.provider === 'openai', 'Only the openai credential proxy is supported.');
-    assert(proxy.keyEnv === undefined || (typeof proxy.keyEnv === 'string' && /^[A-Z_][A-Z0-9_]*$/.test(proxy.keyEnv)), 'Invalid proxy keyEnv variable name.');
+    assert(proxy.keyEnv === undefined || (typeof proxy.keyEnv === 'string' && /^[A-Z_][A-Z0-9_]*$/.test(proxy.keyEnv) && !RESERVED_ENV.includes(proxy.keyEnv)), 'Invalid proxy keyEnv variable name.');
     assert(config.credentials.env.length === 0, 'Proxy mode requires credentials.env to be empty; never forward real credentials alongside the proxy.');
     if (proxy.models !== undefined) strings(proxy.models, 'credentials.proxy.models');
     if (proxy.maxRequests !== undefined) assert(Number.isInteger(proxy.maxRequests) && proxy.maxRequests >= 1 && proxy.maxRequests <= 100_000, 'proxy.maxRequests must be an integer between 1 and 100000.');

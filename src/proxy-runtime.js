@@ -22,7 +22,7 @@ function stateRecord(file) {
   const fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
   try {
     const stat = fs.fstatSync(fd);
-    assert(stat.isFile() && stat.nlink === 1 && stat.size <= 1024 * 1024, 'Pi proxy configuration must be a regular, unlinked file smaller than 1 MiB.');
+    assert(stat.isFile() && stat.nlink === 1 && stat.size <= 1024 * 1024, 'Pi proxy configuration must be a regular, non-hardlinked file smaller than 1 MiB.');
     const record = JSON.parse(fs.readFileSync(fd, 'utf8'));
     assert(record && typeof record === 'object' && !Array.isArray(record), 'Pi proxy configuration must be a JSON object.');
     return record;

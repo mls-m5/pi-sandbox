@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { defaults } from '../src/config.js';
-import { piCommand, interactiveOutput, imagePlan, launchArgs, CONTAINER_HOME } from '../src/container.js';
+import { piCommand, interactiveOutput, imagePlan, launchArgs, podmanEnvironment, CONTAINER_HOME } from '../src/container.js';
 
 const config = { ...defaults('abc12', '/work/project', 'app'), credentials: { env: ['OPENAI_API_KEY'] } };
 const store = { projectDir: id => `/storage/projects/${id}` };
@@ -75,6 +75,20 @@ test('extra mounts default read-only and use shared SELinux labels', () => {
   assert.ok(args.includes('/work/shared:/work/shared:ro,z'));
   assert.ok(args.includes('/work/writable:/work/writable:rw,z'));
   assert.ok(args.includes(`${path.join(store.projectDir(config.id), 'state')}:${CONTAINER_HOME}:rw,Z`));
+});
+
+test('proxy source credentials are removed from Podman build/run process environments', () => {
+  const proxied = defaults('abc12', '/work/project');
+  const old = process.env.OPENAI_API_KEY;
+  process.env.OPENAI_API_KEY = 'sk-private-source-key';
+  try {
+    assert.equal(podmanEnvironment(proxied).OPENAI_API_KEY, undefined);
+    assert.equal(podmanEnvironment(proxied).PATH, process.env.PATH);
+    assert.equal(podmanEnvironment(config).OPENAI_API_KEY, process.env.OPENAI_API_KEY);
+  } finally {
+    if (old === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = old;
+  }
 });
 
 test('only selected present credential names are forwarded, never values', () => {

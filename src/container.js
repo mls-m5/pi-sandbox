@@ -53,6 +53,15 @@ export function inspectPodman() {
   return info;
 }
 
+export function podmanEnvironment(config) {
+  const env = { ...process.env };
+  if (config.credentials.proxy) {
+    delete env[config.credentials.proxy.keyEnv || 'OPENAI_API_KEY'];
+    delete env.OPENAI_API_KEY;
+  }
+  return env;
+}
+
 export async function ensureImage(store, config, { rebuild = false } = {}) {
   const plan = imagePlan(config);
   const dir = store.projectDir(config.id);
@@ -61,12 +70,12 @@ export async function ensureImage(store, config, { rebuild = false } = {}) {
   assert(fs.readdirSync(context).every(file => file === 'Containerfile'), `Unexpected files in generated build context: ${context}. Move them elsewhere before building.`);
   atomicWrite(path.join(dir, 'Containerfile'), plan.content);
   atomicWrite(path.join(context, 'Containerfile'), plan.content);
-  const exists = spawnSync('podman', ['image', 'exists', plan.image]);
+  const exists = spawnSync('podman', ['image', 'exists', plan.image], { env: podmanEnvironment(config) });
   if (exists.error) throw exists.error;
   assert([0, 1].includes(exists.status), 'Cannot check whether the sandbox image exists.');
   if (rebuild || exists.status !== 0) {
     console.error(`pis: building ${plan.image}`);
-    const code = await run('podman', ['build', '--http-proxy=false', ...(rebuild ? ['--no-cache'] : []), '--tag', plan.image, '--file', path.join(context, 'Containerfile'), context], { stdio: ['ignore', 2, 2] });
+    const code = await run('podman', ['build', '--http-proxy=false', ...(rebuild ? ['--no-cache'] : []), '--tag', plan.image, '--file', path.join(context, 'Containerfile'), context], { env: podmanEnvironment(config), stdio: ['ignore', 2, 2] });
     assert(code === 0, `Image build failed (exit ${code}).`);
   }
   return plan;
@@ -124,7 +133,7 @@ export async function launch(store, config, options) {
       // proxyUpstream is an internal fake-server test seam, never a CLI/config option.
       if (config.credentials.proxy) proxy = await prepareProxy(store, config, { upstream: options.proxyUpstream });
       invocation = launchArgs(store, config, command, { cwd: options.cwd, image: plan.image, proxy, selinux: info.host.security.selinuxEnabled });
-      return await run('podman', invocation.args, { stdio: options.stdio || 'inherit' });
+      return await run('podman', invocation.args, { env: podmanEnvironment(config), stdio: options.stdio || 'inherit' });
     } finally {
       // Covers interrupted attached clients that leave their container running.
       if (invocation) spawnSync('podman', ['rm', '--force', '--time', '1', invocation.name], { stdio: 'ignore', timeout: 15_000 });
