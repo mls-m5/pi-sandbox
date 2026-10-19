@@ -17,6 +17,15 @@ Tested on Ubuntu 24.04 with rootless Podman 4.9.3 and crun. SELinux behavior is 
 
 The CLI has **no npm dependencies** and runs directly from the checkout.
 
+## Try without installing
+
+```sh
+source ./env.sh
+pis --help
+```
+
+This adds the checkout's `bin/` directory to PATH in the current Bash terminal only. It does not change any shell configuration files.
+
 ## Install from this checkout
 
 ```sh
