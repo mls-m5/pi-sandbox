@@ -111,6 +111,7 @@ test('device login runs entirely on the host, polls pending states, and saves pr
   const credential = fakeCodexCredential();
   const replies = [
     response({ device_auth_id: 'device-id', user_code: 'ABCD-EFGH', interval: '1' }),
+    response({ error: { code: 'slow_down' } }, 400),
     response({}, 403),
     response({ authorization_code: 'one-time-code', code_verifier: 'one-time-verifier' }),
     response({ access_token: credential.access, refresh_token: credential.refresh, expires_in: 3600 }),
@@ -123,7 +124,7 @@ test('device login runs entirely on the host, polls pending states, and saves pr
   assert.match(notices[0], /ABCD-EFGH/);
   assert.ok(!notices.join('').includes(credential.access));
   assert.ok(!notices.join('').includes(credential.refresh));
-  assert.deepEqual(waits, [1000, 1000]);
+  assert.deepEqual(waits, [1000, 6000, 6000]);
   const form = new URLSearchParams(calls.at(-1).options.body);
   assert.equal(form.get('redirect_uri'), 'https://auth.openai.com/deviceauth/callback');
   assert.equal(form.get('code_verifier'), 'one-time-verifier');

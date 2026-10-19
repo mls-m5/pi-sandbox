@@ -155,6 +155,7 @@ export async function loginCodex(store, { notify = console.error, signal, fetchI
   const device = await post('/api/accounts/deviceauth/usercode', { client_id: CLIENT_ID }, options);
   assert(device.status === 200, `Codex device sign-in failed (status ${device.status}). Enable device-code login for your account or import an existing host sign-in.`);
   const { device_auth_id: deviceId, user_code: code } = device.json;
+  assert(['string', 'number'].includes(typeof device.json.interval), 'Invalid Codex polling interval.');
   let interval = Number(device.json.interval);
   assert(typeof deviceId === 'string' && deviceId.length > 0 && deviceId.length <= 4096, 'Invalid Codex device authorization response.');
   assert(typeof code === 'string' && /^[A-Za-z0-9 -]{1,64}$/.test(code) && Number.isFinite(interval) && interval >= 0 && interval <= 60, 'Invalid Codex device authorization response.');
@@ -162,11 +163,13 @@ export async function loginCodex(store, { notify = console.error, signal, fetchI
   notify(`Open https://auth.openai.com/codex/device in your browser and enter code: ${code}`);
   const deadline = Date.now() + 15 * 60_000;
   while (Date.now() < deadline) {
-    await sleep(interval * 1000, undefined, { signal });
+    await sleep(Math.min(interval * 1000, deadline - Date.now()), undefined, { signal });
     signal?.throwIfAborted();
+    if (Date.now() >= deadline) break;
     const poll = await post('/api/accounts/deviceauth/token', { device_auth_id: deviceId, user_code: code }, options);
-    if ([403, 404].includes(poll.status) || poll.json.error === 'authorization_pending' || poll.json.error === 'deviceauth_authorization_pending') continue;
-    if (poll.status === 429 || poll.json.error === 'slow_down') { interval = Math.min(60, interval + 5); continue; }
+    const errorCode = typeof poll.json.error === 'object' ? poll.json.error?.code : poll.json.error;
+    if ([403, 404].includes(poll.status) || errorCode === 'authorization_pending' || errorCode === 'deviceauth_authorization_pending') continue;
+    if (poll.status === 429 || errorCode === 'slow_down') { interval = Math.min(60, interval + 5); continue; }
     assert(poll.status === 200, `Codex device sign-in failed (status ${poll.status}).`);
     const { authorization_code: authorizationCode, code_verifier: verifier } = poll.json;
     assert(typeof authorizationCode === 'string' && authorizationCode && typeof verifier === 'string' && verifier, 'Invalid Codex device token response.');
