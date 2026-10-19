@@ -52,7 +52,7 @@ export async function withLock(file, action) {
     fs.writeFileSync(file, JSON.stringify({ pid: process.pid }), { flag: 'wx', mode: 0o600 });
   } catch (error) {
     if (error.code !== 'EEXIST') throw error;
-    throw new Error(`Resource is busy (${file}). If a previous pis crashed, inspect the lock PID and remove it only after confirming no pis/container is using this project.`);
+    throw Object.assign(new Error(`Resource is busy (${file}). If a previous pis crashed, inspect the lock PID and remove it only after confirming no pis/container is using this project.`), { code: 'PIS_LOCKED' });
   }
   try { return await action(); }
   finally { fs.rmSync(file, { force: true }); }
