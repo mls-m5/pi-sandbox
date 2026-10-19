@@ -32,7 +32,7 @@ test('host-only imports accept Pi and Codex OAuth files, copy only selected fiel
   assert.equal(fs.statSync(file).mode & 0o777, 0o600);
   assert.equal(fs.statSync(path.dirname(file)).mode & 0o777, 0o700);
   const codex = path.join(dir, 'codex.json');
-  fs.writeFileSync(codex, JSON.stringify({ tokens: { access_token: credential.access, refresh_token: credential.refresh, account_id: credential.accountId, id_token: 'unused-id-token' } }));
+  fs.writeFileSync(codex, JSON.stringify({ tokens: { access_token: credential.access, refresh_token: credential.refresh, account_id: null, id_token: 'unused-id-token' } }));
   await importCodexCredential(store, codex);
   assert.ok(!fs.readFileSync(file, 'utf8').includes('unused-id-token'));
   await logoutCodex(store);
@@ -82,6 +82,26 @@ test('failed or cancelled refresh preserves existing credentials and releases th
   assert.equal(readCodexCredential(store).refresh, expired.refresh);
   const controller = new AbortController(); controller.abort();
   await assert.rejects(getCodexCredential(store, { signal: controller.signal }));
+  assert.ok(!fs.existsSync(path.join(store.root, 'auth/openai-codex.lock')));
+});
+
+test('cancelling an in-flight host refresh releases its lock and preserves the stored refresh token', async t => {
+  const { store } = fixture(t);
+  await saveCodexCredential(store, fakeCodexCredential({ expires: Math.floor(Date.now() / 1000) - 1 }));
+  const controller = new AbortController();
+  let entered;
+  const started = new Promise(resolve => { entered = resolve; });
+  const pending = getCodexCredential(store, {
+    signal: controller.signal,
+    fetchImpl: async (_url, options) => new Promise((_, reject) => {
+      options.signal.addEventListener('abort', () => reject(new Error('private-network-details')), { once: true });
+      entered();
+    }),
+  });
+  await started;
+  controller.abort();
+  await assert.rejects(pending, /cancelled/);
+  assert.equal(readCodexCredential(store).refresh, 'fake-private-refresh-token');
   assert.ok(!fs.existsSync(path.join(store.root, 'auth/openai-codex.lock')));
 });
 

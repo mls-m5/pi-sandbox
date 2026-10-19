@@ -93,7 +93,7 @@ export async function saveCodexCredential(store, credential, signal) {
 export async function importCodexCredential(store, file) {
   const record = readRecord(path.resolve(file));
   const pi = record['openai-codex'] || (record.openai?.type === 'oauth' ? record.openai : undefined);
-  const source = pi || (record.tokens ? { access: record.tokens.access_token, refresh: record.tokens.refresh_token, accountId: record.tokens.account_id } : record);
+  const source = pi || (record.tokens ? { access: record.tokens.access_token, refresh: record.tokens.refresh_token, accountId: record.tokens.account_id || undefined } : record);
   assert(!pi || pi.type === 'oauth', 'Import requires ChatGPT OAuth credentials, not a stored API key.');
   return saveCodexCredential(store, source);
 }

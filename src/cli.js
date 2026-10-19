@@ -129,7 +129,7 @@ export async function main(argv = process.argv.slice(2)) {
   }
   if (options.action === 'import-codex') {
     await importCodexCredential(store, options.target);
-    console.log('Codex OAuth sign-in copied to private host storage. Original file unchanged.');
+    console.log('Codex OAuth sign-in copied to private host storage. Original file unchanged.\nAvoid concurrent token refresh by the original client; a dedicated pis --login-codex session is recommended.');
     return 0;
   }
   if (options.action === 'logout-codex') {
