@@ -6,6 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { parse } from '../src/cli.js';
+import { fakeCodexCredential } from './fixtures/codex.js';
 
 const cli = fileURLToPath(new URL('../bin/pis.js', import.meta.url));
 function fixture(t) {
@@ -65,6 +66,30 @@ test('editor saves valid changes and retains invalid drafts without damaging con
   assert.match(edited.stderr, /Draft retained/);
   assert.equal(fs.readFileSync(before.configurationFile, 'utf8'), valid);
   assert.ok(fs.readdirSync(path.dirname(before.configurationFile)).some(file => file.startsWith('edit-')));
+});
+
+test('Codex import/logout work without a project and show never displays host credentials', t => {
+  const { base, invoke } = fixture(t);
+  const credential = fakeCodexCredential();
+  const source = path.join(base, 'host-pi.json');
+  fs.writeFileSync(source, JSON.stringify({ 'openai-codex': credential }));
+  assert.equal(parse(['--login-codex']).action, 'login-codex');
+  assert.throws(() => parse(['--login-codex', '--project', 'example']));
+  assert.throws(() => parse(['--import-codex']));
+  const imported = invoke(['--import-codex', source]);
+  assert.equal(imported.status, 0, imported.stderr);
+  assert.ok(!imported.stdout.includes(credential.access));
+  assert.ok(!imported.stdout.includes(credential.refresh));
+  assert.equal(invoke(['--new']).status, 0);
+  let shown = JSON.parse(invoke(['--show']).stdout);
+  shown.config.credentials = { env: [], proxy: { provider: 'openai-codex' } };
+  fs.writeFileSync(shown.configurationFile, JSON.stringify(shown.config));
+  shown = JSON.parse(invoke(['--show']).stdout);
+  assert.deepEqual(shown.credentialVariables, []);
+  assert.deepEqual(shown.credentialSource, { kind: 'host-oauth', provider: 'openai-codex', present: true });
+  assert.ok(!JSON.stringify(shown).includes(credential.access));
+  assert.equal(invoke(['--logout-codex']).status, 0);
+  assert.equal(JSON.parse(invoke(['--show']).stdout).credentialSource.present, false);
 });
 
 test('unknown options recommend explicit argument forwarding', t => {

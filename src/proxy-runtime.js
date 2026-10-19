@@ -2,8 +2,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { assert, privateDir, writeJson } from './util.js';
 import { DEFAULT_PROXY, startOpenAIProxy } from './proxy.js';
+import { getCodexCredential, readCodexCredential } from './codex-auth.js';
 
 export const PROXY_BASE_URL = 'http://127.0.0.1:43127/v1';
+export const CODEX_PROXY_BASE_URL = 'http://127.0.0.1:43127/backend-api';
 
 function stateDirectory(parent, name) {
   const dir = path.join(parent, name);
@@ -31,16 +33,20 @@ function stateRecord(file) {
   } finally { fs.closeSync(fd); }
 }
 
-export async function prepareProxy(store, config, { upstream } = {}) {
+export async function prepareProxy(store, config, { upstream, codexAuthFetch } = {}) {
   const settings = { ...DEFAULT_PROXY, ...config.credentials.proxy };
-  const apiKey = process.env[settings.keyEnv];
+  const isCodex = settings.provider === 'openai-codex';
+  const credential = isCodex ? readCodexCredential(store) : undefined;
+  const apiKey = isCodex ? credential.access : process.env[settings.keyEnv];
   assert(apiKey, `Set ${settings.keyEnv} on the host before starting this proxy-enabled project.`);
+  const baseUrl = isCodex ? CODEX_PROXY_BASE_URL : PROXY_BASE_URL;
+  const getCredentials = isCodex ? async signal => ({ apiKey: (await getCodexCredential(store, { signal, fetchImpl: codexAuthFetch })).access }) : undefined;
   // Fixed short parent avoids AF_UNIX path-length limits even for deeply nested project storage.
   const runtimeDir = fs.mkdtempSync('/tmp/pis-proxy-');
   privateDir(runtimeDir);
   let proxy;
   try {
-    proxy = await startOpenAIProxy({ ...settings, socketPath: path.join(runtimeDir, 'api.sock'), apiKey, ...(upstream ? { upstream } : {}) });
+    proxy = await startOpenAIProxy({ ...settings, socketPath: path.join(runtimeDir, 'api.sock'), apiKey, getCredentials, ...(upstream ? { upstream } : {}) });
     const state = path.join(store.projectDir(config.id), 'state');
     privateDir(state);
     const agent = stateDirectory(stateDirectory(state, '.pi'), 'agent');
@@ -48,10 +54,11 @@ export async function prepareProxy(store, config, { upstream } = {}) {
     const auth = stateRecord(path.join(agent, 'auth.json'));
     assert(models.providers === undefined || (models.providers && typeof models.providers === 'object' && !Array.isArray(models.providers)), 'models.json providers must be an object.');
     // Per-run read-only file overlays leave the original files unchanged. Replace
-    // the complete OpenAI provider/auth entry so old endpoints/headers cannot win.
-    const modelSnapshot = { ...models, providers: { ...models.providers, openai: { baseUrl: PROXY_BASE_URL, apiKey: proxy.token } } };
-    const authSnapshot = { ...auth, openai: { type: 'api_key', key: proxy.token } };
-    assert(!JSON.stringify([modelSnapshot, authSnapshot]).includes(apiKey), 'Existing Pi configuration contains the host proxy key outside its OpenAI entry. Remove it before enabling the proxy.');
+    // the selected provider/auth entry so old endpoints/headers cannot win.
+    const modelSnapshot = { ...models, providers: { ...models.providers, [settings.provider]: { baseUrl, apiKey: proxy.token } } };
+    const authSnapshot = { ...auth, [settings.provider]: { type: 'api_key', key: proxy.token } };
+    const snapshot = JSON.stringify([modelSnapshot, authSnapshot]);
+    assert(![apiKey, credential?.refresh].filter(Boolean).some(secret => snapshot.includes(secret)), 'Existing Pi configuration contains host proxy credentials outside the selected provider entry. Remove them before enabling the proxy.');
     writeJson(path.join(runtimeDir, 'models.json'), modelSnapshot);
     writeJson(path.join(runtimeDir, 'auth.json'), authSnapshot);
     fs.copyFileSync(new URL('./runtime/proxy-entry.mjs', import.meta.url), path.join(runtimeDir, 'entry.mjs'));
@@ -59,6 +66,8 @@ export async function prepareProxy(store, config, { upstream } = {}) {
     return {
       directory: runtimeDir,
       token: proxy.token,
+      baseUrl,
+      provider: settings.provider,
       async close() {
         try { await proxy.close(); }
         finally { fs.rmSync(runtimeDir, { recursive: true, force: true }); }

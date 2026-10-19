@@ -5,7 +5,9 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { Store } from '../src/store.js';
 import { validate } from '../src/config.js';
-import { prepareProxy, PROXY_BASE_URL } from '../src/proxy-runtime.js';
+import { prepareProxy, PROXY_BASE_URL, CODEX_PROXY_BASE_URL } from '../src/proxy-runtime.js';
+import { saveCodexCredential } from '../src/codex-auth.js';
+import { fakeCodexCredential } from './fixtures/codex.js';
 import { launchArgs, imagePlan } from '../src/container.js';
 
 async function fixture(t) {
@@ -61,6 +63,30 @@ test('runtime overlays replace stale OpenAI auth and endpoints, without editing 
     assert.equal(imagePlan(config).image, before);
   } finally { await proxy.close(); }
   assert.ok(!fs.existsSync(dir));
+});
+
+test('Codex snapshots and environment contain only synthetic credentials, never host OAuth tokens', async t => {
+  const { root, store, config, agent } = await fixture(t);
+  const credential = fakeCodexCredential();
+  await saveCodexCredential(store, credential);
+  config.credentials = { env: [], proxy: { provider: 'openai-codex' } };
+  validate(config, { storage: store.root });
+  const bad = structuredClone(config); bad.credentials.proxy.keyEnv = 'CODEX_TOKEN';
+  assert.throws(() => validate(bad, { storage: store.root }), /remove keyEnv/);
+  fs.writeFileSync(path.join(agent, 'auth.json'), JSON.stringify({ 'openai-codex': credential }));
+  const proxy = await prepareProxy(store, config);
+  try {
+    const models = JSON.parse(fs.readFileSync(path.join(proxy.directory, 'models.json')));
+    assert.equal(models.providers['openai-codex'].baseUrl, CODEX_PROXY_BASE_URL);
+    const invocation = launchArgs(store, config, ['pi'], { cwd: root, image: 'test', proxy });
+    assert.ok(invocation.args.includes('OPENAI_API_KEY='));
+    assert.ok(invocation.args.includes(`PIS_PROXY_TOKEN=${proxy.token}`));
+    for (const text of [JSON.stringify(invocation.args), ...['auth.json', 'models.json', 'entry.mjs'].map(file => fs.readFileSync(path.join(proxy.directory, file), 'utf8'))]) {
+      assert.ok(!text.includes(credential.access));
+      assert.ok(!text.includes(credential.refresh));
+      assert.ok(!text.includes(credential.accountId));
+    }
+  } finally { await proxy.close(); }
 });
 
 test('proxy setup refuses missing host keys and never silently falls back to direct mode', async t => {

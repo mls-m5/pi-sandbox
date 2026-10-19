@@ -52,7 +52,8 @@ export function validate(config, { storage, home = os.homedir(), identity, paths
   if (config.credentials.proxy !== undefined) {
     const proxy = config.credentials.proxy;
     object(proxy, ['provider', 'keyEnv', 'models', 'maxRequests', 'maxConcurrent'], 'credentials.proxy');
-    assert(proxy.provider === 'openai', 'Only the openai credential proxy is supported.');
+    assert(['openai', 'openai-codex'].includes(proxy.provider), 'Proxy provider must be openai or openai-codex.');
+    assert(proxy.provider !== 'openai-codex' || proxy.keyEnv === undefined, 'Codex uses host OAuth credentials; remove keyEnv and use pis --login-codex or --import-codex.');
     assert(proxy.keyEnv === undefined || (typeof proxy.keyEnv === 'string' && /^[A-Z_][A-Z0-9_]*$/.test(proxy.keyEnv) && !RESERVED_ENV.includes(proxy.keyEnv)), 'Invalid proxy keyEnv variable name.');
     assert(config.credentials.env.length === 0, 'Proxy mode requires credentials.env to be empty; never forward real credentials alongside the proxy.');
     if (proxy.models !== undefined) strings(proxy.models, 'credentials.proxy.models');

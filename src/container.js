@@ -3,7 +3,7 @@ import path from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { assert, atomicWrite, directory, privateDir, run, within } from './util.js';
-import { prepareProxy, PROXY_BASE_URL } from './proxy-runtime.js';
+import { prepareProxy } from './proxy-runtime.js';
 
 // Multi-architecture manifest digest; updates are intentional source changes.
 export const BASE_IMAGE = 'docker.io/library/node:24.14.0-bookworm-slim@sha256:d8e448a56fc63242f70026718378bd4b00f8c82e78d20eefb199224a4d8e33d8';
@@ -101,7 +101,9 @@ export function launchArgs(store, config, command, { cwd, image, proxy, selinux 
   for (const mount of config.mounts) args.push('--volume', `${mount.source}:${mount.source}:${mount.access === 'read-write' ? 'rw' : 'ro'}${sharedLabel}`);
   if (config.credentials.proxy) {
     assert(proxy, 'Proxy-enabled launches require an active host proxy.');
-    args.push('--env', `OPENAI_API_KEY=${proxy.token}`, '--env', `OPENAI_BASE_URL=${PROXY_BASE_URL}`,
+    const isCodex = config.credentials.proxy.provider === 'openai-codex';
+    args.push('--env', `PIS_PROXY_TOKEN=${proxy.token}`, '--env', `PIS_PROXY_BASE_URL=${proxy.baseUrl}`, '--env', `PIS_PROXY_PROVIDER=${proxy.provider}`,
+      '--env', `OPENAI_API_KEY=${isCodex ? '' : proxy.token}`, '--env', `OPENAI_BASE_URL=${isCodex ? '' : proxy.baseUrl}`,
       '--volume', `${proxy.directory}:/pis/proxy:ro${sharedLabel}`,
       '--volume', `${proxy.directory}/models.json:${CONTAINER_HOME}/.pi/agent/models.json:ro${sharedLabel}`,
       '--volume', `${proxy.directory}/auth.json:${CONTAINER_HOME}/.pi/agent/auth.json:ro${sharedLabel}`);
@@ -131,7 +133,7 @@ export async function launch(store, config, options) {
     let proxy, invocation;
     try {
       // proxyUpstream is an internal fake-server test seam, never a CLI/config option.
-      if (config.credentials.proxy) proxy = await prepareProxy(store, config, { upstream: options.proxyUpstream });
+      if (config.credentials.proxy) proxy = await prepareProxy(store, config, { upstream: options.proxyUpstream, codexAuthFetch: options.codexAuthFetch });
       invocation = launchArgs(store, config, command, { cwd: options.cwd, image: plan.image, proxy, selinux: info.host.security.selinuxEnabled });
       return await run('podman', invocation.args, { env: podmanEnvironment(config), stdio: options.stdio || 'inherit' });
     } finally {
