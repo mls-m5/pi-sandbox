@@ -8,7 +8,7 @@
   "engines": { "node": ">=22.19.0" },
   "scripts": {
     "test": "node --test test/*.test.js",
-    "test:integration": "PIS_INTEGRATION=1 node --test test/integration.test.js",
+    "test:integration": "PIS_INTEGRATION=1 node --test test/*integration.test.js",
     "check": "node --check bin/pis.js && node --check src/cli.js && node --check src/config.js && node --check src/store.js && node --check src/container.js && node --check src/util.js && node --check src/proxy.js && node --check src/proxy-runtime.js && node --check src/runtime/proxy-entry.mjs && npm test"
   }
 }
