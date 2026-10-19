@@ -152,6 +152,7 @@ export async function getCodexCredential(store, { signal, fetchImpl } = {}) {
 
 export async function loginCodex(store, { notify = console.error, signal, fetchImpl, sleep = delay } = {}) {
   const options = { signal, fetchImpl };
+  notify('Open this URL manually in your browser:\nhttps://auth.openai.com/codex/device\n\nRequesting your sign-in code...');
   const device = await post('/api/accounts/deviceauth/usercode', { client_id: CLIENT_ID }, options);
   assert(device.status === 200, `Codex device sign-in failed (status ${device.status}). Enable device-code login for your account or import an existing host sign-in.`);
   const { device_auth_id: deviceId, user_code: code } = device.json;
@@ -160,7 +161,7 @@ export async function loginCodex(store, { notify = console.error, signal, fetchI
   assert(typeof deviceId === 'string' && deviceId.length > 0 && deviceId.length <= 4096, 'Invalid Codex device authorization response.');
   assert(typeof code === 'string' && /^[A-Za-z0-9 -]{1,64}$/.test(code) && Number.isFinite(interval) && interval >= 0 && interval <= 60, 'Invalid Codex device authorization response.');
   interval = Math.max(1, interval);
-  notify(`Open https://auth.openai.com/codex/device in your browser and enter code: ${code}`);
+  notify(`\nSign-in code: ${code}\nEnter this code on the page above. Waiting for authorization (Ctrl-C to cancel)...`);
   const deadline = Date.now() + 15 * 60_000;
   while (Date.now() < deadline) {
     await sleep(Math.min(interval * 1000, deadline - Date.now()), undefined, { signal });

@@ -12,7 +12,7 @@ Run these commands in your **host terminal**, not inside Pi or `pis --bash`:
 pis --login-codex
 ```
 
-Open the displayed `https://auth.openai.com/codex/device` page and enter the short code. Finish sign-in in your browser. No local OAuth callback port or installed host Pi/Codex CLI is required.
+The command immediately prints `https://auth.openai.com/codex/device` on its own line, then requests and prints your sign-in code. It does not launch a browser automatically. Open that URL manually, enter the displayed code, and finish sign-in in your browser. No local OAuth callback port or installed host Pi/Codex CLI is required.
 
 Then run `pis --edit` in the registered project and replace its `credentials` section with:
 

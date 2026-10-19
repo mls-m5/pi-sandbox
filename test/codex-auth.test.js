@@ -118,10 +118,14 @@ test('device login runs entirely on the host, polls pending states, and saves pr
   ];
   await loginCodex(store, {
     notify: text => notices.push(text), sleep: async ms => waits.push(ms),
-    fetchImpl: async (url, options) => { calls.push({ url, options }); return replies.shift(); },
+    fetchImpl: async (url, options) => {
+      assert.match(notices[0], /\nhttps:\/\/auth.openai.com\/codex\/device\n/);
+      calls.push({ url, options }); return replies.shift();
+    },
   });
   assert.match(notices[0], /https:\/\/auth.openai.com\/codex\/device/);
-  assert.match(notices[0], /ABCD-EFGH/);
+  assert.match(notices[1], /Sign-in code: ABCD-EFGH/);
+  assert.match(notices[1], /Waiting for authorization/);
   assert.ok(!notices.join('').includes(credential.access));
   assert.ok(!notices.join('').includes(credential.refresh));
   assert.deepEqual(waits, [1000, 6000, 6000]);
