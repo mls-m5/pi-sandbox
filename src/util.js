@@ -62,16 +62,30 @@ export function run(program, args, options = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(program, args, { stdio: 'inherit', ...options });
     const signals = ['SIGINT', 'SIGTERM', 'SIGHUP'];
+    let shutdownTimer;
+    let terminationSignal;
     const handlers = signals.map(signal => {
-      const handler = () => { if (!child.killed) child.kill(signal); };
+      const handler = () => {
+        child.kill(signal);
+        // Ctrl-C may be handled by an interactive application. Termination must
+        // eventually return control so the caller can clean up its container.
+        if (signal !== 'SIGINT' && !shutdownTimer) {
+          terminationSignal = signal;
+          shutdownTimer = setTimeout(() => child.kill('SIGKILL'), 5_000);
+          shutdownTimer.unref();
+        }
+      };
       process.on(signal, handler);
       return [signal, handler];
     });
-    const cleanup = () => handlers.forEach(([signal, handler]) => process.off(signal, handler));
+    const cleanup = () => {
+      clearTimeout(shutdownTimer);
+      handlers.forEach(([signal, handler]) => process.off(signal, handler));
+    };
     child.once('error', error => { cleanup(); reject(new Error(`Cannot start ${program}: ${error.message}`)); });
     child.once('exit', (code, signal) => {
       cleanup();
-      resolve(code ?? (128 + (os.constants.signals[signal] || 1)));
+      resolve(terminationSignal ? 128 + os.constants.signals[terminationSignal] : code ?? (128 + (os.constants.signals[signal] || 1)));
     });
   });
 }

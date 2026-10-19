@@ -4,7 +4,8 @@ import { createHash, randomBytes } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { assert, atomicWrite, directory, privateDir, run, within } from './util.js';
 
-export const BASE_IMAGE = 'docker.io/library/node:24.14.0-bookworm-slim';
+// Multi-architecture manifest digest; updates are intentional source changes.
+export const BASE_IMAGE = 'docker.io/library/node:24.14.0-bookworm-slim@sha256:d8e448a56fc63242f70026718378bd4b00f8c82e78d20eefb199224a4d8e33d8';
 export const PI_VERSION = '1.2.0';
 export const CONTAINER_HOME = '/pis/home';
 const COMMANDS = new Set(['install', 'remove', 'uninstall', 'update', 'list', 'config', 'auth', 'mcp']);
@@ -65,7 +66,7 @@ export function launchArgs(store, config, command, { cwd, image, selinux = false
   const state = path.join(store.projectDir(config.id), 'state');
   const sharedLabel = selinux ? ',z' : '';
   const privateLabel = selinux ? ',Z' : '';
-  const args = ['run', '--rm', '--name', name, '--interactive', ...(tty ? ['--tty'] : []),
+  const args = ['run', '--rm', '--init', '--name', name, '--interactive', ...(tty ? ['--tty'] : []),
     '--userns=keep-id', '--user', `${uid}:${gid}`, '--cap-drop=all', '--security-opt=no-new-privileges',
     '--http-proxy=false', '--workdir', workdir,
     '--env', `HOME=${CONTAINER_HOME}`, '--env', `PI_CODING_AGENT_DIR=${CONTAINER_HOME}/.pi/agent`,
@@ -99,7 +100,7 @@ export async function launch(store, config, options) {
     try { return await run('podman', invocation.args); }
     finally {
       // Covers interrupted attached clients that leave their container running.
-      spawnSync('podman', ['rm', '--force', invocation.name], { stdio: 'ignore', timeout: 15_000 });
+      spawnSync('podman', ['rm', '--force', '--time', '1', invocation.name], { stdio: 'ignore', timeout: 15_000 });
     }
   });
 }

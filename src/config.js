@@ -38,7 +38,7 @@ export function validate(config, { storage, home = os.homedir(), identity, paths
   for (const pkg of config.image.packages) assert(/^[a-z0-9][a-z0-9+.-]*(?::[a-z0-9]+)?(?:=[a-zA-Z0-9.+:~_-]+)?$/.test(pkg), `Invalid apt package: ${pkg}`);
   strings(config.image.extraInstructions, 'image.extraInstructions');
   for (const instruction of config.image.extraInstructions) {
-    assert(!/[\n\r]/.test(instruction) && /^RUN\s+\S/.test(instruction) && !instruction.endsWith('\\'), 'extraInstructions supports single-line RUN instructions only (no trailing continuation).');
+    assert(!/[\n\r]/.test(instruction) && /^RUN\s+\S/.test(instruction) && !/\\\s*$/.test(instruction), 'extraInstructions supports single-line RUN instructions only (no trailing continuation).');
     assert(!/^RUN\s+--mount\b/.test(instruction), 'Build mounts are not supported in extraInstructions.');
   }
   object(config.credentials, ['env'], 'credentials');

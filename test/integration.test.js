@@ -4,14 +4,21 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { setTimeout as delay } from 'node:timers/promises';
 
 const cli = fileURLToPath(new URL('../bin/pis.js', import.meta.url));
 
-test('real rootless Podman: build, identity, mounts, credentials, state, Pi, pipes, exit codes', { skip: process.env.PIS_INTEGRATION !== '1', timeout: 600_000 }, t => {
+test('real rootless Podman: build, identity, mounts, credentials, state, Pi, pipes, exit codes', { skip: process.env.PIS_INTEGRATION !== '1', timeout: 600_000 }, async t => {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'pis-integration-'));
-  let image;
+  let image, projectId;
   t.after(() => {
+    if (projectId) {
+      const containers = spawnSync('podman', ['ps', '-a', '--format', '{{.Names}}'], { encoding: 'utf8' }).stdout || '';
+      for (const name of containers.trim().split('\n').filter(name => name.startsWith(`pis-${projectId}-`))) {
+        spawnSync('podman', ['rm', '--force', '--time', '1', name], { stdio: 'ignore', timeout: 15_000 });
+      }
+    }
     if (image) spawnSync('podman', ['rmi', image], { stdio: 'ignore' });
     fs.rmSync(base, { recursive: true, force: true });
   });
@@ -30,6 +37,7 @@ test('real rootless Podman: build, identity, mounts, credentials, state, Pi, pip
   success(['--new', '--name', 'integration']);
   const shown = JSON.parse(success(['--show']).stdout);
   const config = shown.config;
+  projectId = config.id;
   config.image.packages = ['jq'];
   config.image.extraInstructions = ['RUN printf customization-works > /opt/pis-build-marker'];
   config.mounts = [{ source: shared }, { source: writable, access: 'read-write' }];
@@ -67,6 +75,29 @@ test('real rootless Podman: build, identity, mounts, credentials, state, Pi, pip
   assert.match(failure.stderr, /failure/);
   assert.match(success(['--', '--version']).stdout, /1\.2\.0/);
   assert.match(success(['--fresh', '--', '--help']).stdout, /continue/);
+  // script(1) allocates a real terminal, exercising --tty and interactive Bash.
+  const quote = value => `'${value.replaceAll("'", "'\\''")}'`;
+  const terminal = spawnSync('script', ['-q', '-e', '-c', `${quote(process.execPath)} ${quote(cli)} --bash`, '/dev/null'], { cwd: sub, env, input: 'printf "shell-test:%s\\n" "$PWD"; exit\n', encoding: 'utf8', timeout: 30_000 });
+  assert.equal(terminal.status, 0, terminal.stdout + terminal.stderr);
+  assert.ok(terminal.stdout.includes(`shell-test:${sub}`), terminal.stdout);
+
+  // A live project is exclusive; terminating its client must remove its container and lock.
+  const ready = path.join(root, 'signal-ready');
+  const child = spawn(process.execPath, [cli, '--exec', '--', 'node', '-e', `process.on('SIGTERM', () => {}); require('fs').writeFileSync(${JSON.stringify(ready)}, 'ready'); setInterval(() => {}, 1000)`], { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'] });
+  let childErrors = '';
+  child.stderr.on('data', chunk => { childErrors += chunk; });
+  const exited = new Promise((resolve, reject) => { child.once('exit', (code, signal) => resolve({ code, signal })); child.once('error', reject); });
+  t.after(() => { if (child.exitCode === null) child.kill('SIGKILL'); });
+  for (let i = 0; i < 300 && !fs.existsSync(ready) && child.exitCode === null; i++) await delay(100);
+  assert.ok(fs.existsSync(ready), childErrors || 'Signal test did not start.');
+  const busy = invoke(['--exec', '--', 'true']);
+  assert.equal(busy.status, 1);
+  assert.match(busy.stderr, /busy/);
+  child.kill('SIGTERM');
+  const timer = delay(30_000, null, { ref: false }).then(() => { throw new Error('Interrupted pis did not exit.'); });
+  const ended = await Promise.race([exited, timer]);
+  assert.equal(ended.code, 143, childErrors);
+  assert.ok(!fs.existsSync(path.join(path.dirname(shown.configurationFile), 'project.lock')));
   const inspect = spawnSync('podman', ['ps', '--format', '{{.Names}}'], { encoding: 'utf8' });
   assert.ok(!inspect.stdout.includes(`pis-${config.id}-`));
 });
