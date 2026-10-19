@@ -72,12 +72,16 @@ export async function ensureImage(store, config, { rebuild = false } = {}) {
   return plan;
 }
 
-export function launchArgs(store, config, command, { cwd, image, proxy, selinux = false, tty = Boolean(process.stdin.isTTY && process.stdout.isTTY && interactiveOutput(command)), uid = process.getuid(), gid = process.getgid(), name = `pis-${config.id}-${randomBytes(5).toString('hex')}` } = {}) {
+export function launchArgs(store, config, command, { cwd, image, proxy, selinux = false, tty = Boolean(process.stdin.isTTY && process.stdout.isTTY && interactiveOutput(command)), stdinIsTTY = Boolean(process.stdin.isTTY), uid = process.getuid(), gid = process.getgid(), name = `pis-${config.id}-${randomBytes(5).toString('hex')}` } = {}) {
   const workdir = within(config.root, cwd) ? cwd : config.root;
   const state = path.join(store.projectDir(config.id), 'state');
   const sharedLabel = selinux ? ',z' : '';
   const privateLabel = selinux ? ',Z' : '';
-  const args = ['run', '--rm', '--init', '--name', name, '--interactive', ...(tty ? ['--tty'] : []),
+  // Print/JSON Pi modes read piped stdin to EOF. When the host input is a
+  // terminal, do not turn it into an open pipe that makes a one-shot task wait.
+  const rpc = command.some((arg, index) => arg === '--mode=rpc' || (arg === '--mode' && command[index + 1] === 'rpc'));
+  const openStdin = !stdinIsTTY || interactiveOutput(command) || rpc;
+  const args = ['run', '--rm', '--init', '--name', name, ...(openStdin ? ['--interactive'] : []), ...(tty ? ['--tty'] : []),
     '--userns=keep-id', '--user', `${uid}:${gid}`, '--cap-drop=all', '--security-opt=no-new-privileges',
     '--http-proxy=false', '--workdir', workdir,
     '--env', `HOME=${CONTAINER_HOME}`, '--env', `PI_CODING_AGENT_DIR=${CONTAINER_HOME}/.pi/agent`,
@@ -120,7 +124,7 @@ export async function launch(store, config, options) {
       // proxyUpstream is an internal fake-server test seam, never a CLI/config option.
       if (config.credentials.proxy) proxy = await prepareProxy(store, config, { upstream: options.proxyUpstream });
       invocation = launchArgs(store, config, command, { cwd: options.cwd, image: plan.image, proxy, selinux: info.host.security.selinuxEnabled });
-      return await run('podman', invocation.args);
+      return await run('podman', invocation.args, { stdio: options.stdio || 'inherit' });
     } finally {
       // Covers interrupted attached clients that leave their container running.
       if (invocation) spawnSync('podman', ['rm', '--force', '--time', '1', invocation.name], { stdio: 'ignore', timeout: 15_000 });

@@ -28,6 +28,15 @@ test('noninteractive Pi modes never request a TTY that merges protocol streams',
   assert.equal(interactiveOutput(['bash', '-i']), true);
 });
 
+test('one-shot Pi tasks launched from a terminal do not wait for piped stdin EOF', () => {
+  const invocation = command => launchArgs(store, config, command, { cwd: config.root, image: 'image', tty: false, stdinIsTTY: true }).args;
+  assert.ok(!invocation(piCommand(['-p', 'hello'])).includes('--interactive'));
+  assert.ok(!invocation(piCommand(['--mode', 'json', 'hello'])).includes('--interactive'));
+  assert.ok(invocation(piCommand(['--mode', 'rpc'])).includes('--interactive'));
+  assert.ok(invocation(['cat']).includes('--interactive'));
+  assert.ok(launchArgs(store, config, piCommand(['-p', 'hello']), { cwd: config.root, image: 'image', tty: false, stdinIsTTY: false }).args.includes('--interactive'));
+});
+
 test('only image configuration affects image fingerprint', () => {
   const first = imagePlan(config);
   const changed = structuredClone(config);
