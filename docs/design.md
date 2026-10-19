@@ -1,6 +1,6 @@
 # Design
 
-This document records the agreed direction for `pis`. The core registry, CLI, editor, image generation, and container runner are now implemented; see [the README](../README.md) for current usage and [the roadmap](roadmap.md) for remaining work. The OpenAI API-key and Codex OAuth credential proxies are implemented; declarative extension management and advanced hardening remain planned. See [proxy details](proxy.md) and [the extension plan](extensions-plan.md). Details marked open still need to be settled.
+This document records the agreed direction for `pis`. The core registry, CLI, editor, image generation, and container runner are now implemented; see [the README](../README.md) for current usage and [the roadmap](roadmap.md) for remaining work. The OpenAI API-key and Codex OAuth credential proxies are implemented; npm-source image extensions and JSON completion/hints are implemented; advanced package management and hardening remain planned. See [proxy details](proxy.md) and [the extension plan](extensions-plan.md). Details marked open still need to be settled.
 
 ## 1. Scope and architecture
 
@@ -68,6 +68,7 @@ Initial default layout:
   projects/
     k7m2q/
       project.json
+      project.schema.json
       Containerfile
       build/
       state/
@@ -76,6 +77,7 @@ Initial default layout:
 - `auth/openai-codex.json` is an optional private, user-global host OAuth store, never mounted or included in builds; see [Codex sign-in](codex.md).
 - `project.json` is authoritative.
 - `index.json` is a rebuildable lookup cache for roots, IDs, and names.
+- `project.schema.json` is a generated editor schema referenced by the completed configuration's `$schema`.
 - `Containerfile` is generated and marked as such.
 - `build/` contains only the generated, minimal build context.
 - `state/` holds container-local Pi settings, credentials saved by Pi, and conversations.
@@ -105,6 +107,7 @@ Proposed active configuration:
     "extraInstructions": []
   },
   "mounts": [],
+  "extensions": ["npm:pi-usage-bar-focus@0.5.0", "npm:pi-web-access@0.40.0"],
   "credentials": {
     "env": [],
     "proxy": {
@@ -150,6 +153,14 @@ Configuration lives outside repositories so a checkout cannot silently grant its
 - Handle SELinux labels deliberately without disabling container separation globally.
 
 A symlink inside the project does not itself expose an external target. Its target must also be available inside the container. Files already inside a shared directory, including `.env` and Git metadata, are accessible to Pi. External Git worktree metadata may require an additional explicit mount.
+
+### Missing-field completion and hints
+
+Selected-project loads complete missing defaults, contextual credential fields, readable `hints`, and inert examples, then write formatted JSON and a sibling editor schema. Saving through `pis --edit` uses the same completion. Explicit values, including empty arrays and direct-mode credentials, are preserved. Missing extension settings receive the two requested defaults; an existing extension array is not appended to. Unknown fields and malformed types still fail validation. Discovery/listing does not rewrite every unselected project.
+
+### Image extensions
+
+`extensions` is an array of npm install sources, not paths. The build runs Pi's installer inside the container with lifecycle scripts disabled, stores packages in the image, and copies an image-owned manifest/bootstrap. Startup injects only installed local extension paths; the `pi` command inside Bash also uses this loader. `--no-extensions`/`-ne` suppresses automatic image loading while explicit user `-e` remains available. `pis --extensions-list` lists configured image sources. See [extension setup](extensions-plan.md).
 
 ### Validation
 
@@ -201,7 +212,7 @@ Before launching a project:
 3. Fingerprint the template version, pinned dependencies, image configuration, and generated build inputs.
 4. Reuse the matching image if available; otherwise build it.
 
-Mount and credential changes do not trigger image rebuilds. Package and custom instruction changes do. Build failure must stop startup rather than silently running an outdated environment.
+Mount, credential, formatting, and hint changes do not trigger image rebuilds. Package lists, extension install sources, generated startup helpers, and custom instruction changes do. Build failure must stop startup rather than silently running an outdated environment.
 
 `pis --build` ensures the image exists. `pis --rebuild` explicitly rebuilds with `--no-cache`. The Node 24.14.0 Bookworm-slim base is digest-pinned and Pi is pinned to 1.2.0 in source; apt packages and npm transitive dependencies are not fully locked. Updating pinned versions currently requires a source change.
 
@@ -223,6 +234,7 @@ Packages installed manually in a disposable running container do not persist. Ad
 | `pis --edit` | Edit and validate project JSON |
 | `pis --check` | Validate project configuration and paths |
 | `pis --show` | Show effective settings without secret values |
+| `pis --extensions-list` | Show configured image extension install sources |
 | `pis --build` | Ensure the project image exists |
 | `pis --rebuild` | Force an image rebuild |
 | `pis --doctor` | Diagnose rootless Podman and host prerequisites |
@@ -287,4 +299,4 @@ Stronger egress controls, host/LAN restrictions, and proxy-only access are a sep
 - Resource-limit defaults and read-only root filesystem feasibility.
 - Project deletion, image cleanup, and state-retention commands; these must never delete project source files accidentally.
 - Configuration schema migration strategy; XDG/PIS_HOME storage overrides are implemented.
-- Declarative extension support is designed in [the extension plan](extensions-plan.md), but is not implemented yet. Explicit Pi extension flags and package commands already work inside the sandbox.
+- npm-source image extensions and configuration completion are implemented. Git/local build sources, transitive dependency update/rollback, and advanced package reconciliation remain future work; see [extension setup and remaining plans](extensions-plan.md).

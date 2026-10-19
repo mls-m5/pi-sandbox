@@ -28,7 +28,7 @@ test('configuration completion adds source defaults, hints and contextual fields
 
 test('completion preserves invalid values for validation rather than silently replacing them', () => {
   const base = defaults('abc12', '/work/project');
-  for (const candidate of [{ ...base, credentials: null }, { ...base, extensions: null }, { ...base, mounts: false }, { ...base, unexpected: true }]) {
+  for (const candidate of [{ ...base, credentials: null }, { ...base, extensions: null }, { ...base, mounts: false }, { ...base, credentials: { env: [], proxy: {} } }, { ...base, unexpected: true }]) {
     assert.throws(() => validate(completeConfig(candidate), { paths: false }));
   }
 });

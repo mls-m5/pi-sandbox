@@ -121,7 +121,7 @@ export function completeConfig(input) {
   fill(config.credentials, { env: [] });
   if (record(config.credentials?.proxy)) {
     const proxy = config.credentials.proxy;
-    fill(proxy, { provider: 'openai', models: [], maxRequests: 1000, maxConcurrent: 4 });
+    fill(proxy, { models: [], maxRequests: 1000, maxConcurrent: 4 });
     if (proxy.provider === 'openai') fill(proxy, { keyEnv: 'OPENAI_API_KEY' });
   }
   fill(config.hints, HINTS);

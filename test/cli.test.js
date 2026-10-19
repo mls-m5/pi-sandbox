@@ -60,6 +60,7 @@ test('help does not initialize storage and registration/show/list/check work', t
   assert.ok(!show.stdout.includes(env.OPENAI_API_KEY));
   assert.match(invoke(['--list']).stdout, /example/);
   assert.equal(invoke(['--check']).status, 0);
+  assert.match(invoke(['--extensions-list']).stdout, /npm:pi-web-access@0\.40\.0/);
 });
 
 test('editor saves valid changes and retains invalid drafts without damaging config', t => {

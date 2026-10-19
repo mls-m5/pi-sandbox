@@ -91,10 +91,13 @@ Allowed upstream requests:
 | `openai` | POST | `/v1/chat/completions` |
 | `openai` | GET | `/v1/models` |
 | `openai-codex` | POST | `/backend-api/codex/responses` |
+| `openai-codex` | GET | `/backend-api/wham/usage` |
 
 Modes are separate: a Codex capability cannot call the standard API routes, or vice versa. Codex routes are fixed to `https://chatgpt.com`; API routes are fixed to `https://api.openai.com`.
 
 All other paths, query strings, absolute URLs, HTTP CONNECT, and WebSocket upgrades are rejected. File management, response retrieval/deletion, images, audio, and Decisions/classifier endpoints are not supported yet. Requests cannot select another upstream; the CLI and project JSON provide no upstream override.
+
+The Codex usage endpoint returns only validated numeric quota/reset windows; identity, email, plan metadata, arbitrary fields, and tokens are discarded. It supports the image usage-bar extension through a narrow container-only fetch adapter. Usage polls use the same capability, host refresh, limits, and request budget; no extra real credential is supplied to extensions.
 
 `models` is an exact allowlist for POST request model IDs; an empty array allows any model. `/v1/models` is not filtered, so selecting a model outside the allowlist results in a rejection when generating a response.
 
@@ -124,4 +127,4 @@ This hides the **host-provided API key or Codex OAuth tokens**, not the ability 
 
 `npm test` covers capability checking, exact route/model policies, header rebuilding, redirect rejection, generic failures, split-key redaction, limits, timeouts, cancellation, configuration validation, and state symlink/FIFO defenses.
 
-`npm run test:integration` additionally exercises real rootless Podman, the mounted Unix socket, dummy-only credentials, read-only Pi configuration overlays, actual Pi API-key and Codex streamed conversations, host OAuth refresh, and extensions observing only dummy capabilities. The Codex test runs with container networking disabled. The upstream is a local fake OpenAI service with fake credentials. No paid API requests are made.
+`npm run test:integration` additionally exercises real rootless Podman, the mounted Unix socket, dummy-only credentials, read-only Pi configuration overlays, actual Pi API-key and Codex streamed conversations, host OAuth refresh, and extensions observing only dummy capabilities. The Codex test runs with container networking disabled and verifies the baked web-search package through an actual Pi tool call, plus quota retrieval without identity/token metadata. The upstream is a local fake OpenAI service with fake credentials. No paid API requests are made.

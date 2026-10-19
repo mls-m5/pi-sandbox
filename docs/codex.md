@@ -101,7 +101,7 @@ Container Pi openai-codex provider
   → https://chatgpt.com/backend-api/codex/responses
 ```
 
-Only **POST `/backend-api/codex/responses`** is allowed in Codex mode. Standard `/v1` API routes, OAuth/token endpoints, query strings, redirects, arbitrary destinations, CONNECT, and WebSocket forwarding are not allowed.
+Codex mode allows **POST `/backend-api/codex/responses`** and **GET `/backend-api/wham/usage`**. The usage response is reduced to numeric primary/secondary quota and reset windows; account, email, plan, and credential fields are not returned. Standard `/v1` API routes, OAuth/token endpoints, query strings, redirects, arbitrary destinations, CONNECT, and WebSocket forwarding are not allowed.
 
 The host replaces `Authorization` and derives `chatgpt-account-id` from the current real token; client-supplied account headers cannot choose the billed account. `originator` and the SSE beta header are host-controlled. Only bounded session/request IDs are optionally preserved from client headers.
 
@@ -113,7 +113,7 @@ The existing proxy request count, model allowlist, concurrency, timeout, respons
 
 ## What the container sees
 
-- Per-run dummy `openai-codex` entries in read-only `auth.json` and `models.json` overlays.
+- Per-run dummy `openai-codex` entries in read-only `auth.json` and `models.json` overlays. The model base URL is the full local Codex Responses URL for web-search provider reuse. The auth entry stays `api_key` but also exposes synthetic `access`/account fields for read-only usage extensions; no real OAuth fields are copied.
 - A synthetic JWT with account claim `pis-proxy-account` and a random capability signature. It is not a valid ChatGPT token.
 - `PIS_PROXY_TOKEN`, `PIS_PROXY_BASE_URL`, and `PIS_PROXY_PROVIDER=openai-codex` for other sandboxed tools.
 - An empty `OPENAI_API_KEY` / `OPENAI_BASE_URL`, avoiding accidentally enabling the API-key provider with the Codex capability.
@@ -128,7 +128,7 @@ The dummy capability grants permitted subscription usage for the lifetime of its
 
 Tests cover host device flow with mocked responses, explicit imports, private file handling, refresh rotation/concurrency/cancellation, fixed Codex routes, account-header replacement, bounded zstd decoding, dummy JWT compatibility, and token-safe errors/redaction.
 
-The real rootless Podman integration test uses Pi's actual `openai-codex` provider and a local fake OAuth/upstream service, with container networking disabled. It verifies a streamed conversation and an extension seeing only synthetic credentials. API-key proxy and direct-mode integration tests are also retained. No live account sign-in or paid subscription/model requests are performed by tests.
+The real rootless Podman integration test uses Pi's actual `openai-codex` provider and a local fake OAuth/upstream service, with container networking disabled. It builds the two default npm packages and verifies a streamed conversation, a real `pi-web-access` tool call, sanitized quota retrieval via the usage adapter, and extensions seeing only synthetic credentials. API-key proxy and direct-mode integration tests are also retained. No live account sign-in or paid subscription/model requests are performed by tests.
 
 The protocol follows the pinned Pi 1.2 implementation. Live OpenAI device authentication, backend behavior, workspace policy, and future protocol changes still require real-account verification. If OpenAI changes this protocol, update the host integration and pinned Pi compatibility together.
 

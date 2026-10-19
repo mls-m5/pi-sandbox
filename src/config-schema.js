@@ -1,4 +1,5 @@
 // Generated beside project.json so JSON-aware editors can describe new fields.
+import { DEFAULT_EXTENSIONS } from './extensions.js';
 export const SCHEMA_REFERENCE = './project.schema.json';
 export const HINTS = {
   credentials: 'Choose one mode: proxy.provider=openai with keyEnv, proxy.provider=openai-codex without keyEnv, or remove proxy for direct env forwarding. Examples below are inert.',
@@ -45,8 +46,8 @@ export const PROJECT_SCHEMA = {
         },
       },
     },
-    extensions: { type: 'array', uniqueItems: true, description: HINTS.extensions, items: { type: 'string', pattern: '^npm:' } },
+    extensions: { type: 'array', uniqueItems: true, default: DEFAULT_EXTENSIONS, description: HINTS.extensions, items: { type: 'string', pattern: '^npm:' } },
     examples: { type: 'object', description: 'Inert examples; never executed or mounted.' },
-    hints: { type: 'object', description: 'Wrapper-generated documentation.', properties: Object.fromEntries(Object.entries(HINTS).map(([key, value]) => [key, { type: 'string', default: value }])) },
+    hints: { type: 'object', additionalProperties: false, description: 'Wrapper-generated documentation.', properties: Object.fromEntries(Object.entries(HINTS).map(([key, value]) => [key, { type: 'string', default: value }])) },
   },
 };

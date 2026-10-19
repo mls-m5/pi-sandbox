@@ -1,163 +1,130 @@
-# Extension support plan
+# Image extensions and configuration completion
 
-**Status:** Pi's existing extension/package features work inside the sandbox today. Declarative extension management through `project.json` is planned, not implemented. Do not add the proposed `extensions` field to current configurations yet; unknown fields are rejected.
+**Implemented:** project JSON install sources, image-baked npm packages, automatic loading, a source inventory command, JSON defaults/hints, and a generated editor schema. Git/local build sources and advanced package lock/update management remain future work.
 
-## Principles
+## Install by source, not by path
 
-1. Extensions run inside container Pi, never in the host wrapper or credential proxy.
-2. Extension selection is project-scoped. Do not mount host `~/.pi/agent` or automatically import its extensions/settings.
-3. Code is executable and must be trusted. Container isolation limits host access; extension approvals do not make code safe.
-4. Selecting an extension must not implicitly grant new mounts, real credentials, host processes, or container privileges.
-5. Prefer Pi's loader/package manager rather than implementing a competing TypeScript loader or plugin API.
-6. Do not execute extension code, npm lifecycle scripts, or credential commands on the host during validation.
-
-## What works now
-
-### Local extension in the project
-
-From the project root, create `tools/hello.ts`:
-
-```typescript
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-
-export default function (pi: ExtensionAPI) {
-  pi.registerCommand("hello", {
-    description: "Show a greeting",
-    handler: async (_args, ctx) => {
-      if (ctx.hasUI) ctx.ui.notify("Hello from the sandbox", "info");
-    }
-  });
-}
-```
-
-Then load it explicitly:
+Pi normally installs packages with:
 
 ```sh
-pis -- -e ./tools/hello.ts
+pi install npm:pi-web-access@0.40.0
 ```
 
-The file is already inside the project mount. Pi uses its TypeScript loader; the host needs no TypeScript compiler or extension dependencies. Imports needing additional npm dependencies must be installed inside the sandbox or supplied by an explicit image customization.
-
-Pi resolves relative `-e` paths against the invocation working directory. When invoking from a subdirectory, use the correct relative path or the extension's absolute project path.
-
-For an extension outside the project, first share its containing directory explicitly in `mounts`, preferably read-only, then use its identical absolute container path with `-e`. Do not share your entire home to expose one extension.
-
-### Pi packages
-
-Use Pi's package commands through the wrapper:
-
-```sh
-# Replace this example source with an actual, trusted package and exact version.
-pis -- install npm:@example/pi-tools@1.2.3
-pis -- list
-pis -- config
-pis -- remove npm:@example/pi-tools
-```
-
-These commands run inside the container and skip implicit `--continue`. Personal Pi settings and managed package data are stored in this project's persistent sandbox home, not the host's Pi installation. Network access is needed for installation, and package code/installers remain untrusted executable code inside the boundary.
-
-Pi also supports one-shot sources such as `pis -- -e npm:@example/pi-tools@1.2.3`. An explicitly supplied `-e` loads even with Pi's `--no-extensions`; that option disables discovered/configured extensions, not explicit command-line ones.
-
-In proxy mode, the host API key or stored Codex sign-in must be available for launching this environment, even when invoking a package command. Extensions and installers see only the dummy key/synthetic Codex token. They can still spend through the permitted proxy endpoints, access shared files, and use the allowed network.
-
-## Proposed declarative configuration
-
-Future optional field in `project.json`:
+Put that same install specification in the project's JSON instead:
 
 ```json
 {
-  "extensions": {
-    "local": [
-      { "path": "./tools/hello.ts", "enabled": true },
-      { "path": "/home/mattias/Prog/pi-tools/index.ts", "enabled": false }
-    ],
-    "packages": [
-      { "source": "npm:@example/pi-tools@1.2.3", "enabled": true }
-    ]
-  }
+  "extensions": [
+    "npm:pi-usage-bar-focus@0.5.0",
+    "npm:pi-web-access@0.40.0"
+  ]
 }
 ```
 
-This is a proposal, not an accepted current configuration fragment. Generate inert examples for the field when implementing it, just as with mount examples.
+This is a fragment: retain the rest of `project.json`. Run `pis --edit`, save, and start `pis` or run `pis --build`. An extension source change changes the image fingerprint automatically. The next launch cannot silently reuse an image with different configured sources.
 
-### Local path policy
+The build runs Pi's own installer inside Podman with `PI_CODING_AGENT_DIR=/opt/pis/agent`. npm lifecycle scripts are disabled. No source package installation, extension factory, or npm script is executed by the host wrapper. Runtime provider credentials and host Pi configuration are not supplied to the build.
 
-- Resolve relative paths from the **registered project root**, regardless of invocation subdirectory.
-- Accept supported `.ts`/`.js` files or package directories with supported entry points.
-- Resolve symlinks and require the selected resource to be inside the registered root or an already declared additional mount.
-- Reject paths outside exposed directories; explain the required explicit mount instead of creating it automatically.
-- Do not require write access to an extension's source. Editing code in read-only shared directories is not allowed; runtime data belongs in sandbox state.
-- Do not put extension source into the image/build context by default. Local edits should be visible on next start or Pi `/reload`.
-- Local package dependencies are the user's responsibility initially; do not run host npm to install them.
+Installed resources remain in the image under `/opt/pis`. An image-owned bootstrap supplies their local package roots to Pi's extension loader, so package manifests and Pi's API aliases work normally without runtime installation. Only extensions are activated through these arguments, not a package's skills/prompts/themes. The `pi` command inside `pis --bash` uses the same bootstrap.
 
-### Package policy
+Packages are executable trusted code. They run with Pi's container permissions, not as host plugins. Package source/version pinning is not an approval or security boundary against malicious package code.
 
-- Start with exact versioned npm sources; add immutable Git commit sources after npm support is stable.
-- Reject unversioned sources, `latest`, version ranges, mutable branches/tags, and shell fragments for wrapper-managed declarations.
-- Install only through sandboxed Pi/package-manager commands. Never import packages into the host CLI.
-- Require an explicit synchronization step, rather than installing or updating packages silently during normal startup.
-- Default wrapper-managed package resource filters to extensions only; skills, prompts, and themes require a separate explicit choice. Pi packages can contain all of these resources.
-- Record requested sources, resolved versions/commits, integrity metadata, and selected filters in a host-managed lock manifest outside the workspace/state mount.
-- Keep that lock manifest declarative: a pinned source is not proof that executable code is safe or that a writable installed copy cannot be modified inside the sandbox.
-- Private package registry credentials need a separate, narrowly scoped design. Do not reuse or expose the real OpenAI key for package installation.
+## Defaults and inventory
 
-## Proposed commands and lifecycle
+The default image sources are:
+
+| Source | Purpose |
+| --- | --- |
+| `npm:pi-usage-bar-focus@0.5.0` | Model-aware Codex/ChatGPT and other provider quota/status footer |
+| `npm:pi-web-access@0.40.0` | Web search, source checking, content fetching, and stored-result retrieval |
+
+Host inventory observed while implementing this feature also included `npm:@beyona/pi-zai-usage@1.1.0`. It overlaps with the usage bar, so it is an inert example rather than another enabled default. Host settings are not scanned or imported automatically on startup.
 
 ```sh
-pis --extensions-list       # Declared and manually installed resources, with provenance
-pis --extensions-sync       # Explicit install/reconcile of declared pinned packages
-pis --without-extensions   # Diagnostic run without discovered or wrapper-managed extensions
+pis --extensions-list       # Configured image sources; does not build
+pis -- list                # Image sources, then additional sandbox-state packages
+pis --show                 # Full effective project configuration
 ```
 
-These commands are not implemented yet.
+Use `"extensions": []` to opt out. Missing fields receive the two defaults; explicit existing arrays are never appended to. Removing one entry keeps it removed, including on later configuration loads. Changing the program's defaults does not upgrade explicitly stored package versions.
 
-Normal startup would:
+## Supported specifications
 
-1. Validate configuration and already-exposed local paths without executing code.
-2. Check the package synchronization manifest; fail with synchronization guidance if declarations changed or installations are missing.
-3. Start the same sandbox/proxy as usual.
-4. Inject enabled local extension paths using Pi's explicit `--extension` arguments.
-5. Load synchronized packages through Pi settings and its loader.
+- `npm:package-name`
+- `npm:package-name@1.2.3`
+- `npm:@scope/package-name@1.2.3`
+- `npm:package-name@canary`
 
-`--without-extensions` should suppress wrapper-injected extension arguments and pass Pi's `--no-extensions` to disable discovery/configured packages. An explicit user `-e` after `--` remains an intentional override. Do not present this diagnostic flag as a security boundary: Pi itself and generated commands retain their ordinary sandbox permissions.
+Exact versions are recommended. Unversioned packages and tags resolve during image creation, not each launch; use `pis --rebuild` to refresh them. npm's lockfile remains in the image, but clean builds do not yet have a host-managed transitive dependency lock.
 
-Synchronization should preserve unrelated user Pi settings and manual package installations. It must not replace the entire `settings.json` with a generated file. Define a managed ownership manifest so removal affects only resources the wrapper installed. Use per-project locks during installation and update the host lock manifest atomically only after success.
+Duplicate package names—even with different versions—are rejected. Shell fragments, arbitrary URLs, credentialed URLs, Git sources, and local paths are rejected. Git/local source builds are future work; the first implementation deliberately supports the npm sources used by the chosen defaults.
 
-Normal runs should not fetch package updates. Changing local paths or enabling/disabling extensions should not rebuild the image. Package install state lives in project state initially; immutable image-baked extension bundles can be a later reproducibility feature.
+Packages must ship usable Pi entry points. Lifecycle scripts are disabled; if a trusted package needs extra compilation, use explicit `image.extraInstructions` rather than executing scripts on the host.
 
-## Credential and trust interactions
+## Configuration maintenance
 
-- Wrapper-managed declarations live in host project configuration, not repository-controlled settings.
-- Pi's existing project trust decision still applies to repository `.pi` resources. Do not pass `--approve` automatically.
-- Explicit wrapper-managed local paths are user-approved executable code, analogous to explicit `-e` arguments. Document that they bypass discovery-based trust gating.
-- Extensions can inspect prompts, files, conversations, and the dummy capability. They must not receive the real API key or Codex access/refresh tokens, even if an extension registers its own provider or calls APIs directly.
-- The proxy's upstream, endpoint/model policy, and request budget stay on the host, independent of extension code. An extension can use the capability but cannot change that host policy.
-- A custom provider extension using a different protocol/upstream requires separate credential/routing support; never silently forward host keys as a fallback.
+The wrapper completes the selected project's configuration on launch, check, show, or edit. Project listing/discovery does not rewrite every other registered project.
 
-## Implementation stages
+Completion:
 
-1. **Local declarations:** schema/default examples, canonical path validation, enabled selection, explicit Pi arguments, and diagnostic disable flag.
-2. **Pinned npm declarations:** explicit sandboxed sync, managed Pi settings entries/resource filters, host lock manifest, inventory, and safe removal.
-3. **Reproducibility:** immutable Git references, integrity verification, version migration, optional image-baked dependencies, and clearer update/rollback UX.
+1. Adds missing fields and context-appropriate defaults, without overwriting explicit values.
+2. Adds inert examples for alternate credential modes and additional extension sources.
+3. Adds readable `hints` for credentials, extensions, mounts, and image customization.
+4. Generates `project.schema.json` beside `project.json`, referenced through `$schema`, for JSON-aware editor descriptions/completion.
+5. Saves formatted JSON with two-space indentation and a trailing newline under the registry lock.
 
-## Acceptance tests
+The same completion runs after `pis --edit`, before validation/save. Invalid edits retain the previous valid file. New fields in a selected proxy mode appear automatically: API-key mode gets missing `keyEnv`; Codex gets model/request-limit defaults but never an API-key-only field. If `credentials.proxy` was deliberately absent, it stays absent; alternative modes are examples, not silently activated permissions.
 
-- Local extension loads in interactive and print modes and survives ordinary project session continuation.
-- Startup from a subdirectory resolves declarations relative to project root.
-- Disabled entries are never imported; the diagnostic flag disables wrapper and discovery loading.
-- External source paths fail unless already explicitly shared; symlink escape does not create hidden mounts.
-- Two projects cannot inherit each other's package settings or managed state.
-- Package installation executes no extension or lifecycle code on the host.
-- Missing packages do not trigger silent network installs on normal startup.
-- Failed synchronization preserves previous working settings and lock metadata.
-- Extension code sees only the proxy dummy credential; the host fake upstream sees the injected real test key.
-- An extension cannot redirect the host proxy upstream or bypass its route/model limits through request headers.
-- Existing manual Pi settings/packages are preserved when managed packages are added or removed.
+Identity fields are never guessed or rewritten. Unknown fields and malformed types still fail validation rather than being discarded. `examples` and `hints` never execute commands, share directories, or pass credentials. Clearing an array means disable it; deleting a field requests its default again.
 
-The real-Podman API-key and Codex proxy tests already load explicit local TypeScript extensions and verify their UID and dummy-only credential view. Declarative configuration and package lifecycle tests will be added as the stages above are implemented.
+## Proxy compatibility
 
-## Pi references
+### Codex usage bar
 
-- [Extensions](https://pi.dev/docs/latest/extensions)
-- [Pi packages](https://pi.dev/docs/latest/packages)
-- [Custom providers](https://pi.dev/docs/latest/custom-provider)
+The usage extension normally reads an OAuth `access` field and fetches a hard-coded ChatGPT usage URL. The sandbox auth overlay exposes an additional **synthetic** `access`/account field while keeping Pi's `api_key` credential type, preventing in-container OAuth refresh.
+
+A container-only Node fetch adapter redirects exactly authenticated GET `https://chatgpt.com/backend-api/wham/usage` requests to the local relay. Other URLs are untouched; missing/wrong capabilities fail closed for that endpoint. No general HTTP forwarding is added.
+
+The host adds real authentication/account headers, refreshes on the host if needed, and returns only numeric primary/secondary quota windows. Email, account ID, plan details, and arbitrary upstream fields are discarded. Quota polls count toward the proxy request budget. Vendor status pages are fetched publicly by the extension without credentials and require ordinary container egress; their UI rendering is not validated by the headless integration test.
+
+### Web Access
+
+For installed `pi-web-access`, startup fills missing sandbox `web-search.json` values:
+
+- `openaiUseProviderBaseUrl: true`
+- `openaiSearchProviders: [the selected proxy provider]` when proxy mode is active
+- `workflow: "none"`
+- `autoOpenBrowser: false`
+
+Existing explicit settings are preserved; malformed JSON is not overwritten. In particular, an existing explicit `openaiResponsesUrl` or disabled provider-URL reuse may need manual adjustment. Remove a conflicting endpoint override to use the wrapper defaults. No host web-search configuration or credentials are copied.
+
+The Codex model overlay uses the full local Responses URL so provider-URL reuse retains `/backend-api/codex/responses` rather than selecting OpenAI's public host. Hosted search goes through the same model allowlist and request budget as ordinary model calls. If a model allowlist is configured, include the package's selected search model or set `openaiSearchModel` in sandbox web settings.
+
+Web Access can also use its keyless providers and normal network fetches. Its third-party services, optional paid providers, privacy rules, and browser/video dependencies remain its own features; installing it does not mount host browser profiles or provide third-party keys. No curator/browser port is published automatically.
+
+## Debugging and manual extensions
+
+```sh
+pis -- --no-extensions                 # Suppress baked and discovered extensions
+pis -- --no-extensions -e ./probe.ts    # Explicit user -e still works
+pis -- install npm:some-package@1.2.3  # Manual install into writable project state
+pis -- remove npm:some-package        # Remove its manual declaration
+```
+
+Manual packages and project-local extensions retain Pi's normal trust/discovery behavior. The wrapper does not auto-approve repository resources. Avoid declaring the same package both in image JSON and manual Pi settings; duplicate extension/tool registration can conflict. Removing a manual install does not remove the immutable image package—edit the JSON and rebuild instead.
+
+## Verification and remaining work
+
+Fast tests cover source parsing/injection rejection, configuration completion, schema emission, preserving explicit choices, package startup arguments, web settings, and the narrow usage fetch adapter.
+
+The real-Podman Codex integration builds both default npm packages, verifies their installed versions and web tool registration, exercises a real Pi tool call to `pi-web-access`, obtains Codex quota numbers through the compatibility adapter, and completes a streamed conversation. Container networking is disabled and host services are fakes; no paid model/search calls are made. Live provider behavior and the graphical quota footer still need real-account/terminal verification.
+
+Remaining possibilities:
+
+- Immutable Git commit sources and explicit local build contexts.
+- Host-managed integrity/update/rollback manifests for transitive dependencies.
+- Optional resource filters for skills/prompts/themes.
+- Better reconciliation of manually installed duplicate packages.
+- Additional credential-proxied providers and usage endpoints.
+
+References: [Pi packages](https://pi.dev/docs/latest/packages), [Pi extensions](https://pi.dev/docs/latest/extensions), [proxy policy](proxy.md), [Codex host sign-in](codex.md).

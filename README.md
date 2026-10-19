@@ -2,7 +2,7 @@
 
 `pis` is a Linux-only CLI that runs the entire [Pi coding agent](https://pi.dev) inside a rootless Podman container.
 
-**Status: working initial implementation.** Project registration, editable configuration, custom images, additional mounts, persistent Pi state, shell/exec modes, and diagnostics are implemented. The host-side OpenAI API-key proxy is the default for new projects; ChatGPT/Codex OAuth proxy mode is also implemented. Declarative extension management is planned.
+**Status: working initial implementation.** Project registration, editable configuration, custom images, additional mounts, persistent Pi state, shell/exec modes, and diagnostics are implemented. The host-side OpenAI API-key proxy is the default for new projects; ChatGPT/Codex OAuth proxy mode is also implemented. JSON extension install sources, build-time installation, and automatic configuration hints/schema completion are implemented.
 
 ## Requirements
 
@@ -123,10 +123,16 @@ Relocation preserves project identity and state. It does not rewrite additional 
 
 `pis --edit` opens a temporary draft using `$VISUAL`, `$EDITOR`, or `vim`. Only valid configuration is saved. Invalid edits leave the previous configuration intact; interactive use offers retry/discard, while noninteractive use retains the draft and reports its location.
 
+Loading the selected project adds missing defaults and hints, writes an editor schema beside the configuration, and formats the JSON. The same completion runs after editing: newly supported fields appear automatically without overwriting existing values. Optional credential modes stay in inert examples; direct credentials are not silently converted to proxy mode, and Codex never receives an API-only `keyEnv` field. An explicit `extensions: []` remains empty.
+
 Configuration includes these editable fields:
 
 ```json
 {
+  "extensions": [
+    "npm:pi-usage-bar-focus@0.5.0",
+    "npm:pi-web-access@0.40.0"
+  ],
   "image": {
     "packages": ["python3", "python3-venv", "make"],
     "extraInstructions": ["RUN npm install -g typescript"]
@@ -154,8 +160,8 @@ Generated configuration also contains an **inert `examples` section**. Copy exam
 
 - Packages are Debian apt package names, optionally with versions.
 - Advanced customization supports single-line `RUN` instructions only, without trailing continuations or build mounts. These are trusted executable code.
-- Changes to image settings trigger a build on the next launch; mount/credential changes do not.
-- Manually installed packages disappear when the container is removed.
+- Changes to image settings or extension install sources trigger a build on the next launch; mounts, credentials, hints, and formatting do not.
+- Tools installed into the disposable root filesystem disappear with the container. Manual Pi packages installed into the persistent sandbox home remain in project state.
 - Credential configuration stores host environment variable **names**, never values. Proxy mode requires its host key and never falls back to exposing it. Deliberate direct mode remains available by removing `proxy` and setting `env`; those keys are visible inside the container.
 - API-key mode supports Responses, Chat Completions, and model listing; Codex mode supports its separate ChatGPT Responses endpoint with host OAuth refresh. Both have optional exact model restrictions and per-run request/concurrency limits. See [proxy behavior and limitations](docs/proxy.md).
 
@@ -170,17 +176,33 @@ The Node base image is digest-pinned and Pi is pinned to 1.2.0. apt repositories
 
 ## Extensions
 
-Pi extensions already run inside the sandbox:
+Specify Pi install sources in `pis --edit`—not local installation paths:
 
-```sh
-pis -- -e ./tools/my-extension.ts
-pis -- install npm:@example/pi-tools@1.2.3  # Replace with an actual trusted package
-pis -- list
+```json
+{
+  "extensions": [
+    "npm:pi-usage-bar-focus@0.5.0",
+    "npm:pi-web-access@0.40.0"
+  ]
+}
 ```
 
-Local files must already be available through the project or an explicit extra mount. Package installs persist in this project's Pi state, not your host Pi installation. Extensions see only the proxy dummy key/token, but can use it for permitted requests.
+These two packages are the defaults when the field is missing. The image build runs `pi install` for each source with npm lifecycle scripts disabled. Packages live in the image and load automatically, including when you type `pi` inside `pis --bash`. No repeated `-e` flags or startup downloads are needed for these image packages.
 
-See [the extension support plan](docs/extensions-plan.md) for current usage and proposed declarative project configuration, pinned package synchronization, and trust rules. The proposed configuration fields and management commands are not implemented yet.
+```sh
+pis --extensions-list          # Configured image install sources
+pis --build                    # Build after changing sources (or just start pis)
+pis -- list                    # Image sources plus manually installed Pi packages
+pis -- --no-extensions         # Diagnostic run without image/discovered extensions
+```
+
+Use `"extensions": []` to disable all image defaults. Existing arrays are preserved, so removed packages are not silently re-added. Missing fields in older project files are completed on their next selected-project load.
+
+Supported install sources are `npm:<name>`, scoped npm packages, and optional exact versions or dist-tags. Default versions are pinned; unversioned/tagged sources require `pis --rebuild` to fetch updates. Git sources and local source copying are not implemented. Local development through explicit `pis -- -e ./tools/my-extension.ts` remains supported.
+
+Codex quota reads are routed through the credential proxy and return only usage windows. Web Access receives proxy-compatible defaults in sandbox `web-search.json`; existing explicit preferences are preserved. Neither package receives the real host token. See [extension setup and compatibility](docs/extensions-plan.md) for details and limitations.
+
+Manual `pis -- install npm:...` still installs into writable project Pi state rather than the image. Avoid installing the same package both ways; remove its manual declaration when switching it to image configuration.
 
 ## Storage
 
@@ -192,8 +214,9 @@ Default: `~/.local/share/pis/`. Override with `$PIS_HOME`, or `$XDG_DATA_HOME/pi
   auth/openai-codex.json         # Private host OAuth credentials; NEVER mounted
   projects/k7m2q/
     project.json
+    project.schema.json         # Generated editor descriptions/completions
     Containerfile               # Generated; do not edit
-    build/Containerfile         # Minimal build context, no source or credentials
+    build/                      # Generated Containerfile, manifest and bootstraps only
     state/                      # Persistent sandbox home and Pi state
 ```
 
@@ -235,7 +258,7 @@ Real-container coverage includes package/custom instruction builds, absolute wor
 
 - [OpenAI proxy: setup and security](docs/proxy.md)
 - [Codex subscription sign-in and proxy](docs/codex.md)
-- [Extension usage and implementation plan](docs/extensions-plan.md)
+- [Image extension setup and remaining plans](docs/extensions-plan.md)
 - [Design and configuration](docs/design.md)
 - [Implementation roadmap and acceptance tests](docs/roadmap.md)
 
