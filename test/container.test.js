@@ -55,6 +55,8 @@ test('launch preserves paths, identity, isolation flags, and literal arguments',
   assert.equal(invocation.workdir, '/work/project/sub directory');
   assert.ok(args.includes('--userns=keep-id'));
   assert.ok(args.includes('--init'));
+  assert.ok(launchArgs(store, config, ['pi'], { cwd: config.root, image: 'test', network: 'none' }).args.includes('--network=none'));
+  assert.throws(() => launchArgs(store, config, ['pi'], { cwd: config.root, image: 'test', network: 'host' }), /Unsupported internal network/);
   assert.equal(args[args.indexOf('--user') + 1], '1234:5678');
   assert.ok(args.includes('--cap-drop=all'));
   assert.ok(args.includes('--security-opt=no-new-privileges'));
