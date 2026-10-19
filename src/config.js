@@ -2,10 +2,12 @@ import path from 'node:path';
 import os from 'node:os';
 import { assert, directory, within, overlap } from './util.js';
 import { DEFAULT_PROXY } from './proxy.js';
+import { DEFAULT_EXTENSIONS, extensionManifest } from './extensions.js';
+import { HINTS, SCHEMA_REFERENCE } from './config-schema.js';
 
 export const ID_PATTERN = /^[a-z0-9]{5}$/;
 export const NAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/;
-const RESERVED = ['/etc', '/usr', '/bin', '/sbin', '/lib', '/lib64', '/proc', '/sys', '/dev', '/run', '/root', '/pis'];
+const RESERVED = ['/etc', '/usr', '/bin', '/sbin', '/lib', '/lib64', '/proc', '/sys', '/dev', '/run', '/root', '/pis', '/opt/pis'];
 const RESERVED_ENV = ['HOME', 'PATH', 'USER', 'LOGNAME', 'SHELL', 'ENV', 'BASH_ENV', 'NODE_OPTIONS', 'NODE_PATH', 'LD_PRELOAD', 'LD_LIBRARY_PATH', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_CACHE_HOME'];
 
 function object(value, keys, label) {
@@ -27,7 +29,13 @@ export function safeMount(source, { home = os.homedir(), storage }) {
 }
 
 export function validate(config, { storage, home = os.homedir(), identity, paths = true } = {}) {
-  object(config, ['version', 'id', 'name', 'root', 'image', 'mounts', 'credentials', 'examples'], 'project');
+  object(config, ['$schema', 'version', 'id', 'name', 'root', 'image', 'mounts', 'credentials', 'extensions', 'examples', 'hints'], 'project');
+  if (config.$schema !== undefined) assert(config.$schema === SCHEMA_REFERENCE, `Use ${SCHEMA_REFERENCE} for $schema.`);
+  extensionManifest(config.extensions);
+  if (config.hints !== undefined) {
+    object(config.hints, Object.keys(HINTS), 'hints');
+    assert(Object.values(config.hints).every(value => typeof value === 'string'), 'hints must contain strings.');
+  }
   assert(config.version === 1, 'Unsupported configuration version (expected 1).');
   assert(typeof config.id === 'string' && ID_PATTERN.test(config.id), 'Project id must be five lowercase letters/digits.');
   if (config.name !== undefined) assert(typeof config.name === 'string' && NAME_PATTERN.test(config.name), 'Invalid project name (use letters, digits, dot, underscore, or dash; max 64 characters).');
@@ -76,7 +84,13 @@ export function validate(config, { storage, home = os.homedir(), identity, paths
     for (let j = i + 1; j < sources.length; j++) assert(!overlap(sources[i], sources[j]), `Mounts overlap: ${sources[i]} and ${sources[j]}`);
   }
   if (config.examples !== undefined) {
-    object(config.examples, ['mounts', 'extraInstructions'], 'examples');
+    object(config.examples, ['mounts', 'extraInstructions', 'credentials', 'extensions'], 'examples');
+    if (config.examples.extensions !== undefined) extensionManifest(config.examples.extensions);
+    if (config.examples.credentials !== undefined) {
+      object(config.examples.credentials, ['openai', 'codex', 'direct'], 'examples.credentials');
+      // Credential examples are inert JSON objects, not active credential modes.
+      for (const entry of Object.values(config.examples.credentials)) object(entry, ['env', 'proxy'], 'credential example');
+    }
     if (config.examples.mounts !== undefined) {
       assert(Array.isArray(config.examples.mounts), 'examples.mounts must be an array.');
       for (const mount of config.examples.mounts) {
@@ -90,8 +104,46 @@ export function validate(config, { storage, home = os.homedir(), identity, paths
   return config;
 }
 
+export function completeConfig(input) {
+  const record = value => value !== null && typeof value === 'object' && !Array.isArray(value);
+  if (!record(input)) return input;
+  const config = structuredClone(input);
+  const fill = (target, values) => {
+    if (!record(target)) return;
+    for (const [key, value] of Object.entries(values)) if (target[key] === undefined) target[key] = structuredClone(value);
+  };
+  fill(config, {
+    $schema: SCHEMA_REFERENCE, version: 1, image: {}, mounts: [],
+    credentials: { env: [], proxy: { ...DEFAULT_PROXY, models: [] } },
+    extensions: DEFAULT_EXTENSIONS, examples: {}, hints: {},
+  });
+  fill(config.image, { packages: [], extraInstructions: [] });
+  fill(config.credentials, { env: [] });
+  if (record(config.credentials?.proxy)) {
+    const proxy = config.credentials.proxy;
+    fill(proxy, { provider: 'openai', models: [], maxRequests: 1000, maxConcurrent: 4 });
+    if (proxy.provider === 'openai') fill(proxy, { keyEnv: 'OPENAI_API_KEY' });
+  }
+  fill(config.hints, HINTS);
+  fill(config.examples, {
+    mounts: [
+      { source: path.join(os.homedir(), 'Projects/shared-library'), access: 'read-only' },
+      { source: path.join(os.homedir(), 'Data/test-fixtures'), access: 'read-write' },
+    ],
+    extraInstructions: ['RUN npm install -g typescript'],
+    extensions: ['npm:@beyona/pi-zai-usage@1.1.0'],
+    credentials: {},
+  });
+  fill(config.examples?.credentials, {
+    openai: { env: [], proxy: { ...DEFAULT_PROXY, models: [] } },
+    codex: { env: [], proxy: { provider: 'openai-codex', models: [], maxRequests: 1000, maxConcurrent: 4 } },
+    direct: { env: ['OPENAI_API_KEY'] },
+  });
+  return config;
+}
+
 export function defaults(id, root, name) {
-  return {
+  return completeConfig({
     version: 1, id, ...(name ? { name } : {}), root,
     image: { packages: [], extraInstructions: [] },
     mounts: [], credentials: { env: [], proxy: { ...DEFAULT_PROXY, models: [] } },
@@ -102,5 +154,5 @@ export function defaults(id, root, name) {
       ],
       extraInstructions: ['RUN npm install -g typescript'],
     },
-  };
+  });
 }

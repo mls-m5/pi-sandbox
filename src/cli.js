@@ -157,7 +157,8 @@ export async function main(argv = process.argv.slice(2)) {
     console.log(`Relocated ${config.id}: ${config.root}`);
     return 0;
   }
-  const config = store.select(cwd, options.project);
+  const selected = store.select(cwd, options.project);
+  const config = await store.refresh(selected.id);
   if (options.action === 'edit') return edit(store, config);
   validate(config, { storage: store.root });
   if (options.action === 'check') { console.log(`Valid: ${store.configPath(config.id)}`); return 0; }

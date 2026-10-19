@@ -2,7 +2,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { randomInt } from 'node:crypto';
-import { defaults, validate, ID_PATTERN } from './config.js';
+import { isDeepStrictEqual } from 'node:util';
+import { PROJECT_SCHEMA } from './config-schema.js';
+import { completeConfig, defaults, validate, ID_PATTERN } from './config.js';
 import { assert, directory, privateDir, readJson, writeJson, withLock, within } from './util.js';
 
 export class Store {
@@ -27,7 +29,7 @@ export class Store {
       if (!entry.isDirectory() || !ID_PATTERN.test(entry.name)) continue;
       const file = this.configPath(entry.name);
       if (!fs.existsSync(file)) continue; // Ignore an interrupted registration before its atomic write.
-      const config = validate(readJson(file), { storage: this.root, paths: false });
+      const config = validate(completeConfig(readJson(file)), { storage: this.root, paths: false });
       assert(config.id === entry.name, `Project ID does not match storage directory: ${file}`);
       projects.push(config);
     }
@@ -62,7 +64,22 @@ export class Store {
     return project;
   }
   load(id, paths = true) {
-    return validate(readJson(this.configPath(id)), { storage: this.root, paths });
+    return validate(completeConfig(readJson(this.configPath(id))), { storage: this.root, paths });
+  }
+  write(config) {
+    const schema = path.join(this.projectDir(config.id), 'project.schema.json');
+    const schemaText = `${JSON.stringify(PROJECT_SCHEMA, null, 2)}\n`;
+    if (!fs.existsSync(schema) || fs.readFileSync(schema, 'utf8') !== schemaText) writeJson(schema, PROJECT_SCHEMA);
+    writeJson(this.configPath(config.id), config);
+  }
+  async refresh(id) {
+    return this.lock(async () => {
+      const config = this.load(id, false);
+      const text = `${JSON.stringify(config, null, 2)}\n`;
+      const schema = path.join(this.projectDir(id), 'project.schema.json');
+      if (fs.readFileSync(this.configPath(id), 'utf8') !== text || !fs.existsSync(schema) || fs.readFileSync(schema, 'utf8') !== `${JSON.stringify(PROJECT_SCHEMA, null, 2)}\n`) this.write(config);
+      return config;
+    });
   }
   async register(cwd, name) {
     return this.lock(async () => {
@@ -76,7 +93,7 @@ export class Store {
       this.unique([...all, config]);
       privateDir(this.projectDir(id));
       privateDir(path.join(this.projectDir(id), 'state'));
-      writeJson(this.configPath(id), config);
+      this.write(config);
       this.index([...all, config]);
       return config;
     });
@@ -84,11 +101,12 @@ export class Store {
   async save(config, original) {
     return this.lock(async () => {
       const current = this.load(original.id, false);
-      assert(JSON.stringify(current) === JSON.stringify(original), 'Configuration changed while editing. Your draft is retained; reopen and merge your changes.');
+      assert(isDeepStrictEqual(current, original), 'Configuration changed while editing. Your draft is retained; reopen and merge your changes.');
+      config = completeConfig(config);
       validate(config, { storage: this.root, identity: original });
       const all = this.all().map(p => p.id === config.id ? config : p);
       this.unique(all);
-      writeJson(this.configPath(config.id), config);
+      this.write(config);
       this.index(all);
     });
   }
@@ -101,7 +119,7 @@ export class Store {
       validate(config, { storage: this.root });
       const updated = all.map(p => p.id === config.id ? config : p);
       this.unique(updated);
-      writeJson(this.configPath(config.id), config);
+      this.write(config);
       this.index(updated);
       return config;
     }));
