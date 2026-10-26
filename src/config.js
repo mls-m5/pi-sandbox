@@ -138,7 +138,7 @@ export function completeConfig(input) {
     credentials: {},
   });
   fill(config.examples?.credentials, {
-    openai: { env: [], proxy: { ...DEFAULT_PROXY, models: [] } },
+    openai: { env: [], proxy: { provider: 'openai', keyEnv: 'OPENAI_API_KEY', models: [], maxRequests: 1000, maxConcurrent: 4 } },
     berget: { env: [], proxy: { provider: 'berget', keyEnv: 'BERGET_API_KEY', models: [], maxRequests: 1000, maxConcurrent: 4 } },
     codex: { env: [], proxy: { provider: 'openai-codex', models: [], maxRequests: 1000, maxConcurrent: 4 } },
     direct: { env: ['OPENAI_API_KEY'] },

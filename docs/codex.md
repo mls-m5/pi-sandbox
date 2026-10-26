@@ -6,7 +6,7 @@ OpenAI API keys still use the separate `openai` proxy mode described in [proxy.m
 
 ## Set up
 
-Run these commands in your **host terminal**, not inside Pi or `pis --bash`:
+New projects use the `openai-codex` proxy by default. Run these commands in your **host terminal**, not inside Pi or `pis --bash`:
 
 ```sh
 pis --login-codex

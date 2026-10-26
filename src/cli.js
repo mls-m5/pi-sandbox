@@ -21,9 +21,9 @@ Usage:
   pis [--project ID_OR_NAME] --edit | --check | --show | --build | --rebuild
   pis [--project ID_OR_NAME] --extensions-list
   pis --doctor
-  pis --login-codex
-  pis --import-codex FILE
-  pis --logout-codex
+  pis --login-codex                 # global host sign-in
+  pis --import-codex FILE            # global host sign-in
+  pis --logout-codex                 # remove global host sign-in
   pis --login openai|berget|custom
   pis --logout openai|berget|custom
   pis --login-status
@@ -36,9 +36,9 @@ Pi arguments belong after --. Explicit Pi session selectors override continuatio
 --rebuild disables build cache. Runtime containers are disposable.
 
 Storage: $PIS_HOME, otherwise $XDG_DATA_HOME/pis or ~/.local/share/pis.
-New projects use the host OpenAI key proxy. Existing direct-mode projects are unchanged.
-Codex subscription proxy: set provider to openai-codex (without keyEnv), then
---login-codex on the host, or --import-codex ~/.pi/agent/auth.json / ~/.codex/auth.json.
+New projects use the global host Codex OAuth proxy. Existing projects are unchanged.
+Run --login-codex (or --import-codex ~/.pi/agent/auth.json / ~/.codex/auth.json) once;
+the sign-in is shared by every project under this PIS_HOME.
 Berget: set credentials.proxy.provider=berget, and use BERGET_API_KEY on the host,
 or run --login berget and set credentials.proxy.profile=berget (remove keyEnv).
 Custom endpoints: run --login custom, then set provider=custom and profile=custom.
@@ -148,7 +148,7 @@ export async function main(argv = process.argv.slice(2)) {
     process.on('SIGINT', cancel); process.on('SIGTERM', cancel);
     try { await loginCodex(store, { signal: controller.signal }); }
     finally { process.off('SIGINT', cancel); process.off('SIGTERM', cancel); }
-    console.log('Codex sign-in saved on the host. Set credentials.proxy.provider to openai-codex and remove keyEnv in pis --edit.');
+    console.log('Global Codex sign-in saved on the host. It is shared by all projects using the openai-codex proxy.');
     return 0;
   }
   if (options.action === 'import-codex') {

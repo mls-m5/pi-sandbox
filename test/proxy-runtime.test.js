@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { Store } from '../src/store.js';
-import { validate } from '../src/config.js';
+import { defaults, validate } from '../src/config.js';
 import { prepareProxy, PROXY_BASE_URL, CODEX_PROXY_BASE_URL } from '../src/proxy-runtime.js';
 import { saveCodexCredential } from '../src/codex-auth.js';
 import { fakeCodexCredential } from './fixtures/codex.js';
@@ -16,6 +16,8 @@ async function fixture(t) {
   const root = path.join(base, 'project'); fs.mkdirSync(root);
   const store = new Store(path.join(base, 'storage'));
   const config = await store.register(root);
+  // These fixtures exercise the API-key proxy unless a test explicitly selects Codex.
+  config.credentials.proxy = { provider: 'openai', keyEnv: 'OPENAI_API_KEY', models: [], maxRequests: 1000, maxConcurrent: 4 };
   const agent = path.join(store.projectDir(config.id), 'state', '.pi', 'agent');
   fs.mkdirSync(agent, { recursive: true });
   const keyName = `PIS_TEST_PROXY_KEY_${config.id.toUpperCase()}`;
@@ -28,7 +30,8 @@ async function fixture(t) {
 test('new projects default to host proxy; schema disallows forwarding keys or changing upstream', async t => {
   const { store, config } = await fixture(t);
   assert.deepEqual(config.credentials.env, []);
-  assert.equal(config.credentials.proxy.provider, 'openai');
+  const fresh = defaults('abc12', '/work/project');
+  assert.equal(fresh.credentials.proxy.provider, 'openai-codex');
   validate(config, { storage: store.root });
   for (const change of [p => { p.env = ['OPENAI_API_KEY']; }, p => { p.proxy.upstream = 'https://attacker'; }, p => { p.proxy.provider = 'other'; }, p => { p.proxy.maxRequests = 0; }, p => { p.proxy.maxConcurrent = 65; }, p => { p.proxy.keyEnv = '!print-secret'; }]) {
     const candidate = structuredClone(config); change(candidate.credentials);

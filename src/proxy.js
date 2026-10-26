@@ -10,7 +10,7 @@ import { assert } from './util.js';
 export const OPENAI_UPSTREAM = 'https://api.openai.com';
 export const CODEX_UPSTREAM = 'https://chatgpt.com';
 export const BERGET_UPSTREAM = 'https://api.berget.ai';
-export const DEFAULT_PROXY = { provider: 'openai', keyEnv: 'OPENAI_API_KEY', models: [], maxRequests: 1000, maxConcurrent: 4 };
+export const DEFAULT_PROXY = { provider: 'openai-codex', models: [], maxRequests: 1000, maxConcurrent: 4 };
 const API_ROUTES = new Set(['POST /v1/responses', 'POST /v1/chat/completions', 'GET /v1/models']);
 const BERGET_ROUTES = new Set(['POST /v1/chat/completions']);
 const CODEX_ROUTES = new Set(['POST /backend-api/codex/responses', 'GET /backend-api/wham/usage']);

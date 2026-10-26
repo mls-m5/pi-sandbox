@@ -59,7 +59,8 @@ test('help does not initialize storage and registration/show/list/check work', t
   assert.equal(effective.config.name, 'example');
   assert.deepEqual(effective.piCommand, ['pi', '--continue']);
   assert.equal(effective.mounts.length, 1);
-  assert.equal(effective.credentialVariables[0].present, true);
+  assert.deepEqual(effective.credentialVariables, []);
+  assert.deepEqual(effective.credentialSource, { kind: 'host-oauth', provider: 'openai-codex', present: false });
   assert.ok(!show.stdout.includes(env.OPENAI_API_KEY));
   assert.match(invoke(['--list']).stdout, /example/);
   assert.equal(invoke(['--check']).status, 0);

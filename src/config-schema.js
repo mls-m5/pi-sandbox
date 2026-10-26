@@ -2,7 +2,7 @@
 import { DEFAULT_EXTENSIONS } from './extensions.js';
 export const SCHEMA_REFERENCE = './project.schema.json';
 export const HINTS = {
-  credentials: 'Choose one mode: OpenAI/Berget with keyEnv or a matching host profile (not both), custom with the custom host profile, openai-codex with host OAuth, or no proxy for direct env forwarding. Examples below are inert.',
+  credentials: 'New projects default to openai-codex host OAuth. Choose OpenAI/Berget with keyEnv or a matching host profile (not both), custom with the custom host profile, or no proxy for direct env forwarding. Examples below are inert.',
   extensions: 'Pi install sources baked into the image, e.g. npm:pi-web-access@0.40.0. Use [] to disable defaults. Changes rebuild the image; no source paths or -e flags are needed.',
   image: 'packages are apt names; extraInstructions are trusted single-line RUN instructions. Never put credentials here.',
   mounts: 'Explicit extra directories at identical absolute paths. Access defaults to read-only. The project root is already shared read-write.',

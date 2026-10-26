@@ -17,7 +17,7 @@ Tested on Ubuntu 24.04 with rootless Podman 4.9.3 and crun. SELinux behavior is 
 
 The CLI has **no npm dependencies** and runs directly from the checkout.
 
-If your terminal selects an older Node, check `node --version` and put a compatible Node on PATH. If Pi's bundled Node is installed at the following path, you can use it temporarily:
+If your terminal selects an older Node, check `node --version`. Sourcing `env.sh` automatically prefers Pi's bundled Node when it is installed at the following path; you can also prepend it manually:
 
 ```sh
 export PATH="$HOME/.local/share/pi-node/current/bin:$PATH"
@@ -33,7 +33,7 @@ source ./env.sh
 pis --help
 ```
 
-This adds the checkout's `bin/` directory to PATH in the current Bash terminal only. It does not change any shell configuration files.
+This adds the checkout's `bin/` directory to PATH in the current Bash terminal only. If Pi's bundled Node is installed at `~/.local/share/pi-node/current/bin/node`, it is also prepended to PATH so `pis` uses it. No shell configuration files are changed.
 
 ## Install from this checkout
 
@@ -150,7 +150,7 @@ Relocation preserves project identity and state. It does not rewrite additional 
 
 Loading the selected project adds missing defaults and hints, writes an editor schema beside the configuration, and formats the JSON. The same completion runs after editing: newly supported fields appear automatically without overwriting existing values. Optional credential modes stay in inert examples; direct credentials are not silently converted to proxy mode, and Codex never receives an API-only `keyEnv` field. An explicit `extensions: []` remains empty.
 
-Configuration includes these editable fields:
+Configuration includes these editable fields. `project.json` accepts `//` and `/* ... */` comments; comments are parsed safely and may be removed when `pis` normalizes the file after loading or saving.
 
 ```json
 {
@@ -169,8 +169,7 @@ Configuration includes these editable fields:
   "credentials": {
     "env": [],
     "proxy": {
-      "provider": "openai",
-      "keyEnv": "OPENAI_API_KEY",
+      "provider": "openai-codex",
       "models": [],
       "maxRequests": 1000,
       "maxConcurrent": 4
@@ -187,7 +186,7 @@ Generated configuration also contains an **inert `examples` section**. Copy exam
 - Advanced customization supports single-line `RUN` instructions only, without trailing continuations or build mounts. These are trusted executable code.
 - Changes to image settings or extension install sources trigger a build on the next launch; mounts, credentials, hints, and formatting do not.
 - Tools installed into the disposable root filesystem disappear with the container. Manual Pi packages installed into the persistent sandbox home remain in project state.
-- Credential configuration stores host environment variable **names**, never values. Proxy mode requires its host key and never falls back to exposing it. Deliberate direct mode remains available by removing `proxy` and setting `env`; those keys are visible inside the container.
+- Credential configuration stores host environment variable **names**, never values. New projects default to the `openai-codex` host OAuth proxy; run `pis --login-codex` before launching. Proxy mode never falls back to exposing credentials. Deliberate direct mode remains available by removing `proxy` and setting `env`; those keys are visible inside the container.
 - OpenAI API-key mode supports Responses, Chat Completions, and model listing; Berget and custom profiles initially support Chat Completions only; Codex mode supports its separate ChatGPT Responses endpoint with host OAuth refresh. Project config selects either a host profile or an environment-key source; a selected source never silently falls back to the other. All modes have per-run request/concurrency limits; POST model allowlists are optional. See [proxy behavior and limitations](docs/proxy.md).
 
 ```sh

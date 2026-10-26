@@ -41,8 +41,40 @@ export function writeJson(file, value) {
   atomicWrite(file, `${JSON.stringify(value, null, 2)}\n`);
 }
 
+function stripJsonComments(text) {
+  let output = '';
+  let quoted = false;
+  let escaped = false;
+  for (let i = 0; i < text.length; i += 1) {
+    const char = text[i], next = text[i + 1];
+    if (quoted) {
+      output += char;
+      if (escaped) escaped = false;
+      else if (char === '\\') escaped = true;
+      else if (char === '"') quoted = false;
+      continue;
+    }
+    if (char === '"') { quoted = true; output += char; continue; }
+    if (char === '/' && next === '/') {
+      while (i < text.length && text[i] !== '\n') i += 1;
+      if (i < text.length) output += '\n';
+      continue;
+    }
+    if (char === '/' && next === '*') {
+      const end = text.indexOf('*/', i + 2);
+      if (end === -1) throw new Error('Unterminated comment.');
+      const comment = text.slice(i, end + 2);
+      output += comment.replace(/[^\r\n]/g, ' ');
+      i = end + 1;
+      continue;
+    }
+    output += char;
+  }
+  return output;
+}
+
 export function readJson(file) {
-  try { return JSON.parse(fs.readFileSync(file, 'utf8')); }
+  try { return JSON.parse(stripJsonComments(fs.readFileSync(file, 'utf8'))); }
   catch (error) { throw new Error(`Cannot read JSON at ${file}: ${error.message}`); }
 }
 
