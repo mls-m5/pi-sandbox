@@ -16,8 +16,10 @@ const SESSION_OPTIONS = new Set(['-c', '--continue', '-r', '--resume', '--sessio
 export function piCommand(args = [], fresh = false) {
   const beforeSeparator = args.slice(0, args.indexOf('--') === -1 ? args.length : args.indexOf('--'));
   const selectsSession = beforeSeparator.some(arg => SESSION_OPTIONS.has(arg.split('=')[0]));
-  // Management subcommands do not accept the conversation continuation option.
-  return ['pi', ...(!fresh && !selectsSession && !COMMANDS.has(args[0]) ? ['--continue'] : []), ...args];
+  const selectsTuiMode = beforeSeparator.some(arg => arg === '--tui-mode' || arg.startsWith('--tui-mode='));
+  // Management subcommands do not accept conversation/TUI defaults.
+  const defaults = COMMANDS.has(args[0]) ? [] : [...(!selectsTuiMode ? ['--tui-mode', 'regular'] : []), ...(!fresh && !selectsSession ? ['--continue'] : [])];
+  return ['pi', ...defaults, ...args];
 }
 
 export function interactiveOutput(command) {

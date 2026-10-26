@@ -60,7 +60,7 @@ pis
 
 The first launch builds an image with Node, Pi, Bash, Git, ripgrep, and CA certificates. Later launches reuse it. `pis --new` registers the directory; it does not launch Pi or build the image.
 
-By default `pis` runs **`pi --continue`**. Pi uses sandbox-local state, not your host Pi installation or configuration. New projects keep the host OpenAI key outside the container and give Pi a temporary dummy key. Existing projects retain their previous credential settings; see [enabling the proxy](docs/proxy.md#enable-it) to switch.
+By default `pis` runs **`pi --tui-mode regular --continue`**. Pi uses sandbox-local state, not your host Pi installation or configuration. Pass an explicit `--tui-mode` after the wrapper separator to choose another Pi TUI mode. New projects keep the host OpenAI key outside the container and give Pi a temporary dummy key. Existing projects retain their previous credential settings; see [enabling the proxy](docs/proxy.md#enable-it) to switch.
 
 ```sh
 pis -- --model <model-id>       # Continue with additional Pi arguments

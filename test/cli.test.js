@@ -47,7 +47,7 @@ test('help does not initialize storage and registration/show/list/check work', t
   const { env, invoke } = fixture(t);
   const help = invoke(['--help']);
   assert.equal(help.status, 0, help.stderr);
-  assert.match(help.stdout, /pi --continue/);
+  assert.match(help.stdout, /pi --tui-mode regular --continue/);
   assert.ok(!fs.existsSync(env.PIS_HOME));
   assert.equal(invoke([]).status, 1);
   const created = invoke(['--new', '--name', 'example']);
@@ -57,7 +57,7 @@ test('help does not initialize storage and registration/show/list/check work', t
   assert.equal(show.status, 0, show.stderr);
   const effective = JSON.parse(show.stdout);
   assert.equal(effective.config.name, 'example');
-  assert.deepEqual(effective.piCommand, ['pi', '--continue']);
+  assert.deepEqual(effective.piCommand, ['pi', '--tui-mode', 'regular', '--continue']);
   assert.equal(effective.mounts.length, 1);
   assert.deepEqual(effective.credentialVariables, []);
   assert.deepEqual(effective.credentialSource, { kind: 'host-oauth', provider: 'openai-codex', present: false });

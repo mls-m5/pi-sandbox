@@ -28,7 +28,7 @@ Usage:
   pis --logout openai|berget|custom
   pis --login-status
 
-By default runs pi --continue; --fresh starts without continuation.
+By default runs pi --tui-mode regular --continue; --fresh starts without continuation (but keeps regular TUI mode). Explicit Pi TUI/session options override defaults.
 Pi arguments belong after --. Explicit Pi session selectors override continuation.
 --new registers the current directory; it does not start a conversation.
 --edit uses $VISUAL, $EDITOR, or vim and saves only valid JSON configuration.

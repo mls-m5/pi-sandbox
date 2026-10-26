@@ -8,14 +8,15 @@ const config = { ...defaults('abc12', '/work/project', 'app'), credentials: { en
 const store = { projectDir: id => `/storage/projects/${id}` };
 
 test('Pi continues by default and respects explicit session selection/subcommands', () => {
-  assert.deepEqual(piCommand(), ['pi', '--continue']);
-  assert.deepEqual(piCommand(['--model', 'example']), ['pi', '--continue', '--model', 'example']);
-  assert.deepEqual(piCommand(['-p', 'test'], true), ['pi', '-p', 'test']);
+  assert.deepEqual(piCommand(), ['pi', '--tui-mode', 'regular', '--continue']);
+  assert.deepEqual(piCommand(['--model', 'example']), ['pi', '--tui-mode', 'regular', '--continue', '--model', 'example']);
+  assert.deepEqual(piCommand(['--tui-mode', 'compact']), ['pi', '--continue', '--tui-mode', 'compact']);
+  assert.deepEqual(piCommand(['-p', 'test'], true), ['pi', '--tui-mode', 'regular', '-p', 'test']);
   for (const args of [['--resume'], ['-r'], ['--session', 'id'], ['--session=id'], ['--session-id', 'id'], ['--fork', 'id'], ['--no-session'], ['--continue'], ['-c']]) {
-    assert.deepEqual(piCommand(args), ['pi', ...args]);
+    assert.deepEqual(piCommand(args), ['pi', '--tui-mode', 'regular', ...args]);
   }
   for (const command of ['auth', 'install', 'update', 'config', 'mcp', 'list']) assert.deepEqual(piCommand([command, '--help']), ['pi', command, '--help']);
-  assert.deepEqual(piCommand(['--', '--resume']), ['pi', '--continue', '--', '--resume']);
+  assert.deepEqual(piCommand(['--', '--resume']), ['pi', '--tui-mode', 'regular', '--continue', '--', '--resume']);
 });
 
 test('noninteractive Pi modes never request a TTY that merges protocol streams', () => {
