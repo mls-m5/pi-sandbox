@@ -5,6 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { assert, atomicWrite, directory, privateDir, run, within } from './util.js';
 import { prepareProxy } from './proxy-runtime.js';
 import { schedulePrune } from './prune.js';
+import { prepareGitPush, approveGitPush } from './git-push.js';
 import { startAptRequestServer, applyAptProposal, approveAptProposal } from './apt-requests.js';
 import { extensionManifest, IMAGE_AGENT_DIR, shellQuote } from './extensions.js';
 
@@ -138,17 +139,22 @@ export function launchArgs(store, config, command, { cwd, image, proxy, aptReque
   return { args, name, workdir };
 }
 
-export function restartOptions(options) {
+export function restartOptions(options, installedPackages = [], actionNotice) {
   // Do not replay an initial prompt, --fresh or management/session-creation flags.
-  return { ...options, mode: 'pi', fresh: false, rebuild: false, buildOnly: false, args: ['--continue'] };
+  // Only the host-approved names are included, never the sandbox's explanation.
+  const notice = actionNotice || (installedPackages.length
+    ? `[pis] The user approved the apt packages ${installedPackages.join(', ')}. The sandbox image has now been built successfully with these packages and Pi has restarted. Continue the previous task using the newly available tools; you do not need to request these packages again.`
+    : undefined);
+  return { ...options, mode: 'pi', fresh: false, rebuild: false, buildOnly: false,
+    installedPackages: [...installedPackages], args: ['--continue', ...(notice ? [notice] : [])] };
 }
 
 export async function launch(store, config, options) {
   while (true) {
     const result = await launchOnce(store, config, options);
-    if (result !== RESTART) return result;
+    if (result?.type !== RESTART) return result;
     // launchOnce has released the project lock and closed all old sockets.
-    options = restartOptions(options);
+    options = restartOptions(options, result.packages, result.notice);
   }
 }
 
@@ -168,6 +174,10 @@ async function launchOnce(store, config, options) {
     const plan = await ensureImage(store, config, options);
     built = Boolean(plan.built);
     progress('Image ready.');
+    if (options.installedPackages?.length) {
+      assert(options.installedPackages.every(pkg => config.image.packages.includes(pkg)), 'Approved package configuration changed before restart; no installation notice was sent.');
+      progress('Packages ready. Resuming Pi and notifying the agent to continue the task…');
+    }
     if (options.buildOnly) return 0;
     const command = options.mode === 'bash' ? ['bash', '-i'] : options.mode === 'exec' ? options.args : piCommand(options.args, options.fresh);
     if (options.mode === 'pi' && !config.credentials.proxy) {
@@ -202,11 +212,23 @@ async function launchOnce(store, config, options) {
       if (proxy) await proxy.close();
     }
     if (proposal) {
-      assert(containerStopped, 'Cannot confirm sandbox shutdown; package request not applied. Configuration unchanged.');
+      assert(containerStopped, 'Cannot confirm sandbox shutdown; no host action was performed.');
+      if (proposal.type === 'git-push') {
+        const push = await prepareGitPush(config, proposal);
+        try {
+          if (await approveGitPush(push)) {
+            await push.push();
+            console.error('pis: host Git push succeeded. Restarting Pi…');
+            return { type: RESTART, packages: [], notice: `[pis] The user approved a host Git push. Git reported success pushing commit ${push.commit} to ${push.url}, branch ${push.ref}. Pi has restarted. Continue the previous task; do not repeat this push.` };
+          }
+          console.error('pis: Git push declined; no host push was executed.');
+        } finally { push.close(); }
+        return status;
+      }
       if (await approveAptProposal(proposal)) {
         await applyAptProposal(store, config, proposal);
         console.error(`pis: packages added to ${store.configPath(config.id)}. Rebuilding and restarting Pi with the latest session…`);
-        return RESTART;
+        return { type: RESTART, packages: [...proposal.packages] };
       } else console.error('pis: package request declined; configuration unchanged.');
     }
     return status;

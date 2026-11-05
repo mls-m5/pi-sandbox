@@ -5,6 +5,7 @@ import { privateDir } from './util.js';
 import { validate } from './config.js';
 import { randomInt } from 'node:crypto';
 import { createInterface } from 'node:readline/promises';
+import { validateHostGitRequest } from './git-push.js';
 
 const MAX_BYTES = 4096;
 
@@ -45,7 +46,8 @@ export async function startAptRequestServer(config, store) {
       handled = true;
       try {
         if (proposal || data.indexOf('\n') !== data.length - 1) throw new Error('Only one proposal is allowed.');
-        proposal = validateAptProposal(JSON.parse(data.slice(0, -1)), config, store);
+        const request = JSON.parse(data.slice(0, -1));
+        proposal = request?.type === 'git-command' ? validateHostGitRequest(request) : validateAptProposal(request, config, store);
         socket.end('{"ok":true}\n');
       } catch { socket.end('{"ok":false}\n'); }
     });
@@ -80,7 +82,7 @@ export function formatAptApproval(proposal, code, { columns = 80, color = false 
       + `${style('Debian packages:', '1')} ${style(proposal.packages.join(', '), '33')}\n\n`
       + `${style('Reason supplied by the sandbox (untrusted):', '2')}\n  ${proposal.reason}\n\n`
       + 'Approval saves the package list, rebuilds the image and restarts Pi.\n'
-      + `${style('The latest session is resumed; no prompt is sent automatically.', '2')}\n`
+      + `${style('The agent is notified after the build and continues the task (uses model tokens).', '2')}\n`
       + `${rule}\n`,
     prompt: `Type ${style(code, '1;36')} to approve ${style('(Enter or any other answer declines)', '2')}: `,
   };

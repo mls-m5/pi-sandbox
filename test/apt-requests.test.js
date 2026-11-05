@@ -37,6 +37,7 @@ test('approval formatting provides full-width separators and optional terminal c
   assert.ok(!plain.text.includes('\x1b'));
   assert.match(plain.text, /Debian packages: curl, python3-venv/);
   assert.match(plain.prompt, /Type 42 to approve/);
+  assert.match(plain.text, /uses model tokens/);
   const colored = formatAptApproval(proposal, '42', { columns: 120, color: true });
   assert.ok(colored.text.includes(`\x1b[31m${'─'.repeat(120)}\x1b[0m`));
   assert.ok(colored.text.includes('\x1b[1m'));
@@ -71,6 +72,21 @@ test('automatic restart resumes without replaying prompts or fresh/rebuild flags
   assert.equal(resumed.buildOnly, false);
   assert.equal(resumed.cwd, original.cwd);
   assert.equal(original.fresh, true);
+});
+
+test('approved package restart sends one English user prompt without replaying the original task', () => {
+  const original = { mode: 'pi', fresh: true, args: ['old prompt that must not be replayed'] };
+  const resumed = restartOptions(original, ['curl', 'python3-venv']);
+  assert.equal(resumed.args.length, 2);
+  assert.equal(resumed.args[0], '--continue');
+  assert.match(resumed.args[1], /\[pis\] The user approved the apt packages curl, python3-venv/);
+  assert.match(resumed.args[1], /Continue the previous task/);
+  assert.ok(!resumed.args.includes(original.args[0]));
+  assert.deepEqual(resumed.installedPackages, ['curl', 'python3-venv']);
+  const next = restartOptions(resumed, ['wget']);
+  assert.match(next.args[1], /apt packages wget\./);
+  assert.ok(!next.args[1].includes('curl'));
+  assert.deepEqual(restartOptions(resumed).args, ['--continue']);
 });
 
 test('default packages, proposal validation and host save', async t => {
@@ -109,6 +125,20 @@ test('proposal socket accepts one bounded suggestion; cannot approve changes', a
   assert.deepEqual(requests.proposal, { type: 'apt-packages', packages: ['curl'], reason: 'task needs curl' });
   assert.deepEqual(store.load(config.id).image.packages, ['build-essential', 'python3']);
   assert.deepEqual(await send(socket, { type: 'apt-packages', packages: ['vim'], reason: 'another request' }), { ok: false });
+});
+
+test('shared proposal service accepts a single allowlisted host Git command without executing it', async t => {
+  const { store, config } = await fixture(t);
+  const requests = await startAptRequestServer(config, store);
+  t.after(() => requests.close());
+  const socket = path.join(requests.directory, 'request.sock');
+  const hash = 'a'.repeat(40);
+  assert.deepEqual(await send(socket, { type: 'git-command', repo: '.', args: ['config', 'alias.x', '!evil'], reason: 'unsafe' }), { ok: false });
+  assert.deepEqual(await send(socket, { type: 'git-command', repo: '.', args: ['push', 'origin', `${hash}:refs/heads/main`], reason: 'publish' }), { ok: true });
+  assert.equal(requests.proposal.type, 'git-push');
+  assert.equal(requests.proposal.commit, hash);
+  assert.deepEqual(await send(socket, { type: 'apt-packages', packages: ['curl'], reason: 'second action' }), { ok: false });
+  assert.deepEqual(store.load(config.id).image.packages, ['build-essential', 'python3']);
 });
 
 test('invalid proposals do not mutate host configuration or reserve the request slot', async t => {
