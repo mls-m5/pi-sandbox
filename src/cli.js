@@ -3,7 +3,7 @@ import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { createInterface } from 'node:readline/promises';
 import { Store } from './store.js';
-import { hasCodexCredential, importCodexCredential, loginCodex, logoutCodex } from './codex-auth.js';
+import { getCodexUsage, hasCodexCredential, importCodexCredential, loginCodex, logoutCodex } from './codex-auth.js';
 import { apiProfileStatus, promptApiProfile, logoutApiProfile, readApiProfile } from './api-auth.js';
 import { validate } from './config.js';
 import { CONTAINER_HOME, BASE_IMAGE, PI_VERSION, imagePlan, inspectPodman, launch, piCommand } from './container.js';
@@ -24,8 +24,11 @@ Usage:
   pis --login-codex                 # global host sign-in
   pis --import-codex FILE            # global host sign-in
   pis --logout-codex                 # remove global host sign-in
-  pis --login openai|berget|custom
-  pis --logout openai|berget|custom
+  pis --codex-usage                  # print sanitized global Codex quotas
+  pis --login-mistral               # global Mistral API-key profile
+  pis --logout-mistral
+  pis --login openai|berget|mistral|custom
+  pis --logout openai|berget|mistral|custom
   pis --login-status
 
 By default runs pi --tui-mode regular --continue; --fresh starts without continuation (but keeps regular TUI mode). Explicit Pi TUI/session options override defaults.
@@ -41,6 +44,7 @@ Run --login-codex (or --import-codex ~/.pi/agent/auth.json / ~/.codex/auth.json)
 the sign-in is shared by every project under this PIS_HOME.
 Berget: set credentials.proxy.provider=berget, and use BERGET_API_KEY on the host,
 or run --login berget and set credentials.proxy.profile=berget (remove keyEnv).
+Mistral: --login-mistral stores an API key; set provider=mistral, profile=mistral.
 Custom endpoints: run --login custom, then set provider=custom and profile=custom.
 Only an explicit trusted host profile can select a custom destination.
 Never run as root. Mounted files and explicitly forwarded keys are accessible to the sandbox.
@@ -71,7 +75,7 @@ export function parse(argv) {
       assert(!options.fresh, 'Repeated option: --fresh'); options.fresh = true;
     } else if (['--bash', '--exec'].includes(key) && equals === -1) {
       assert(!mode, 'Choose either --bash or --exec.'); mode = key.slice(2);
-    } else if (['--new', '--list', '--edit', '--check', '--show', '--build', '--rebuild', '--extensions-list', '--doctor', '--login-codex', '--logout-codex', '--login-status', '--help', '-h', '--version'].includes(key) && equals === -1) {
+    } else if (['--new', '--list', '--edit', '--check', '--show', '--build', '--rebuild', '--extensions-list', '--doctor', '--login-codex', '--logout-codex', '--login-mistral', '--logout-mistral', '--codex-usage', '--login-status', '--help', '-h', '--version'].includes(key) && equals === -1) {
       assert(!action, 'Choose only one management action.'); action = key === '-h' ? 'help' : key.slice(2);
     } else throw new Error(`Unknown pis option: ${token}. Pass Pi arguments after --; see pis --help.`);
   }
@@ -82,7 +86,7 @@ export function parse(argv) {
   assert(!options.fresh || (!action && !mode), '--fresh is only valid when running Pi.');
   assert(!args.length || (!action && mode !== 'bash'), 'Trailing arguments are only valid for Pi or --exec.');
   assert(mode !== 'exec' || args.length > 0, '--exec requires a command after --.');
-  assert(!options.project || !['new', 'list', 'relocate', 'doctor', 'login-codex', 'logout-codex', 'import-codex', 'login', 'logout', 'login-status', 'help', 'version'].includes(action), '--project is not valid with this action.');
+  assert(!options.project || !['new', 'list', 'relocate', 'doctor', 'login-codex', 'logout-codex', 'login-mistral', 'logout-mistral', 'codex-usage', 'import-codex', 'login', 'logout', 'login-status', 'help', 'version'].includes(action), '--project is not valid with this action.');
   return options;
 }
 
@@ -127,14 +131,16 @@ export async function main(argv = process.argv.slice(2)) {
   assert(process.getuid() !== 0, 'Run pis as your normal user, not root or sudo.');
   const store = new Store();
   const cwd = directory(process.cwd());
-  if (options.action === 'login') {
-    await promptApiProfile(store, options.target);
-    console.log(`Saved host ${options.target} API-key profile. Set credentials.proxy.profile to ${options.target} and remove keyEnv in pis --edit.`);
+  if (options.action === 'login' || options.action === 'login-mistral') {
+    const provider = options.action === 'login-mistral' ? 'mistral' : options.target;
+    await promptApiProfile(store, provider);
+    console.log(`Saved host ${provider} API-key profile. Set credentials.proxy.provider and credentials.proxy.profile to ${provider} and remove keyEnv in pis --edit.`);
     return 0;
   }
-  if (options.action === 'logout') {
-    await logoutApiProfile(store, options.target);
-    console.log(`Removed host ${options.target} API-key profile (the key is not revoked at the provider).`);
+  if (options.action === 'logout' || options.action === 'logout-mistral') {
+    const provider = options.action === 'logout-mistral' ? 'mistral' : options.target;
+    await logoutApiProfile(store, provider);
+    console.log(`Removed host ${provider} API-key profile (the key is not revoked at the provider).`);
     return 0;
   }
   if (options.action === 'login-status') {
@@ -159,6 +165,10 @@ export async function main(argv = process.argv.slice(2)) {
   if (options.action === 'logout-codex') {
     await logoutCodex(store);
     console.log('Removed the shared host Codex sign-in. This does not revoke tokens at OpenAI.');
+    return 0;
+  }
+  if (options.action === 'codex-usage') {
+    console.log(JSON.stringify(await getCodexUsage(store)));
     return 0;
   }
   if (options.action === 'doctor') {
@@ -193,7 +203,7 @@ export async function main(argv = process.argv.slice(2)) {
   if (options.action === 'show') {
     const plan = imagePlan(config);
     const workdir = within(config.root, cwd) ? cwd : config.root;
-    const proxyKeyEnv = config.credentials.proxy?.keyEnv || (config.credentials.proxy?.provider === 'berget' ? 'BERGET_API_KEY' : 'OPENAI_API_KEY');
+    const proxyKeyEnv = config.credentials.proxy?.keyEnv || (config.credentials.proxy?.provider === 'berget' ? 'BERGET_API_KEY' : config.credentials.proxy?.provider === 'mistral' ? 'MISTRAL_API_KEY' : 'OPENAI_API_KEY');
     const isCodex = config.credentials.proxy?.provider === 'openai-codex';
     const credentialVariables = config.credentials.proxy
       ? (isCodex || config.credentials.proxy.profile ? [] : [{ name: proxyKeyEnv, present: Boolean(process.env[proxyKeyEnv]), handling: 'host-proxy' }])

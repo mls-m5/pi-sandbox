@@ -13,9 +13,10 @@ const extensions = extensionManifest();
 test('image startup loads installed package directories without remote install requests', () => {
   const command = imageCommand(['pi', '--continue', '-p', 'hello'], extensions);
   assert.deepEqual(command.slice(0, 3), ['/usr/local/bin/pis-pi-real', '--extension', extensions[0].path]);
-  assert.ok(command.includes(extensions[1].path));
+  assert.equal(command.filter(value => value === '--extension').length, 1);
   assert.deepEqual(command.slice(-3), ['--continue', '-p', 'hello']);
-  assert.deepEqual(imageCommand(['pi', '--no-extensions'], extensions), ['/usr/local/bin/pis-pi-real', '--no-extensions']);
+  assert.deepEqual(imageCommand(['pi', '--continue'], extensions, { PIS_APT_SOCKET: '/pis/apt/request.sock' }), ['/usr/local/bin/pis-pi-real', '--extension', extensions[0].path, '--extension', '/opt/pis/request-apt.mjs', '--continue']);
+  assert.deepEqual(imageCommand(['pi', '--no-extensions'], extensions, { PIS_APT_SOCKET: '/pis/apt/request.sock' }), ['/usr/local/bin/pis-pi-real', '--no-extensions']);
   assert.deepEqual(imageCommand(['pi', '-ne', '-e', '/project/probe.ts'], extensions), ['/usr/local/bin/pis-pi-real', '-ne', '-e', '/project/probe.ts']);
   assert.deepEqual(imageCommand(['pi', 'install', 'npm:foo'], extensions), ['/usr/local/bin/pis-pi-real', 'install', 'npm:foo']);
   assert.deepEqual(imageCommand(['bash', '-i'], extensions), ['bash', '-i']);
@@ -53,8 +54,10 @@ test('usage compatibility redirects only the exact endpoint and authenticated du
 test('image context contains only generated build files and install specs affect the fingerprint', () => {
   const config = defaults('abc12', '/work/project');
   const plan = imagePlan(config);
-  assert.deepEqual(Object.keys(plan.files).sort(), ['Containerfile', 'extensions.json', 'fetch-bridge.mjs', 'image-entry.mjs', 'pi-launcher']);
-  assert.match(plan.content, /NPM_CONFIG_IGNORE_SCRIPTS=true pi install 'npm:pi-usage-bar-focus@0\.5\.0'/);
+  assert.deepEqual(Object.keys(plan.files).sort(), ['Containerfile', 'extensions.json', 'fetch-bridge.mjs', 'image-entry.mjs', 'pi-launcher', 'request-apt.mjs']);
+  assert.match(plan.content, /NPM_CONFIG_IGNORE_SCRIPTS=true pi install 'npm:pi-web-access@0\.40\.0'/);
+  assert.match(plan.content, /'build-essential'/);
+  assert.match(plan.content, /'python3'/);
   assert.ok(!Object.values(plan.files).join('').includes(config.root));
   config.extensions = [];
   const without = imagePlan(config);

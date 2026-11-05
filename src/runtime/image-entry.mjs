@@ -7,7 +7,7 @@ import { spawn } from 'node:child_process';
 
 const PI_COMMANDS = new Set(['install', 'remove', 'uninstall', 'update', 'list', 'config', 'auth', 'mcp']);
 
-export function imageCommand(command, extensions) {
+export function imageCommand(command, extensions, env = process.env) {
   if (!['pi', '/usr/local/bin/pi', '/usr/local/bin/pis-pi-real'].includes(command[0])) return command;
   command = ['/usr/local/bin/pis-pi-real', ...command.slice(1)];
   if (PI_COMMANDS.has(command[1])) return command;
@@ -15,7 +15,7 @@ export function imageCommand(command, extensions) {
   const end = args.indexOf('--');
   const options = end === -1 ? args : args.slice(0, end);
   if (options.includes('--no-extensions') || options.includes('-ne')) return command;
-  return [command[0], ...extensions.flatMap(entry => ['--extension', entry.path]), ...args];
+  return [command[0], ...extensions.flatMap(entry => ['--extension', entry.path]), ...(env.PIS_APT_SOCKET ? ['--extension', '/opt/pis/request-apt.mjs'] : []), ...args];
 }
 
 export function initializeWebSettings(extensions, env = process.env) {

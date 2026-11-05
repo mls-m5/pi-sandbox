@@ -1,7 +1,7 @@
 import { assert } from './util.js';
 
 export const IMAGE_AGENT_DIR = '/opt/pis/agent';
-export const DEFAULT_EXTENSIONS = ['npm:pi-usage-bar-focus@0.5.0', 'npm:pi-web-access@0.40.0'];
+export const DEFAULT_EXTENSIONS = ['npm:pi-web-access@0.40.0'];
 
 export function extensionSource(source) {
   assert(typeof source === 'string', 'Extension sources must be strings.');

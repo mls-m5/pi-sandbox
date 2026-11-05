@@ -108,7 +108,7 @@ Proposed active configuration:
     "extraInstructions": []
   },
   "mounts": [],
-  "extensions": ["npm:pi-usage-bar-focus@0.5.0", "npm:pi-web-access@0.40.0"],
+  "extensions": ["npm:pi-web-access@0.40.0"],
   "credentials": {
     "env": [],
     "proxy": {

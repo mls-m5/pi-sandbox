@@ -150,6 +150,37 @@ export async function getCodexCredential(store, { signal, fetchImpl } = {}) {
   }, signal);
 }
 
+export async function getCodexUsage(store, { signal, fetchImpl = fetch } = {}) {
+  const credential = await getCodexCredential(store, { signal, fetchImpl });
+  try {
+    const response = await fetchImpl('https://chatgpt.com/backend-api/wham/usage', {
+      method: 'GET', redirect: 'error', signal: AbortSignal.any([AbortSignal.timeout(30_000), ...(signal ? [signal] : [])]),
+      headers: { authorization: `Bearer ${credential.access}`, 'chatgpt-account-id': credential.accountId, originator: 'codex-cli', 'user-agent': 'codex-cli', accept: 'application/json' },
+    });
+    const body = await response.text();
+    assert(response.status === 200, `Codex usage request failed (status ${response.status}).`);
+    const data = JSON.parse(body);
+    assert(data?.rate_limit && typeof data.rate_limit === 'object', 'Invalid Codex usage response.');
+    const rate_limit = {};
+    for (const name of ['primary_window', 'secondary_window']) {
+      const value = data.rate_limit[name];
+      if (value === undefined || value === null) { rate_limit[name] = null; continue; }
+      assert(Number.isFinite(value.used_percent) && value.used_percent >= 0 && value.used_percent <= 100, 'Invalid Codex usage window.');
+      const window = { used_percent: value.used_percent };
+      for (const key of ['limit_window_seconds', 'reset_at', 'reset_after_seconds']) if (value[key] !== undefined) {
+        assert(Number.isFinite(value[key]) && value[key] >= 0 && value[key] <= 1e12, 'Invalid Codex usage window.'); window[key] = value[key];
+      }
+      assert(window.reset_at !== undefined || window.reset_after_seconds !== undefined, 'Missing Codex usage reset.');
+      rate_limit[name] = window;
+    }
+    return { rate_limit };
+  } catch (error) {
+    if (signal?.aborted) throw new Error('Codex usage request cancelled.');
+    if (error.message === 'Codex usage request failed (status 401).') throw new Error('Codex usage authentication failed. Sign in again.');
+    throw new Error('Codex usage request failed.');
+  }
+}
+
 export async function loginCodex(store, { notify = console.error, signal, fetchImpl, sleep = delay } = {}) {
   const options = { signal, fetchImpl };
   notify('Open this URL manually in your browser:\nhttps://auth.openai.com/codex/device\n\nRequesting your sign-in code...');

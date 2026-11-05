@@ -60,8 +60,8 @@ export function validate(config, { storage, home = os.homedir(), identity, paths
   if (config.credentials.proxy !== undefined) {
     const proxy = config.credentials.proxy;
     object(proxy, ['provider', 'keyEnv', 'profile', 'models', 'maxRequests', 'maxConcurrent'], 'credentials.proxy');
-    assert(['openai', 'openai-codex', 'berget', 'custom'].includes(proxy.provider), 'Proxy provider must be openai, berget, custom or openai-codex.');
-    assert(proxy.profile === undefined || (proxy.provider !== 'openai-codex' && proxy.profile === proxy.provider), 'Profile must match the API-key provider (openai, berget or custom).');
+    assert(['openai', 'openai-codex', 'berget', 'mistral', 'custom'].includes(proxy.provider), 'Proxy provider must be openai, berget, mistral, custom or openai-codex.');
+    assert(proxy.profile === undefined || (proxy.provider !== 'openai-codex' && proxy.profile === proxy.provider), 'Profile must match the API-key provider (openai, berget, mistral or custom).');
     assert(proxy.provider !== 'custom' || proxy.profile === 'custom', 'Custom provider requires credentials.proxy.profile=custom; use pis --login custom to configure a trusted host profile.');
     assert(proxy.profile === undefined || proxy.keyEnv === undefined, 'Remove keyEnv when using a host profile.');
     assert(proxy.provider !== 'openai-codex' || proxy.keyEnv === undefined, 'Codex uses host OAuth credentials; remove keyEnv and use pis --login-codex or --import-codex.');
@@ -90,7 +90,7 @@ export function validate(config, { storage, home = os.homedir(), identity, paths
     object(config.examples, ['mounts', 'extraInstructions', 'credentials', 'extensions'], 'examples');
     if (config.examples.extensions !== undefined) extensionManifest(config.examples.extensions);
     if (config.examples.credentials !== undefined) {
-      object(config.examples.credentials, ['openai', 'berget', 'codex', 'direct'], 'examples.credentials');
+      object(config.examples.credentials, ['openai', 'berget', 'mistral', 'codex', 'direct'], 'examples.credentials');
       // Credential examples are inert JSON objects, not active credential modes.
       for (const entry of Object.values(config.examples.credentials)) object(entry, ['env', 'proxy'], 'credential example');
     }
@@ -125,7 +125,7 @@ export function completeConfig(input) {
   if (record(config.credentials?.proxy)) {
     const proxy = config.credentials.proxy;
     fill(proxy, { models: [], maxRequests: 1000, maxConcurrent: 4 });
-    if (!proxy.profile && ['openai', 'berget'].includes(proxy.provider)) fill(proxy, { keyEnv: proxy.provider === 'berget' ? 'BERGET_API_KEY' : 'OPENAI_API_KEY' });
+    if (!proxy.profile && ['openai', 'berget', 'mistral'].includes(proxy.provider)) fill(proxy, { keyEnv: proxy.provider === 'berget' ? 'BERGET_API_KEY' : proxy.provider === 'mistral' ? 'MISTRAL_API_KEY' : 'OPENAI_API_KEY' });
   }
   fill(config.hints, HINTS);
   fill(config.examples, {
@@ -140,6 +140,7 @@ export function completeConfig(input) {
   fill(config.examples?.credentials, {
     openai: { env: [], proxy: { provider: 'openai', keyEnv: 'OPENAI_API_KEY', models: [], maxRequests: 1000, maxConcurrent: 4 } },
     berget: { env: [], proxy: { provider: 'berget', keyEnv: 'BERGET_API_KEY', models: [], maxRequests: 1000, maxConcurrent: 4 } },
+    mistral: { env: [], proxy: { provider: 'mistral', profile: 'mistral', models: [], maxRequests: 1000, maxConcurrent: 4 } },
     codex: { env: [], proxy: { provider: 'openai-codex', models: [], maxRequests: 1000, maxConcurrent: 4 } },
     direct: { env: ['OPENAI_API_KEY'] },
   });
@@ -149,7 +150,7 @@ export function completeConfig(input) {
 export function defaults(id, root, name) {
   return completeConfig({
     version: 1, id, ...(name ? { name } : {}), root,
-    image: { packages: [], extraInstructions: [] },
+    image: { packages: ['build-essential', 'python3'], extraInstructions: [] },
     mounts: [], credentials: { env: [], proxy: { ...DEFAULT_PROXY, models: [] } },
     examples: {
       mounts: [

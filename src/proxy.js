@@ -10,6 +10,7 @@ import { assert } from './util.js';
 export const OPENAI_UPSTREAM = 'https://api.openai.com';
 export const CODEX_UPSTREAM = 'https://chatgpt.com';
 export const BERGET_UPSTREAM = 'https://api.berget.ai';
+export const MISTRAL_UPSTREAM = 'https://api.mistral.ai';
 export const DEFAULT_PROXY = { provider: 'openai-codex', models: [], maxRequests: 1000, maxConcurrent: 4 };
 const API_ROUTES = new Set(['POST /v1/responses', 'POST /v1/chat/completions', 'GET /v1/models']);
 const BERGET_ROUTES = new Set(['POST /v1/chat/completions']);
@@ -114,12 +115,12 @@ function body(req, maxBytes) {
  * No headers, URLs, payloads, or credentials are logged or included in errors.
  */
 export async function startOpenAIProxy({ socketPath, apiKey, provider = 'openai', getCredentials, token, models = [], maxRequests = 1000, maxConcurrent = 4, upstream, upstreamBaseUrl, lookup, maxBodyBytes = 16 * 1024 * 1024, timeoutMs = 300_000 }) {
-  assert(['openai', 'openai-codex', 'berget', 'custom'].includes(provider), 'Unsupported proxy provider.');
+  assert(['openai', 'openai-codex', 'berget', 'mistral', 'custom'].includes(provider), 'Unsupported proxy provider.');
   const initialCredential = credentialFor(provider, apiKey);
   token ??= provider === 'openai-codex' ? dummyCodexToken() : `sk-pis-${randomBytes(32).toString('hex')}`;
   assert(typeof token === 'string' && token.length >= 16 && token !== apiKey, 'Invalid proxy capability.');
-  const routes = provider === 'openai-codex' ? CODEX_ROUTES : ['berget', 'custom'].includes(provider) ? BERGET_ROUTES : API_ROUTES;
-  const fixedBase = provider === 'openai-codex' ? CODEX_UPSTREAM : provider === 'berget' ? `${BERGET_UPSTREAM}/v1` : `${OPENAI_UPSTREAM}/v1`;
+  const routes = provider === 'openai-codex' ? CODEX_ROUTES : ['berget', 'mistral', 'custom'].includes(provider) ? BERGET_ROUTES : API_ROUTES;
+  const fixedBase = provider === 'openai-codex' ? CODEX_UPSTREAM : provider === 'berget' ? `${BERGET_UPSTREAM}/v1` : provider === 'mistral' ? `${MISTRAL_UPSTREAM}/v1` : `${OPENAI_UPSTREAM}/v1`;
   const targetBase = upstreamBaseUrl || fixedBase;
   const origin = new URL(upstream || targetBase);
   const testUpstream = Boolean(upstream);

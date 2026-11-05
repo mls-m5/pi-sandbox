@@ -1,0 +1,7 @@
+{
+  "uuid": "codex-usage@pis",
+  "name": "Codex Usage",
+  "description": "Show remaining Codex subscription quota in the top panel.",
+  "version": 1,
+  "shell-version": ["45", "46", "47", "48"]
+}

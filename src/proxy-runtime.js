@@ -39,9 +39,10 @@ export async function prepareProxy(store, config, { upstream, codexAuthFetch } =
   const isCodex = settings.provider === 'openai-codex';
   const credential = isCodex ? readCodexCredential(store) : undefined;
   const apiProfile = settings.profile ? readApiProfile(store, settings.profile) : undefined;
-  const apiKey = isCodex ? credential.access : settings.profile ? apiProfile?.key : process.env[settings.keyEnv || (settings.provider === 'berget' ? 'BERGET_API_KEY' : 'OPENAI_API_KEY')];
-  assert(apiKey, settings.profile ? `Host profile ${settings.profile} is missing. Run pis --login ${settings.profile}.` : `Set ${settings.keyEnv || (settings.provider === 'berget' ? 'BERGET_API_KEY' : 'OPENAI_API_KEY')} on the host before starting this proxy-enabled project.`);
-  const baseUrl = isCodex ? CODEX_PROXY_BASE_URL : PROXY_BASE_URL;
+  const keyEnv = settings.keyEnv || (settings.provider === 'berget' ? 'BERGET_API_KEY' : settings.provider === 'mistral' ? 'MISTRAL_API_KEY' : 'OPENAI_API_KEY');
+  const apiKey = isCodex ? credential.access : settings.profile ? apiProfile?.key : process.env[keyEnv];
+  assert(apiKey, settings.profile ? `Host profile ${settings.profile} is missing. Run pis --login ${settings.profile}.` : `Set ${keyEnv} on the host before starting this proxy-enabled project.`);
+  const baseUrl = isCodex ? CODEX_PROXY_BASE_URL : settings.provider === 'mistral' ? 'http://127.0.0.1:43127' : PROXY_BASE_URL;
   const getCredentials = isCodex ? async signal => ({ apiKey: (await getCodexCredential(store, { signal, fetchImpl: codexAuthFetch })).access }) : undefined;
   // Fixed short parent avoids AF_UNIX path-length limits even for deeply nested project storage.
   const runtimeDir = fs.mkdtempSync('/tmp/pis-proxy-');

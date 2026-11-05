@@ -7,6 +7,7 @@ import { assert, atomicWrite, withLock } from './util.js';
 export const API_PRESETS = Object.freeze({
   openai: { url: 'https://api.openai.com/v1', keyEnv: 'OPENAI_API_KEY' },
   berget: { url: 'https://api.berget.ai/v1', keyEnv: 'BERGET_API_KEY' },
+  mistral: { url: 'https://api.mistral.ai/v1', keyEnv: 'MISTRAL_API_KEY' },
   custom: {},
 });
 
@@ -77,7 +78,7 @@ function validateModels(models) {
 }
 
 function profilePath(store, name) {
-  assert(Object.hasOwn(API_PRESETS, name), 'Unknown API-key profile. Choose openai, berget, or custom.');
+  assert(Object.hasOwn(API_PRESETS, name), 'Unknown API-key profile. Choose openai, berget, mistral, or custom.');
   const dir = path.join(store.root, 'auth');
   fs.mkdirSync(dir, { mode: 0o700, recursive: true });
   const stat = fs.lstatSync(dir);

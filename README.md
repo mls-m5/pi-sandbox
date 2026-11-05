@@ -122,7 +122,7 @@ Set the active credential configuration to:
 
 Then run `pis --fresh -- --model berget/google/gemma-4-31B-it`. The initial Berget route is Chat Completions only; `/v1/models` and Responses are intentionally not enabled. Alternatively use `BERGET_API_KEY` on the host with `provider: "berget"` and `keyEnv: "BERGET_API_KEY"` (the default). `pis --logout berget` removes the stored profile; it does not revoke the provider key.
 
-Other API-key profiles can be managed with `pis --login openai` / `pis --logout openai`. For an OpenAI-compatible custom endpoint, `pis --login custom` asks for an HTTPS base URL ending in `/v1`, tool-call support, verified model IDs and metadata, then a hidden key. Custom profiles support only OpenAI Chat Completions, require public DNS addresses on port 443, and reject local/private destinations. Project config references the host profile (`provider` and `profile` both `custom`); the URL, model catalog, and key are not stored in project JSON. There is no automatic model discovery or connection test. See [proxy behavior and limits](docs/proxy.md#host-api-key-profiles).
+For Mistral API-key access (not a subscription), run `pis --login-mistral` on the host and change the project's `credentials.proxy` to `{ "provider": "mistral", "profile": "mistral", "models": [] }` in `pis --edit`. Remove `keyEnv` and retain `credentials.env: []`. Use `pis --fresh` and select a `mistral` model in `/model`. The key stays in private shared host storage and only native `POST /v1/chat/completions` is proxied; `pis --logout-mistral` removes the local copy without revoking it. A future subscription login would require a separate authentication flow. Other API-key profiles can be managed with `pis --login openai` / `pis --logout openai`. For an OpenAI-compatible custom endpoint, `pis --login custom` asks for an HTTPS base URL ending in `/v1`, tool-call support, verified model IDs and metadata, then a hidden key. Custom profiles support only OpenAI Chat Completions, require public DNS addresses on port 443, and reject local/private destinations. Project config references the host profile (`provider` and `profile` both `custom`); the URL, model catalog, and key are not stored in project JSON. There is no automatic model discovery or connection test. See [proxy behavior and limits](docs/proxy.md#host-api-key-profiles).
 
 ## Project discovery
 
@@ -155,11 +155,10 @@ Configuration includes these editable fields. `project.json` accepts `//` and `/
 ```json
 {
   "extensions": [
-    "npm:pi-usage-bar-focus@0.5.0",
     "npm:pi-web-access@0.40.0"
   ],
   "image": {
-    "packages": ["python3", "python3-venv", "make"],
+    "packages": ["build-essential", "python3", "python3-venv", "make"],
     "extraInstructions": ["RUN npm install -g typescript"]
   },
   "mounts": [
@@ -182,12 +181,13 @@ This is a partial example, not a complete replacement configuration. Keep the ge
 
 Generated configuration also contains an **inert `examples` section**. Copy examples into active fields to enable them; examples themselves never share directories or execute instructions.
 
-- Packages are Debian apt package names, optionally with versions.
+- New projects include `build-essential` and `python3` in `image.packages`. Existing projects keep their current package lists. Packages are Debian apt package names, optionally with versions.
+- In an interactive `pis` session, Pi can call the built-in `request_apt_packages` tool for missing apt packages. The sandbox can only propose: Pi exits, then **the host terminal** displays the exact names and asks you to type a new six-digit confirmation code. Enter rejects the request. Approval updates the project configuration atomically and the next `pis` start builds the new image. The tool is unavailable in noninteractive/print modes, `--no-extensions`, and `--exec`/`--bash`. Package suggestions cannot add arbitrary shell instructions or npm packages. The host request protocol is typed (`apt-packages` only for now); it rejects unknown actions rather than executing arbitrary commands. A future host-side `git-push` action would require separate validation and an independent confirmation showing the remote URL, branch and exact commit.
 - Advanced customization supports single-line `RUN` instructions only, without trailing continuations or build mounts. These are trusted executable code.
 - Changes to image settings or extension install sources trigger a build on the next launch; mounts, credentials, hints, and formatting do not.
 - Tools installed into the disposable root filesystem disappear with the container. Manual Pi packages installed into the persistent sandbox home remain in project state.
 - Credential configuration stores host environment variable **names**, never values. New projects default to the `openai-codex` host OAuth proxy; run `pis --login-codex` before launching. Proxy mode never falls back to exposing credentials. Deliberate direct mode remains available by removing `proxy` and setting `env`; those keys are visible inside the container.
-- OpenAI API-key mode supports Responses, Chat Completions, and model listing; Berget and custom profiles initially support Chat Completions only; Codex mode supports its separate ChatGPT Responses endpoint with host OAuth refresh. Project config selects either a host profile or an environment-key source; a selected source never silently falls back to the other. All modes have per-run request/concurrency limits; POST model allowlists are optional. See [proxy behavior and limitations](docs/proxy.md).
+- OpenAI API-key mode supports Responses, Chat Completions, and model listing; Berget, Mistral and custom profiles support Chat Completions only; Codex mode supports its separate ChatGPT Responses endpoint with host OAuth refresh. Project config selects either a host profile or an environment-key source; a selected source never silently falls back to the other. All modes have per-run request/concurrency limits; POST model allowlists are optional. See [proxy behavior and limitations](docs/proxy.md).
 
 ```sh
 pis --check                    # Validate configuration and active paths
@@ -205,13 +205,12 @@ Specify Pi install sources in `pis --edit`—not local installation paths:
 ```json
 {
   "extensions": [
-    "npm:pi-usage-bar-focus@0.5.0",
     "npm:pi-web-access@0.40.0"
   ]
 }
 ```
 
-These two packages are the defaults when the field is missing. The image build runs `pi install` for each source with npm lifecycle scripts disabled. Packages live in the image and load automatically, including when you type `pi` inside `pis --bash`. No repeated `-e` flags or startup downloads are needed for these image packages.
+`pi-web-access` is the default package when the field is missing. The former usage-bar package is no longer installed by default; the host-side GNOME extension in `gnome-codex-usage/` provides quota display instead. The image build runs `pi install` for each source with npm lifecycle scripts disabled. Packages live in the image and load automatically, including when you type `pi` inside `pis --bash`. No repeated `-e` flags or startup downloads are needed for these image packages.
 
 ```sh
 pis --extensions-list          # Configured image install sources

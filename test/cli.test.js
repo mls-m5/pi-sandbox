@@ -77,11 +77,11 @@ test('editor saves valid changes and retains invalid drafts without damaging con
   assert.equal(invoke(['--new']).status, 0);
   const before = JSON.parse(invoke(['--show']).stdout);
   const editor = path.join(base, 'editor.mjs');
-  fs.writeFileSync(editor, `import fs from 'node:fs';\nconst file = process.argv.at(-1);\nconst c = JSON.parse(fs.readFileSync(file));\nc.image.packages.push('python3');\nfs.writeFileSync(file, JSON.stringify(c));\n`);
+  fs.writeFileSync(editor, `import fs from 'node:fs';\nconst file = process.argv.at(-1);\nconst c = JSON.parse(fs.readFileSync(file));\nc.image.packages.push('curl');\nfs.writeFileSync(file, JSON.stringify(c));\n`);
   env.VISUAL = `"${process.execPath}" "${editor}"`;
   let edited = invoke(['--edit']);
   assert.equal(edited.status, 0, edited.stderr);
-  assert.deepEqual(JSON.parse(invoke(['--show']).stdout).config.image.packages, ['python3']);
+  assert.deepEqual(JSON.parse(invoke(['--show']).stdout).config.image.packages, ['build-essential', 'python3', 'curl']);
   const valid = fs.readFileSync(before.configurationFile, 'utf8');
   fs.writeFileSync(editor, `import fs from 'node:fs'; fs.writeFileSync(process.argv.at(-1), '{invalid');`);
   edited = invoke(['--edit']);

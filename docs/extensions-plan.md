@@ -15,7 +15,6 @@ Put that same install specification in the project's JSON instead:
 ```json
 {
   "extensions": [
-    "npm:pi-usage-bar-focus@0.5.0",
     "npm:pi-web-access@0.40.0"
   ]
 }
@@ -31,12 +30,13 @@ Packages are executable trusted code. They run with Pi's container permissions, 
 
 ## Defaults and inventory
 
-The default image sources are:
+The default image source is:
 
 | Source | Purpose |
 | --- | --- |
-| `npm:pi-usage-bar-focus@0.5.0` | Model-aware Codex/ChatGPT and other provider quota/status footer |
 | `npm:pi-web-access@0.40.0` | Web search, source checking, content fetching, and stored-result retrieval |
+
+The former `pi-usage-bar-focus` package is intentionally not a default because its Codex percentage display is unreliable. Quota display is provided by the host-side `gnome-codex-usage/` extension instead.
 
 Host inventory observed while implementing this feature also included `npm:@beyona/pi-zai-usage@1.1.0`. It overlaps with the usage bar, so it is an inert example rather than another enabled default. Host settings are not scanned or imported automatically on startup.
 

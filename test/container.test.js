@@ -43,7 +43,7 @@ test('only image configuration affects image fingerprint', () => {
   const changed = structuredClone(config);
   changed.mounts.push({ source: '/work/extra' }); changed.credentials.env = [];
   assert.equal(imagePlan(changed).image, first.image);
-  changed.image.packages.push('python3');
+  changed.image.packages.push('curl');
   assert.notEqual(imagePlan(changed).image, first.image);
   assert.match(first.content, /npm install -g --ignore-scripts/);
   assert.match(first.content, /image-entry\.mjs/);

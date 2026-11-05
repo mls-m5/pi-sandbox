@@ -1,6 +1,6 @@
 # Host-side API credential proxy
 
-The proxy is implemented and enabled in API-key mode for **new projects**. Existing projects keep their previous credential mode until explicitly edited. OpenAI API keys (`openai`), Berget (`berget`), host-managed OpenAI-compatible custom endpoints (`custom`), and ChatGPT/Codex subscription OAuth (`openai-codex`) are supported. This is not a general-purpose HTTP proxy.
+New projects default to the Codex subscription proxy. Existing projects keep their previous credential mode until explicitly edited. OpenAI API keys (`openai`), Berget (`berget`), Mistral API keys (`mistral`), host-managed OpenAI-compatible custom endpoints (`custom`), and ChatGPT/Codex subscription OAuth (`openai-codex`) are supported. This is not a general-purpose HTTP proxy.
 
 This page primarily describes API-key setup and shared policies. For host Codex sign-in/import/refresh and synthetic JWTs, see [Codex subscription setup](codex.md).
 
@@ -46,12 +46,15 @@ Manage host-only API-key profiles explicitly:
 ```sh
 pis --login openai       # fixed OpenAI URL, hidden key prompt
 pis --login berget       # Berget URL, hidden key prompt
+pis --login-mistral      # Mistral API key, hidden prompt (alias: pis --login mistral)
 pis --login custom       # trusted custom endpoint and model setup, then hidden key
 pis --login-status       # provider/profile presence only, no values
 pis --logout berget      # removes local copy; does not revoke the provider key
 ```
 
 Profiles live in `$PIS_HOME/auth/` (default `~/.local/share/pis/auth/`), are written atomically with mode 0600 inside a 0700 directory, and are never mounted into the container or included in image builds. Login does not make a paid API request. Cancellation or invalid input does not save a partial profile. `pis --show` and `--login-status` report profile/provider and credential presence only, never key values.
+
+To select a stored Mistral key, set `credentials.env` to `[]` and use `{ "provider": "mistral", "profile": "mistral" }` (without `keyEnv`). Pi's native Mistral Conversations provider sends `POST /v1/chat/completions`; the host fixes the destination to `https://api.mistral.ai/v1/chat/completions`. Only this chat route is available, not other Mistral API routes. For an environment key instead use `{ "provider": "mistral", "keyEnv": "MISTRAL_API_KEY" }`. `--login-mistral` does not implement a subscription sign-in.
 
 To select a stored Berget profile in a project, set `credentials.env` to `[]` and use `{ "provider": "berget", "profile": "berget" }`. To select the environment-key route instead, use `{ "provider": "berget", "keyEnv": "BERGET_API_KEY" }`. These are mutually exclusive; a missing selected credential fails closed.
 
