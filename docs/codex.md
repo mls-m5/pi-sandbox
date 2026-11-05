@@ -101,7 +101,7 @@ Container Pi openai-codex provider
   → https://chatgpt.com/backend-api/codex/responses
 ```
 
-Codex mode allows **POST `/backend-api/codex/responses`** and **GET `/backend-api/wham/usage`**. The usage response is reduced to numeric primary/secondary quota and reset windows; account, email, plan, and credential fields are not returned. Standard `/v1` API routes, OAuth/token endpoints, query strings, redirects, arbitrary destinations, CONNECT, and WebSocket forwarding are not allowed.
+Codex mode allows **POST `/backend-api/codex/responses`** and **GET `/backend-api/wham/usage`**. The usage response is reduced to numeric primary/secondary quota and reset windows plus optional boolean `allowed`/`limit_reached` flags; account, email, plan, and credential fields are not returned. Standard `/v1` API routes, OAuth/token endpoints, query strings, redirects, arbitrary destinations, CONNECT, and WebSocket forwarding are not allowed.
 
 The host replaces `Authorization` and derives `chatgpt-account-id` from the current real token; client-supplied account headers cannot choose the billed account. `originator` and the SSE beta header are host-controlled. Only bounded session/request IDs are optionally preserved from client headers.
 
@@ -123,6 +123,10 @@ Original sandbox provider files are unchanged. Other provider entries remain as 
 This does not scrub old secrets from arbitrary project files, logs, sessions, or other provider entries. Do not put real credentials into mounted files, pass them through `--api-key`, or run `/login` inside the sandbox. Anyone with host access as your user remains trusted.
 
 The dummy capability grants permitted subscription usage for the lifetime of its run. Request counts are **not** token/monetary quotas, and container network access is still enabled by default. Stronger general egress restrictions and resource limits remain separate work.
+
+## Waiting for quota
+
+`pis --wait-codex` is an opt-in host startup gate: poll usage before creating a container, then resume the latest saved Pi session with a fixed English continuation prompt (uses tokens). It requires a Codex-proxy project and a saved session. For automatic detection during a terminal Pi run, use `pis --auto-wait-codex`: an image-owned extension detects quota-like failures after Pi settles, the host confirms exhaustion, and the same session/branch continues after fresh usage reports quota again. This does not change providers, replay the original task, guarantee the next request succeeds, or bypass permissions/host approvals. Escape, new input or session/model changes cancel a pending continuation. Print/JSON/RPC are unsupported. Ctrl-C cancels. Usage/auth/network failures prevent startup. See [poll timing, locking and session limitations](codex-wait.md).
 
 ## Verification and compatibility
 

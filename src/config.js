@@ -29,7 +29,7 @@ export function safeMount(source, { home = os.homedir(), storage }) {
 }
 
 export function validate(config, { storage, home = os.homedir(), identity, paths = true } = {}) {
-  object(config, ['$schema', 'version', 'id', 'name', 'root', 'image', 'mounts', 'credentials', 'extensions', 'examples', 'hints'], 'project');
+  object(config, ['$schema', 'version', 'id', 'name', 'root', 'agent', 'image', 'mounts', 'credentials', 'extensions', 'examples', 'hints'], 'project');
   if (config.$schema !== undefined) assert(config.$schema === SCHEMA_REFERENCE, `Use ${SCHEMA_REFERENCE} for $schema.`);
   extensionManifest(config.extensions);
   if (config.hints !== undefined) {
@@ -37,6 +37,7 @@ export function validate(config, { storage, home = os.homedir(), identity, paths
     assert(Object.values(config.hints).every(value => typeof value === 'string'), 'hints must contain strings.');
   }
   assert(config.version === 1, 'Unsupported configuration version (expected 1).');
+  assert(['pi', 'claude'].includes(config.agent), 'agent must be pi or claude.');
   assert(typeof config.id === 'string' && ID_PATTERN.test(config.id), 'Project id must be five lowercase letters/digits.');
   if (config.name !== undefined) assert(typeof config.name === 'string' && NAME_PATTERN.test(config.name), 'Invalid project name (use letters, digits, dot, underscore, or dash; max 64 characters).');
   assert(typeof config.root === 'string' && path.isAbsolute(config.root), 'root must be an absolute path.');
@@ -113,7 +114,7 @@ export function completeConfig(input) {
     for (const [key, value] of Object.entries(values)) if (target[key] === undefined) target[key] = structuredClone(value);
   };
   fill(config, {
-    $schema: SCHEMA_REFERENCE, version: 1, image: {}, mounts: [],
+    $schema: SCHEMA_REFERENCE, version: 1, agent: 'pi', image: {}, mounts: [],
     credentials: { env: [], proxy: { ...DEFAULT_PROXY, models: [] } },
     extensions: DEFAULT_EXTENSIONS, examples: {}, hints: {},
   });

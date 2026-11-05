@@ -17,6 +17,7 @@ export const PROJECT_SCHEMA = {
   properties: {
     $schema: { const: SCHEMA_REFERENCE },
     version: { const: 1 },
+    agent: { enum: ['pi', 'claude'], default: 'pi', description: 'Claude Code uses separate writable state with real subscription tokens, not the Pi host proxy.' },
     id: { type: 'string', pattern: '^[a-z0-9]{5}$', description: 'Managed project identity; do not edit.' },
     name: { type: 'string', pattern: '^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$' },
     root: { type: 'string', description: 'Canonical project root; use pis --relocate to change it.' },

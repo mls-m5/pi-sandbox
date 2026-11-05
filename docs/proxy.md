@@ -122,7 +122,7 @@ Modes are separate: a Codex capability cannot call the standard API routes, or v
 
 All other paths, query strings, absolute URLs, HTTP CONNECT, and WebSocket upgrades are rejected. File management, response retrieval/deletion, images, audio, and Decisions/classifier endpoints are not supported yet. Sandbox requests and project JSON cannot select another upstream; only an explicitly managed host profile can configure a custom destination.
 
-The Codex usage endpoint returns only validated numeric quota/reset windows; identity, email, plan metadata, arbitrary fields, and tokens are discarded. It supports the image usage-bar extension through a narrow container-only fetch adapter. Usage polls use the same capability, host refresh, limits, and request budget; no extra real credential is supplied to extensions.
+The Codex usage endpoint returns only validated numeric quota/reset windows and optional boolean `allowed`/`limit_reached` flags; identity, email, plan metadata, arbitrary fields, and tokens are discarded. A narrow container-only fetch adapter supports usage consumers. The opt-in host [`--wait-codex` startup gate](codex-wait.md) uses the same sanitized usage shape before opening a sandbox. Usage polls use the same capability, host refresh, limits, and request budget; no extra real credential is supplied to extensions.
 
 `credentials.proxy.models` is an exact allowlist for POST request model IDs; an empty array allows any model. `/v1/models` is available only in OpenAI mode and is not filtered, so selecting a model outside the allowlist results in a rejection when generating a response. Berget and custom modes use a host-side Pi model catalog; those definitions are separate from the request allowlist.
 

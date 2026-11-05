@@ -4,7 +4,7 @@ Start with **[docs/handover.md](docs/handover.md)** for the recent implementatio
 
 - This is a dependency-free Node.js ES-module CLI. Run `npm run check` after code changes.
 - Fast tests make no paid model calls. Real-Podman integration tests are opt-in and use fake upstreams. Do not make paid/live model requests or external Git pushes as casual smoke tests.
-- In a sandbox the shared repository is writable, but host credentials/config, GNOME and Podman control are not expected to be accessible. Do not bypass this by mounting host home, agents or container-engine sockets.
+- In a sandbox the shared repository is writable, but host credentials/config, GNOME and Podman control are not expected to be accessible. Experimental Claude Code mode is an explicit exception: its separate writable state contains a project-specific copy of real subscription tokens; host originals and personal host Claude state are never mounted. See docs/claude-code.md. Do not bypass this by mounting host home, agents or container-engine sockets.
 - `request_apt_packages` and `request_host_git` are image-owned tools for **proposals**. Only the host can approve. Git currently allows exact-commit pushes only; do not turn this into a shell or unrestricted Git-command interface.
 - Preserve explicit project configuration. Never print auth files, API keys, full process environments or credential-bearing URLs.
 - Pending requested feature: host-global Git name/email defaults in the sandbox; see docs/git-identity-plan.md. It is not implemented yet.

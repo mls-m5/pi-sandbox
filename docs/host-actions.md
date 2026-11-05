@@ -1,5 +1,7 @@
 # User-approved host actions
 
+The opt-in [`--auto-wait-codex` quota service](codex-wait.md#hostcontainer-boundary) is **separate** from these approval tools. Its socket accepts only a fixed usage-wait query and returns availability states; it cannot approve/install packages, execute Git or arbitrary commands, select URLs, or supply continuation prompts. Automatic quota recovery never bypasses the host confirmations described below. An apt/Git-approved Pi restart preserves the CLI auto-wait opt-in and creates a fresh extension runtime.
+
 ## Implemented first step: apt packages
 
 Interactive `pis` runs expose an image-owned `request_apt_packages` Pi tool. It submits one small, typed JSON proposal over a private Unix socket. The socket grants permission to **suggest**, not permission to change anything. Direct, print, RPC, `--no-session` and custom-stdio launches do not expose this service.

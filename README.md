@@ -1,6 +1,6 @@
 # pis — Pi in a Podman sandbox
 
-`pis` is a Linux-only CLI that runs the entire [Pi coding agent](https://pi.dev) inside a rootless Podman container.
+`pis` is a Linux-only CLI that runs the entire [Pi coding agent](https://pi.dev) inside a rootless Podman container. An experimental `--agent claude` mode runs official Claude Code with separate state and a different credential boundary.
 
 **Status: working initial implementation.** Project registration, editable configuration, custom images, additional mounts, persistent Pi state, shell/exec modes, and diagnostics are implemented. Host-side OpenAI and Berget API-key proxy modes and ChatGPT/Codex OAuth proxy mode are implemented. JSON extension install sources, build-time installation, and automatic configuration hints/schema completion are implemented.
 
@@ -75,6 +75,22 @@ printf 'Explain this project' | pis --fresh -- -p
 
 Arguments after `--` are passed unchanged to Pi, or to the program selected by `--exec`. Shell interpretation only occurs when you explicitly invoke a shell. Pi management subcommands such as `pis -- auth check --provider openai` do not receive implicit continuation.
 
+## Claude Code (experimental)
+
+Install official Claude Code on the host, then from a registered project:
+
+```sh
+pis --login-claude               # Project-specific host browser login
+pis --agent claude               # Official Claude Code in the container
+pis --agent claude -- --continue # Resume explicitly (default is a new session)
+```
+
+Host login uses `~/.local/bin/claude`, or the absolute `PIS_CLAUDE_BIN` path. Set `"agent": "claude"` via `pis --edit` for a persistent choice; Pi remains the default otherwise.
+
+**Unlike Pi's proxy mode, real Claude access/refresh tokens are readable and writable inside the Claude sandbox.** Only a copy is supplied: personal host Claude files and the retained original are not mounted. Separate persistent `claude-state/` lets Claude renew tokens without modifying the host original. Startup never overwrites refreshed tokens. Pi's proxy settings are ignored, not changed, and Pi's apt/Git approval tools are unavailable in this mode. Run `pis --logout-claude` to remove this project's current credential copies (not remote revocation or backup scrubbing).
+
+Real subscription login, copied-login onboarding and token rotation still need host verification; no live model calls have been made. See [Claude Code setup, security and testing limits](docs/claude-code.md).
+
 ## Codex subscription sign-in
 
 For Pi's `openai-codex` provider, sign in on the **host**:
@@ -98,6 +114,26 @@ Use `pis --edit` to set `credentials` to:
 Remove any old `keyEnv` field; keep the rest of the project configuration. Start `pis` and select a Codex model using `/model`, or pass `pis -- --model openai-codex/<model-id>` explicitly. The real access/refresh tokens remain in private host storage and refresh there automatically; Pi and extensions get only a synthetic proxy token. `pis --logout-codex` removes the shared host sign-in.
 
 Prefer a dedicated sign-in: importing copies rotating tokens without synchronizing the original client. See [Codex setup, imports, and limitations](docs/codex.md). Live subscription sign-in is not covered by the fake-service tests.
+
+### Wait for Codex quota and continue
+
+After exiting a quota-limited Pi session, run:
+
+```sh
+pis --wait-codex
+```
+
+This opt-in mode checks host usage every one to five minutes, waits until the returned short/weekly limits allow work, then starts the latest saved Pi session with an English continuation prompt (**uses model quota**). Ctrl-C cancels. No container or model request runs while waiting. It requires the Codex proxy and a saved session; no `--fresh` or trailing agent arguments. Usage/auth/network errors stop safely without starting Pi. This flag alone does not monitor an already running agent or switch to paid API access. See [behavior, session selection and verification limits](docs/codex-wait.md).
+
+For automatic handling during a long-running **terminal Pi session**:
+
+```sh
+pis --auto-wait-codex
+# New task, with automatic quota wait/resume enabled:
+pis --fresh --auto-wait-codex -- "Work through the agreed implementation plan and tests"
+```
+
+After a quota-like Codex error, the host must independently confirm exhausted usage. Pi stays idle in the **same session and branch** while the host polls; once quota returns, an English continuation prompt resumes the task (**uses tokens**). No initial task or tool call is blindly replayed. Ordinary/transient errors do not trigger unconditional retries. Escape/Ctrl-C, new input or session/model changes cancel pending continuation; `/codex-auto off` disables it in the current extension runtime. Print/JSON/RPC and disabled sessions/extensions are not supported. Keep the terminal/host alive (e.g. `tmux`); permissions and host approvals still require you. See [automatic-mode safety and testing limits](docs/codex-wait.md#automatic-wait-during-a-run). Real subscription exhaustion/refill with the full Pi TUI remains unverified here.
 
 ## Berget AI and host API-key profiles
 
@@ -242,7 +278,7 @@ Use `"extensions": []` to disable all image defaults. Existing arrays are preser
 
 Supported install sources are `npm:<name>`, scoped npm packages, and optional exact versions or dist-tags. Default versions are pinned; unversioned/tagged sources require `pis --rebuild` to fetch updates. Git sources and local source copying are not implemented. Local development through explicit `pis -- -e ./tools/my-extension.ts` remains supported.
 
-Codex quota reads are routed through the credential proxy and return only usage windows. Web Access receives proxy-compatible defaults in sandbox `web-search.json`; existing explicit preferences are preserved. Neither package receives the real host token. See [extension setup and compatibility](docs/extensions-plan.md) for details and limitations.
+Codex quota reads are routed through the credential proxy and return only validated usage windows and optional boolean availability flags. Web Access receives proxy-compatible defaults in sandbox `web-search.json`; existing explicit preferences are preserved. Neither package receives the real host token. See [extension setup and compatibility](docs/extensions-plan.md) for details and limitations.
 
 Manual `pis -- install npm:...` still installs into writable project Pi state rather than the image. Avoid installing the same package both ways; remove its manual declaration when switching it to image configuration.
 
@@ -282,9 +318,11 @@ No project deletion or image garbage-collection command exists yet. Do not edit 
 - Wrapper configuration is outside repositories; repositories cannot silently add wrapper mounts.
 - On SELinux hosts, project/extra mounts use shared labels (`:z`) and state uses a private label (`:Z`). Relabeling changes host filesystem labels and may affect other applications.
 
-**A writable mount permits Pi to change or delete those host files.** Secrets already in mounted directories, including `.env` files, remain accessible. Symlinks do not grant access to unmounted external targets. Resource limits are not configured yet.
+**A writable mount permits the selected agent to change or delete those host files.** Secrets already in mounted directories, including `.env` files, remain accessible. Symlinks do not grant access to unmounted external targets. Resource limits are not configured yet.
 
 **Proxy mode keeps host-provided API keys or Codex OAuth tokens outside the sandbox**, using a private Unix socket and a per-run dummy capability. Custom API profile destinations are host-selected HTTPS URLs, resolved to pinned public IPs, and limited to the profile's allowed route. No host TCP port is opened. Pi's selected provider auth/model entries are replaced with read-only per-run overlays; originals are unchanged. Previously stored credentials or secrets in mounted files remain visible; disabling host credential forwarding does not remove those secrets. The proxy does not retroactively scrub old state.
+
+**Claude Code mode is an explicit exception to proxy credential isolation:** it uses a writable per-project copy of real subscription tokens. Commands inside that container can read or steal them. Pi and Claude use separate sandbox homes; neither personal host Claude state nor the host login snapshot is mounted. See [the Claude credential flow](docs/claude-code.md#credential-flow-and-the-weaker-security-boundary).
 
 Hiding keys does not prevent API spending: sandboxed commands and extensions can use the capability within its host-enforced route/model/request limits. Outbound networking remains enabled; this is not a host/LAN access filter or exfiltration defense. Containers share the host kernel, not a VM-level boundary. Custom build instructions are trusted code; runtime keys and source are not supplied to builds. See [the proxy security notes](docs/proxy.md#security-boundaries-and-limitations).
 
@@ -309,6 +347,8 @@ Real-container coverage includes package/custom instruction builds, absolute wor
 - [API proxy: OpenAI, Berget, Mistral, custom profiles, and security](docs/proxy.md)
 - [Berget/API-key implementation notes](docs/berget-plan.md)
 - [Codex subscription sign-in and proxy](docs/codex.md)
+- [Wait for Codex quota, then resume a saved task](docs/codex-wait.md)
+- [Claude Code mode: setup and weaker credential boundary](docs/claude-code.md)
 - [Image extension setup and remaining plans](docs/extensions-plan.md)
 - [Design and configuration](docs/design.md)
 - [Implementation roadmap and acceptance tests](docs/roadmap.md)

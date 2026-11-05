@@ -82,6 +82,7 @@ Initial default layout:
 - `Containerfile` is generated and marked as such.
 - `build/` contains only the generated, minimal build context.
 - `state/` holds container-local Pi settings, credentials saved by Pi, and conversations.
+- `claude-state/` is a separate writable home for experimental official Claude Code, including a copy of real subscription credentials. It is never mounted into Pi launches.
 
 Keep these directories private to the user. Writes to configuration and index files should be atomic. Registration and index changes need locking to avoid concurrent corruption.
 
@@ -99,6 +100,7 @@ Proposed active configuration:
   "id": "k7m2q",
   "name": "my-app",
   "root": "/home/mattias/Prog/my-app",
+  "agent": "pi",
   "image": {
     "packages": [
       "python3",
@@ -292,6 +294,10 @@ The initial runtime allows outbound networking for model APIs and development wo
 Stronger egress controls, host/LAN restrictions, and proxy-only access are a separate tested milestone.
 
 Direct host credential forwarding is disabled. `credentials.env` must be empty; a missing proxy permits credential-free launches only. Existing direct configurations are rejected with migration guidance, never silently converted. OpenAI API keys can be read from a host environment variable by the proxy or stored with `pis --login openai`.
+
+### Official Claude Code mode
+
+`agent` defaults to `pi`; `claude` selects the unmodified pinned official Claude Code binary. `--agent` overrides the choice without saving it. A project-specific host `--login-claude` uses a fresh private config directory and copies only OAuth into the separate writable `claude-state/` home. Tokens can refresh there; they are not recopied at startup, shared among projects, or copied back to the host. The host snapshot is never mounted. **Real tokens are visible inside Claude containers**; this is not the Pi proxy boundary. Pi's configured credential proxy and approval sockets are not used. No automatic permission bypass is added. See [setup, security and verification limits](claude-code.md).
 
 ### User-approved host actions
 

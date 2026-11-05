@@ -119,5 +119,5 @@ test('unknown options recommend explicit argument forwarding', t => {
   const { invoke } = fixture(t);
   const result = invoke(['--model', 'example']);
   assert.equal(result.status, 1);
-  assert.match(result.stderr, /Pass Pi arguments after --/);
+  assert.match(result.stderr, /Pass Pi\/Claude arguments after --/);
 });

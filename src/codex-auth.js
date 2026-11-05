@@ -3,6 +3,7 @@ import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { assert, withLock, writeJson } from './util.js';
+import { codexUsageSummary } from './codex-usage.js';
 
 // Matches Pi 1.2's OpenAI Codex device authorization flow. No credentials are
 // resolved through a container, shell command, project extension, or host Pi.
@@ -159,21 +160,7 @@ export async function getCodexUsage(store, { signal, fetchImpl = fetch } = {}) {
     });
     const body = await response.text();
     assert(response.status === 200, `Codex usage request failed (status ${response.status}).`);
-    const data = JSON.parse(body);
-    assert(data?.rate_limit && typeof data.rate_limit === 'object', 'Invalid Codex usage response.');
-    const rate_limit = {};
-    for (const name of ['primary_window', 'secondary_window']) {
-      const value = data.rate_limit[name];
-      if (value === undefined || value === null) { rate_limit[name] = null; continue; }
-      assert(Number.isFinite(value.used_percent) && value.used_percent >= 0 && value.used_percent <= 100, 'Invalid Codex usage window.');
-      const window = { used_percent: value.used_percent };
-      for (const key of ['limit_window_seconds', 'reset_at', 'reset_after_seconds']) if (value[key] !== undefined) {
-        assert(Number.isFinite(value[key]) && value[key] >= 0 && value[key] <= 1e12, 'Invalid Codex usage window.'); window[key] = value[key];
-      }
-      assert(window.reset_at !== undefined || window.reset_after_seconds !== undefined, 'Missing Codex usage reset.');
-      rate_limit[name] = window;
-    }
-    return { rate_limit };
+    return codexUsageSummary(JSON.parse(body));
   } catch (error) {
     if (signal?.aborted) throw new Error('Codex usage request cancelled.');
     if (error.message === 'Codex usage request failed (status 401).') throw new Error('Codex usage authentication failed. Sign in again.');

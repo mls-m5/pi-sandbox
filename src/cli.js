@@ -7,13 +7,18 @@ import { pruneImages } from './prune.js';
 import { getCodexUsage, hasCodexCredential, importCodexCredential, loginCodex, logoutCodex } from './codex-auth.js';
 import { apiProfileStatus, promptApiProfile, logoutApiProfile, readApiProfile } from './api-auth.js';
 import { validate } from './config.js';
+import { CLAUDE_VERSION, claudeCommand, loginClaude, logoutClaude } from './claude-code.js';
 import { CONTAINER_HOME, BASE_IMAGE, PI_VERSION, imagePlan, inspectPodman, launch, piCommand } from './container.js';
 import { assert, directory, readJson, run, splitCommand, within, writeJson } from './util.js';
 
 export const HELP = `pis — project-scoped Pi sandbox (Linux / rootless Podman)
 
 Usage:
-  pis [--project ID_OR_NAME] [--fresh] [-- PI_ARGS...]
+  pis [--project ID_OR_NAME] [--agent pi|claude] [--fresh] [-- AGENT_ARGS...]
+  pis [--project ID_OR_NAME] --wait-codex # wait for quota, resume saved Pi task
+  pis [--project ID_OR_NAME] [--fresh] --auto-wait-codex [-- PI_ARGS...]
+  pis [--project ID_OR_NAME] --login-claude  # official host login, project-scoped
+  pis [--project ID_OR_NAME] --logout-claude # remove local login copies
   pis [--project ID_OR_NAME] --bash
   pis [--project ID_OR_NAME] --exec -- PROGRAM [ARGS...]
   pis --new [--name NAME]
@@ -34,7 +39,18 @@ Usage:
   pis --login-status
 
 By default runs pi --tui-mode regular --continue; --fresh starts without continuation (but keeps regular TUI mode). Explicit Pi TUI/session options override defaults.
-Pi arguments belong after --. Explicit Pi session selectors override continuation.
+--wait-codex polls host usage before starting Pi, then sends a continuation
+prompt to the latest saved session (uses model quota). No --fresh or trailing args.
+--wait-codex alone does not monitor a running session. Ctrl-C cancels startup wait.
+--auto-wait-codex monitors terminal Pi sessions: after a quota-like model failure,
+the host must confirm exhaustion, then waits and continues the SAME session.
+Escape, new input/session/model changes or /codex-auto off cancel pending resume.
+Auto mode needs extensions and saved sessions; print/JSON/RPC are unsupported.
+Agent arguments belong after --. Explicit Pi session selectors override continuation.
+Claude starts a new session by default; use --agent claude -- --continue to resume.
+Claude uses separate writable state containing REAL tokens, not the Pi proxy.
+--login-claude requires official host Claude Code at ~/.local/bin/claude,
+or PIS_CLAUDE_BIN set to its absolute executable path. No host home is mounted.
 --new registers the current directory; it does not start a conversation.
 --edit uses $VISUAL, $EDITOR, or vim and saves only valid JSON configuration.
 --show prints effective settings and mounts without credential values.
@@ -52,7 +68,7 @@ or run --login berget and set credentials.proxy.profile=berget (remove keyEnv).
 Mistral: --login-mistral stores an API key; set provider=mistral, profile=mistral.
 Custom endpoints: run --login custom, then set provider=custom and profile=custom.
 Only an explicit trusted host profile can select a custom destination.
-Never run as root. Mounted files and explicitly forwarded keys are accessible to the sandbox.
+Never run as root. Mounted files and Claude Code's copied login tokens are accessible to the sandbox.
 `;
 
 export function parse(argv) {
@@ -65,7 +81,7 @@ export function parse(argv) {
     const token = wrapper[i];
     const equals = token.indexOf('=');
     const key = equals === -1 ? token : token.slice(0, equals);
-    if (['--project', '--name', '--relocate', '--import-codex', '--login', '--logout'].includes(key)) {
+    if (['--project', '--agent', '--name', '--relocate', '--import-codex', '--login', '--logout'].includes(key)) {
       const value = equals === -1 ? wrapper[++i] : token.slice(equals + 1);
       assert(value && !value.startsWith('-'), `${key} requires a value.`);
       if (['--relocate', '--import-codex', '--login', '--logout'].includes(key)) {
@@ -78,21 +94,29 @@ export function parse(argv) {
       }
     } else if (key === '--dry-run' && equals === -1) {
       assert(!options.dryRun, 'Repeated option: --dry-run'); options.dryRun = true;
+    } else if (key === '--auto-wait-codex' && equals === -1) {
+      assert(!options.autoWaitCodex, 'Repeated option: --auto-wait-codex'); options.autoWaitCodex = true;
+    } else if (key === '--wait-codex' && equals === -1) {
+      assert(!options.waitCodex, 'Repeated option: --wait-codex'); options.waitCodex = true;
     } else if (key === '--fresh' && equals === -1) {
       assert(!options.fresh, 'Repeated option: --fresh'); options.fresh = true;
     } else if (['--bash', '--exec'].includes(key) && equals === -1) {
       assert(!mode, 'Choose either --bash or --exec.'); mode = key.slice(2);
-    } else if (['--new', '--list', '--edit', '--check', '--show', '--build', '--rebuild', '--extensions-list', '--doctor', '--prune', '--login-codex', '--logout-codex', '--login-mistral', '--logout-mistral', '--codex-usage', '--login-status', '--help', '-h', '--version'].includes(key) && equals === -1) {
+    } else if (['--new', '--list', '--edit', '--check', '--show', '--build', '--rebuild', '--extensions-list', '--doctor', '--prune', '--login-codex', '--logout-codex', '--login-claude', '--logout-claude', '--login-mistral', '--logout-mistral', '--codex-usage', '--login-status', '--help', '-h', '--version'].includes(key) && equals === -1) {
       assert(!action, 'Choose only one management action.'); action = key === '-h' ? 'help' : key.slice(2);
-    } else throw new Error(`Unknown pis option: ${token}. Pass Pi arguments after --; see pis --help.`);
+    } else throw new Error(`Unknown pis option: ${token}. Pass Pi/Claude arguments after --; see pis --help.`);
   }
   options.action = action || 'run';
   options.mode = mode || 'pi';
+  assert(options.agent === undefined || ['pi', 'claude'].includes(options.agent), '--agent must be pi or claude.');
+  assert(!options.agent || !action || ['show', 'build', 'rebuild', 'check'].includes(action), '--agent is only valid for launches, --show, --check, --build or --rebuild. Set project.agent via --edit for a persistent choice.');
+  assert(!options.autoWaitCodex || (!action && !mode && (!options.agent || options.agent === 'pi')), '--auto-wait-codex is only valid for a normal Pi launch.');
+  assert(!options.waitCodex || (!action && !mode && !options.fresh && !args.length && (!options.agent || options.agent === 'pi')), '--wait-codex is only valid for a normal Pi launch without --fresh or trailing arguments.');
   assert(!options.name || action === 'new', '--name is only valid with --new.');
   assert(!options.dryRun || action === 'prune', '--dry-run is only valid with --prune.');
   assert(!mode || !action, 'Shell/exec modes cannot be combined with management actions.');
-  assert(!options.fresh || (!action && !mode), '--fresh is only valid when running Pi.');
-  assert(!args.length || (!action && mode !== 'bash'), 'Trailing arguments are only valid for Pi or --exec.');
+  assert(!options.fresh || (!action && !mode), '--fresh is only valid when running an agent.');
+  assert(!args.length || (!action && mode !== 'bash'), 'Trailing arguments are only valid for an agent or --exec.');
   assert(mode !== 'exec' || args.length > 0, '--exec requires a command after --.');
   assert(!options.project || !['new', 'list', 'relocate', 'doctor', 'prune', 'login-codex', 'logout-codex', 'login-mistral', 'logout-mistral', 'codex-usage', 'import-codex', 'login', 'logout', 'login-status', 'help', 'version'].includes(action), '--project is not valid with this action.');
   return options;
@@ -205,7 +229,19 @@ export async function main(argv = process.argv.slice(2)) {
     return 0;
   }
   const selected = store.select(cwd, options.project);
-  const config = await store.refresh(selected.id);
+  let config = await store.refresh(selected.id);
+  if (options.action === 'login-claude') {
+    assert(process.stdin.isTTY && process.stdout.isTTY, 'Run pis --login-claude interactively on the host.');
+    await loginClaude(store, config);
+    console.log('Claude subscription login copied to this project\'s writable Claude sandbox state. Real tokens are visible inside the Claude sandbox.\nThe host snapshot is not mounted. Tokens renewed in the sandbox are never copied back or overwritten at startup.\nStart with pis --agent claude; if login expires, stop the sandbox and run pis --login-claude again.');
+    return 0;
+  }
+  if (options.action === 'logout-claude') {
+    await logoutClaude(store, config.id);
+    console.log('Removed this project\'s host snapshot and sandbox credential file. Sessions/backups remain; tokens are not revoked at Anthropic.');
+    return 0;
+  }
+  if (options.agent) config = { ...config, agent: options.agent };
   if (options.action === 'edit') return edit(store, config);
   validate(config, { storage: store.root });
   if (options.action === 'extensions-list') {
@@ -217,12 +253,13 @@ export async function main(argv = process.argv.slice(2)) {
     const plan = imagePlan(config);
     const workdir = within(config.root, cwd) ? cwd : config.root;
     const proxyKeyEnv = config.credentials.proxy?.keyEnv || (config.credentials.proxy?.provider === 'berget' ? 'BERGET_API_KEY' : config.credentials.proxy?.provider === 'mistral' ? 'MISTRAL_API_KEY' : 'OPENAI_API_KEY');
-    const isCodex = config.credentials.proxy?.provider === 'openai-codex';
-    const credentialVariables = config.credentials.proxy
+    const isClaude = config.agent === 'claude';
+    const isCodex = !isClaude && config.credentials.proxy?.provider === 'openai-codex';
+    const credentialVariables = !isClaude && config.credentials.proxy
       ? (isCodex || config.credentials.proxy.profile ? [] : [{ name: proxyKeyEnv, present: Boolean(process.env[proxyKeyEnv]), handling: 'host-proxy' }])
       : [];
-    const credentialSource = isCodex ? { kind: 'host-oauth', provider: 'openai-codex', present: hasCodexCredential(store) } : config.credentials.proxy?.profile ? { kind: 'host-api-key', provider: config.credentials.proxy.profile, present: Boolean(readApiProfile(store, config.credentials.proxy.profile)) } : undefined;
-    console.log(JSON.stringify({ config, configurationFile: store.configPath(config.id), image: plan.image, workingDirectory: workdir, containerHome: CONTAINER_HOME, piCommand: piCommand(), mounts: [{ source: config.root, target: config.root, access: 'read-write' }, ...config.mounts.map(m => ({ source: m.source, target: m.source, access: m.access || 'read-only' }))], credentialVariables, credentialSource }, null, 2));
+    const credentialSource = isClaude ? { kind: 'sandbox-oauth-copy', provider: 'claude-code', warning: 'Real tokens are readable and writable inside the sandbox. Pi proxy is not used.' } : isCodex ? { kind: 'host-oauth', provider: 'openai-codex', present: hasCodexCredential(store) } : config.credentials.proxy?.profile ? { kind: 'host-api-key', provider: config.credentials.proxy.profile, present: Boolean(readApiProfile(store, config.credentials.proxy.profile)) } : undefined;
+    console.log(JSON.stringify({ config, configurationFile: store.configPath(config.id), image: plan.image, workingDirectory: workdir, containerHome: CONTAINER_HOME, agentCommand: isClaude ? claudeCommand() : piCommand(), piCommand: piCommand(), claudeVersion: CLAUDE_VERSION, mounts: [{ source: config.root, target: config.root, access: 'read-write' }, ...config.mounts.map(m => ({ source: m.source, target: m.source, access: m.access || 'read-only' }))], credentialVariables, credentialSource }, null, 2));
     return 0;
   }
   return launch(store, config, { ...options, cwd, rebuild: options.action === 'rebuild', buildOnly: ['build', 'rebuild'].includes(options.action) });

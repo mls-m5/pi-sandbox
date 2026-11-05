@@ -6,7 +6,7 @@ This file summarizes the recent design decisions and operational context. Start 
 
 ### Startup, defaults and models
 
-- `pis` wraps pinned Pi 1.2.0 in rootless Podman. Host Node must be >=22.19; container base is pinned Node 24.
+- `pis` wraps pinned Pi 1.2.0 in rootless Podman. Experimental official Claude Code 2.1.318 support is available with `--agent claude` or project `agent: "claude"`; Pi remains the default. Host Node must be >=22.19; container base is pinned Node 24.
 - Default Pi invocation: `pi --tui-mode regular --continue`. `--fresh` removes implicit continuation; explicit TUI/session options override defaults. Management subcommands do not receive these defaults.
 - New projects use the **openai-codex host OAuth proxy**, not the paid OpenAI API-key route. Existing explicit configurations are preserved, not migrated automatically.
 - An empty proxy `models` list allows any model through that provider. The user can start `pis` and choose `/model`; a model CLI argument is not required. A saved/continued session may restore a previously selected model.
@@ -18,13 +18,37 @@ This file summarizes the recent design decisions and operational context. Start 
 
 - `pis --login-codex`, import and logout are already **global per PIS_HOME**. There is no separate `--global` flag and no per-project Codex login. Default store: `~/.local/share/pis/auth/openai-codex.json`.
 - Direct host credential forwarding has been removed: `credentials.env` must always be `[]`. Legacy nonempty arrays fail with proxy migration guidance; configuration is not silently converted. A missing proxy supports credential-free launches. OpenAI API keys work via host `keyEnv` or `pis --login openai` profiles. Known API-key variables are stripped from Podman subprocess environments even without a proxy.
-- Real OAuth/API credentials remain on the host. Per-run sandbox auth/model overlays contain dummy capabilities, not usable upstream credentials. Do not run `/login` inside a proxied sandbox.
+- In Pi proxy mode, real OAuth/API credentials remain on the host. Per-run sandbox auth/model overlays contain dummy capabilities, not usable upstream credentials. Do not run `/login` inside a proxied sandbox.
 - API-key profiles support OpenAI, Berget, Mistral and custom endpoints. `pis --login-mistral` / `--logout-mistral` are aliases for the Mistral profile flow. In project config use `provider: "mistral", profile: "mistral"`, without `keyEnv`, and `credentials.env: []`.
 - Mistral proxy uses native Pi Mistral Chat Completions at `/v1/chat/completions`; its Pi base URL is the local origin, **without /v1**, because Pi appends that path. Mistral subscription/browser authentication is **not implemented**.
 - OpenAI API keys and Codex subscription login are separate. The user accidentally spent API credits on the wrong model and deferred signing out. Do not alter/revoke credentials without a fresh request. Model allowlists can restrict accidental selection; proxy request counts are not monetary/token budgets.
-- `pis --codex-usage` is host-only, refreshes OAuth as needed and prints sanitized numeric quota windows. Usage API returns **used** percentage; remaining is `100 - used_percent`. Its real-account retrieval worked during this work.
+- `pis --codex-usage` is host-only, refreshes OAuth as needed and prints sanitized numeric quota windows plus optional boolean `allowed`/`limit_reached` flags. Usage API returns **used** percentage; remaining is `100 - used_percent`. Its real-account retrieval worked during this work.
 
 See [Codex](codex.md), [proxy setup](proxy.md), and [README](../README.md).
+
+### Codex quota wait/resume
+
+- `pis --wait-codex` is an opt-in **startup gate**; `--auto-wait-codex` adds automatic in-session detection (below). After exiting a limited Pi session, invoke it to poll host usage every 1–5 minutes, then start Pi with `--continue` plus one fixed English user prompt asking it to continue (uses model tokens). No initial task or one-off flags are replayed; no provider is switched.
+- Requires Pi + Codex host proxy and a saved session. Checks session directory metadata, not transcript contents. Supports shared or encoded-cwd session directories; symlinked directories are rejected. Pi's normal latest-session selection applies, not a captured session ID; launch from the intended working directory.
+- Holds the project lock during waiting. No Podman process/build/container/proxy is started before fresh usage reports all returned windows below 100%, with no upstream denial flag. Elapsed reset countdowns alone do not grant startup. At least one valid window is required. Network/auth/invalid-usage errors stop safely.
+- Ctrl-C/SIGTERM/SIGHUP cancel and release the lock. No persistent scheduler/queue. No `--fresh`, management action, Claude, shell/exec, trailing Pi args or custom stdio. The wait flag is consumed before startup and not replayed after apt/Git approval.
+- `pis --auto-wait-codex` is opt-in terminal Pi only (Codex proxy, sessions/extensions required; no print/JSON/RPC/custom stdio). It accepts `--fresh` and initial tasks/session selectors. An image-owned `src/runtime/codex-auto.mjs` extension detects quota-like failed main Codex messages (or quota failure during interrupted native overflow recovery), then starts background work after `agent_settled`, not while native retries/queues are active.
+- A separate host `src/codex-auto.js` socket service independently requires initially exhausted usage, polls with the shared wait logic, and only then returns ready. Available/unknown usage, ordinary errors, user aborts and failed auth/network checks do not trigger unconditional retries. One active waiter; initial queries throttled to once/minute. Only fixed availability states cross this interface, never paths/error text/commands/prompts/credentials or approval requests.
+- Automatic waiting leaves Pi/container/proxy/project lock alive. It resumes the **same process/session file/branch/model** with one fixed English user prompt only if metadata, idle state and pending work are unchanged. No initial prompt or tool is replayed by the wrapper. It supports later confirmed quota cycles; not a general crash/network/permission recovery scheduler. Native idle cache warming is suppressed while auto mode is enabled.
+- Escape/Ctrl-C, new input/activity, session/branch/model/thinking changes, compaction and shutdown cancel pending continuation and abort the host poll. `/codex-auto off|on|status` controls the current extension runtime. New runtimes from reload/approval restarts use the CLI opt-in again. No durable queue, no unattended host approval. Keep the terminal/host alive for overnight runs.
+- Shared `src/codex-usage.js` sanitizes host and proxy usage to the same numeric windows and optional boolean availability flags. No identity/credit/token data is exposed. Offline tests cover polling, cancellation, a complete startup-gate fake-Podman launch, and automatic-mode real local sockets plus mocked Pi lifecycle/session events. Full real-Pi TUI subscription exhaustion/refill/resume is not verified.
+
+See [usage, limitations and verification](codex-wait.md).
+
+### Claude Code mode (experimental)
+
+- `pis --login-claude` is a **project-specific host action**, not a sandbox proposal tool. Requires official host `~/.local/bin/claude` (or absolute `PIS_CLAUDE_BIN`). Runs `claude auth login` from a fresh host-only config/cwd, never sandbox settings or credentials. No host installer is run automatically.
+- Subscription OAuth is copied to `projects/<id>/claude-state/.claude/.credentials.json`, plus optional `oauthAccount` identity metadata to the native global config. Host settings, project trust, hooks and MCP config are not copied. Separate writable `claude-state/` is mounted as home; neither Pi state nor personal host Claude files nor the retained `auth/claude-<id>.json` original snapshot are mounted. Real tokens **are visible inside this sandbox**, an explicit exception to Pi's stronger proxy isolation.
+- Sandbox refreshes persist; startup never recopies stale host tokens. No sandbox tokens/settings are copied back to the host. Login is per project to avoid sharing rotating tokens concurrently. If expired, stop and rerun host login. `--logout-claude` removes the current credential copies, not sessions/backups or remote tokens.
+- Claude starts new sessions by default; pass `-- --continue` explicitly. No automatic permission bypass. Configured Pi proxy and image-owned apt/Git tools are not exposed in Claude mode. `--bash`/`--exec` use the selected agent's home. Existing Pi configuration is preserved.
+- Fast tests use fake host-login/Podman commands. An opt-in native `--version`/fake-state real-container test is present but has **not** been run here. Real login, copied-login onboarding and token rotation remain unverified; no live model calls were made.
+
+See [Claude Code setup and trust limits](claude-code.md).
 
 ### Host approval tools
 
@@ -109,9 +133,9 @@ npm run check             # Syntax + fast tests; no paid model calls
 npm run test:integration  # Opt-in rootless Podman builds/runs against fake services
 ```
 
-Latest check after the documentation/countdown work: **88 tests: 84 passed, 4 skipped**. The skipped suites need real Podman; availability inside a sandbox is not assumed. The Git tests include a real local bare-repo transfer with a test-only file transport substitution, not external credentials/network pushes. Mistral live model access, host SSH auth and complete interactive approvals were not verified end-to-end.
+Latest check including Claude and Codex wait/resume suites: **114 tests: 109 passed, 5 skipped**. The added real-Podman Claude suite is opt-in and was not run here. The skipped suites need real Podman; availability inside a sandbox is not assumed. The Git tests include a real local bare-repo transfer with a test-only file transport substitution, not external credentials/network pushes. Mistral live model access, host SSH auth and complete interactive approvals were not verified end-to-end.
 
-Inside a normal sandbox you can read/edit the shared checkout and run fast tests. You do **not** have host project.json, credentials, GNOME Shell or Podman control access. Use the image-owned approval tools to request supported host actions; if they are unavailable, ask the user to restart the host wrapper with an updated image or perform the step in a host terminal. Do not mount host home, SSH agents or Podman sockets to bypass this boundary.
+Inside a normal sandbox you can read/edit the shared checkout and run fast tests. In Pi proxy mode you do **not** have host project.json, credentials, GNOME Shell or Podman control access. Claude mode intentionally exposes a project-specific copy of subscription credentials, not host originals. Use the image-owned approval tools to request supported host actions; if they are unavailable, ask the user to restart the host wrapper with an updated image or perform the step in a host terminal. Do not mount host home, SSH agents or Podman sockets to bypass this boundary.
 
 Recent implementation commits (before this documentation pass):
 

@@ -15,7 +15,7 @@ export function imageCommand(command, extensions, env = process.env) {
   const end = args.indexOf('--');
   const options = end === -1 ? args : args.slice(0, end);
   if (options.includes('--no-extensions') || options.includes('-ne')) return command;
-  return [command[0], ...extensions.flatMap(entry => ['--extension', entry.path]), ...(env.PIS_APT_SOCKET ? ['--extension', '/opt/pis/request-apt.mjs'] : []), ...args];
+  return [command[0], ...extensions.flatMap(entry => ['--extension', entry.path]), ...(env.PIS_APT_SOCKET ? ['--extension', '/opt/pis/request-apt.mjs'] : []), ...(env.PIS_CODEX_AUTO_SOCKET ? ['--extension', '/opt/pis/codex-auto.mjs'] : []), ...args];
 }
 
 export function initializeWebSettings(extensions, env = process.env) {
@@ -54,7 +54,7 @@ export function startupProgress(message, env = process.env, write = text => cons
 async function main() {
   startupProgress('Container started. Preparing sandbox settings…');
   const extensions = JSON.parse(fs.readFileSync('/opt/pis/extensions.json', 'utf8'));
-  initializeWebSettings(extensions);
+  if (!process.env.CLAUDE_CONFIG_DIR) initializeWebSettings(extensions);
   const command = imageCommand(process.argv.slice(2), extensions);
   if (!command.length) throw new Error('No sandbox command.');
   if (command[0] === '/usr/local/bin/pis-pi-real' && command[1] === 'list') {
