@@ -2,7 +2,7 @@
 import { DEFAULT_EXTENSIONS } from './extensions.js';
 export const SCHEMA_REFERENCE = './project.schema.json';
 export const HINTS = {
-  credentials: 'New projects default to openai-codex host OAuth. Choose OpenAI/Berget/Mistral with keyEnv or a matching host profile (not both), custom with the custom host profile, or no proxy for direct env forwarding. Examples below are inert.',
+  credentials: 'New projects default to openai-codex host OAuth. Choose OpenAI/Berget/Mistral with keyEnv or a matching host profile (not both), custom with the custom host profile, or omit proxy for credential-free launches. Direct credential forwarding is disabled; env must be []. Examples below are inert.',
   extensions: 'Pi install sources baked into the image, e.g. npm:pi-web-access@0.40.0. Use [] to disable defaults. Changes rebuild the image; no source paths or -e flags are needed.',
   image: 'packages are apt names; extraInstructions are trusted single-line RUN instructions. Never put credentials here.',
   mounts: 'Explicit extra directories at identical absolute paths. Access defaults to read-only. The project root is already shared read-write.',
@@ -32,7 +32,7 @@ export const PROJECT_SCHEMA = {
       type: 'object', additionalProperties: false,
       description: HINTS.credentials,
       properties: {
-        env: { type: 'array', items: { type: 'string' }, default: [], description: 'Names only, never secret values. Must be empty in proxy mode.' },
+        env: { type: 'array', maxItems: 0, default: [], description: 'Must be empty. Real credentials are available only to the host proxy.' },
         proxy: {
           type: 'object', additionalProperties: false, required: ['provider'],
           properties: {

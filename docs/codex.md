@@ -128,7 +128,7 @@ The dummy capability grants permitted subscription usage for the lifetime of its
 
 Tests cover host device flow with mocked responses, explicit imports, private file handling, refresh rotation/concurrency/cancellation, fixed Codex routes, account-header replacement, bounded zstd decoding, dummy JWT compatibility, and token-safe errors/redaction.
 
-The real rootless Podman integration test uses Pi's actual `openai-codex` provider and a local fake OAuth/upstream service, with container networking disabled. It builds the default `pi-web-access` npm package and verifies a streamed conversation, a real `pi-web-access` tool call, sanitized quota retrieval via the usage adapter, and extensions seeing only synthetic credentials. API-key proxy and direct-mode integration tests are also retained. No live account sign-in or paid subscription/model requests are performed by tests.
+The real rootless Podman integration test uses Pi's actual `openai-codex` provider and a local fake OAuth/upstream service, with container networking disabled. It builds the default `pi-web-access` npm package and verifies a streamed conversation, a real `pi-web-access` tool call, sanitized quota retrieval via the usage adapter, and extensions seeing only synthetic credentials. API-key proxy and credential-free integration tests are also retained. No live account sign-in or paid subscription/model requests are performed by tests.
 
 The protocol follows the pinned Pi 1.2 implementation. Live OpenAI device authentication, backend behavior, workspace policy, and future protocol changes still require real-account verification. If OpenAI changes this protocol, update the host integration and pinned Pi compatibility together.
 

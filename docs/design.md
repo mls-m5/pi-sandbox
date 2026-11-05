@@ -157,7 +157,7 @@ A symlink inside the project does not itself expose an external target. Its targ
 
 ### Missing-field completion and hints
 
-Selected-project loads complete missing defaults, contextual credential fields, readable `hints`, and inert examples, then write formatted JSON and a sibling editor schema. Saving through `pis --edit` uses the same completion. Explicit values, including empty arrays and direct-mode credentials, are preserved. Missing extension settings receive the two requested defaults; an existing extension array is not appended to. Unknown fields and malformed types still fail validation. Discovery/listing does not rewrite every unselected project.
+Selected-project loads complete missing defaults, contextual credential fields, readable `hints`, and inert examples, then write formatted JSON and a sibling editor schema. Saving through `pis --edit` uses the same completion. Explicit values, including empty arrays, are preserved. Legacy direct-mode credentials fail validation and must be migrated explicitly to the host proxy. Missing extension settings receive the current web extension default; an existing extension array is not appended to. Unknown fields and malformed types still fail validation. Discovery/listing does not rewrite every unselected project.
 
 ### Image extensions
 
@@ -281,7 +281,7 @@ All proxy modes reject redirects, rebuild request headers, and bound request siz
 
 Codex sign-in is explicit through host-only `--login-codex`, `--import-codex FILE`, and `--logout-codex`. Refresh rotation is serialized across projects using the shared host sign-in, with atomic writes and cancellation. Nothing imports or mounts host Pi credentials automatically.
 
-Existing projects are not silently migrated. Direct mode remains available by omitting `proxy` and configuring explicitly selected environment variables in `env`. Directly forwarded keys and other stored credentials are accessible inside the container. The two modes cannot be mixed.
+Existing projects are not silently migrated. Legacy nonempty `credentials.env` arrays fail validation with proxy migration instructions. Credentials previously stored inside sandbox state or mounted files remain accessible there; removing forwarding does not scrub old secrets.
 
 Dummy capabilities do not prevent API spending by sandboxed commands or extensions. Counts are not monetary quotas. This does not scrub previously exposed secrets or secrets in mounted files, and it does not impose general network restrictions.
 
@@ -290,6 +290,8 @@ Dummy capabilities do not prevent API spending by sandboxed commands or extensio
 The initial runtime allows outbound networking for model APIs and development workflows. Default Podman networking is not a destination allowlist and can permit access to host or LAN services. Do not advertise network isolation or exfiltration prevention.
 
 Stronger egress controls, host/LAN restrictions, and proxy-only access are a separate tested milestone.
+
+Direct host credential forwarding is disabled. `credentials.env` must be empty; a missing proxy permits credential-free launches only. Existing direct configurations are rejected with migration guidance, never silently converted. OpenAI API keys can be read from a host environment variable by the proxy or stored with `pis --login openai`.
 
 ### User-approved host actions
 

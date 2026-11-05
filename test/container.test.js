@@ -4,7 +4,7 @@ import path from 'node:path';
 import { defaults } from '../src/config.js';
 import { piCommand, interactiveOutput, imagePlan, launchArgs, podmanEnvironment, CONTAINER_HOME } from '../src/container.js';
 
-const config = { ...defaults('abc12', '/work/project', 'app'), credentials: { env: ['OPENAI_API_KEY'] } };
+const config = { ...defaults('abc12', '/work/project', 'app'), credentials: { env: [] } };
 const store = { projectDir: id => `/storage/projects/${id}` };
 
 test('Pi continues by default and respects explicit session selection/subcommands', () => {
@@ -93,21 +93,23 @@ test('proxy source credentials are removed from Podman build/run process environ
   try {
     assert.equal(podmanEnvironment(proxied).OPENAI_API_KEY, undefined);
     assert.equal(podmanEnvironment(proxied).PATH, process.env.PATH);
-    assert.equal(podmanEnvironment(config).OPENAI_API_KEY, process.env.OPENAI_API_KEY);
+    assert.equal(podmanEnvironment(config).OPENAI_API_KEY, undefined);
   } finally {
     if (old === undefined) delete process.env.OPENAI_API_KEY;
     else process.env.OPENAI_API_KEY = old;
   }
 });
 
-test('only selected present credential names are forwarded, never values', () => {
+test('host credentials are never forwarded, including legacy configurations', () => {
   const old = process.env.OPENAI_API_KEY;
   process.env.OPENAI_API_KEY = 'test-secret-must-not-appear';
   try {
     const { args } = launchArgs(store, config, ['pi'], { cwd: config.root, image: 'image' });
-    assert.ok(args.includes('OPENAI_API_KEY'));
+    assert.ok(!args.includes('OPENAI_API_KEY'));
     assert.ok(!args.join(' ').includes(process.env.OPENAI_API_KEY));
     assert.ok(!args.includes('SSH_AUTH_SOCK'));
+    const legacy = { ...config, credentials: { env: ['OPENAI_API_KEY'] } };
+    assert.throws(() => launchArgs(store, legacy, ['pi'], { cwd: config.root, image: 'image' }), /Direct credential forwarding/);
   } finally {
     if (old === undefined) delete process.env.OPENAI_API_KEY;
     else process.env.OPENAI_API_KEY = old;

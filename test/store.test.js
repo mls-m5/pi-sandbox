@@ -84,7 +84,7 @@ test('package/build/env validation rejects injection and examples stay inert', a
   }
   p.image.extraInstructions = ['RUN npm install -g typescript'];
   p.credentials.env = ['HOME'];
-  assert.throws(() => validate(p), /Reserved environment/);
+  assert.throws(() => validate(p), /Direct credential forwarding/);
 });
 
 test('relocation retains identity/state and checks conflicts', async t => {

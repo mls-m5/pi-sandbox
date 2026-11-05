@@ -220,7 +220,7 @@ export async function main(argv = process.argv.slice(2)) {
     const isCodex = config.credentials.proxy?.provider === 'openai-codex';
     const credentialVariables = config.credentials.proxy
       ? (isCodex || config.credentials.proxy.profile ? [] : [{ name: proxyKeyEnv, present: Boolean(process.env[proxyKeyEnv]), handling: 'host-proxy' }])
-      : config.credentials.env.map(name => ({ name, present: Boolean(process.env[name]), handling: 'forwarded' }));
+      : [];
     const credentialSource = isCodex ? { kind: 'host-oauth', provider: 'openai-codex', present: hasCodexCredential(store) } : config.credentials.proxy?.profile ? { kind: 'host-api-key', provider: config.credentials.proxy.profile, present: Boolean(readApiProfile(store, config.credentials.proxy.profile)) } : undefined;
     console.log(JSON.stringify({ config, configurationFile: store.configPath(config.id), image: plan.image, workingDirectory: workdir, containerHome: CONTAINER_HOME, piCommand: piCommand(), mounts: [{ source: config.root, target: config.root, access: 'read-write' }, ...config.mounts.map(m => ({ source: m.source, target: m.source, access: m.access || 'read-only' }))], credentialVariables, credentialSource }, null, 2));
     return 0;

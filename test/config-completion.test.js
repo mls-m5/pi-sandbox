@@ -21,6 +21,8 @@ test('configuration completion adds source defaults, hints and contextual fields
   const direct = completeConfig({ ...old, credentials: { env: ['SOME_API_KEY'] }, extensions: [] });
   assert.deepEqual(direct.extensions, []);
   assert.deepEqual(direct.credentials, { env: ['SOME_API_KEY'] });
+  assert.throws(() => validate(direct, { paths: false }), /Direct credential forwarding/);
+  assert.ok(!('direct' in config.examples.credentials));
   const api = completeConfig({ ...old, credentials: { proxy: { provider: 'openai', maxRequests: 12 } } });
   assert.equal(api.credentials.proxy.maxRequests, 12);
   assert.equal(api.credentials.proxy.keyEnv, 'OPENAI_API_KEY');
@@ -28,7 +30,7 @@ test('configuration completion adds source defaults, hints and contextual fields
 
 test('completion preserves invalid values for validation rather than silently replacing them', () => {
   const base = defaults('abc12', '/work/project');
-  for (const candidate of [{ ...base, credentials: null }, { ...base, extensions: null }, { ...base, mounts: false }, { ...base, credentials: { env: [], proxy: {} } }, { ...base, unexpected: true }]) {
+  for (const candidate of [{ ...base, credentials: null }, { ...base, extensions: null }, { ...base, mounts: false }, { ...base, credentials: { env: [], proxy: {} } }, { ...base, unexpected: true }, { ...base, credentials: { env: ['OPENAI_API_KEY'] } }, { ...base, credentials: { env: ['BERGET_API_KEY'] } }]) {
     assert.throws(() => validate(completeConfig(candidate), { paths: false }));
   }
 });

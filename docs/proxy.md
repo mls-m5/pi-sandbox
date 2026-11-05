@@ -37,7 +37,7 @@ Replace `<model-id>` with an OpenAI model supported by Pi. The same proxy is ava
 
 `keyEnv` may name another host variable. Its value is never passed into the container. A missing key stops launch: there is **no fallback** to direct credential forwarding. `pis --build`, `--check`, and `--show` do not require a key. OpenAI and Berget can instead reference a private host profile; a profile always takes precedence and never falls back to an environment key.
 
-`credentials.env` must be empty when proxy mode is enabled, preventing accidentally forwarding the real key alongside the dummy credential. To deliberately use direct credentials instead, remove `proxy` and configure `env`; those credentials will then be visible inside the sandbox.
+`credentials.env` must always be `[]`. Direct host credential forwarding has been removed. Older configurations with nonempty `env` fail validation rather than silently changing provider or exposing a key. To migrate OpenAI, keep `OPENAI_API_KEY` on the host and set `credentials` to `{ "env": [], "proxy": { "provider": "openai", "keyEnv": "OPENAI_API_KEY" } }`, or run `pis --login openai` and use `profile: "openai"` instead of `keyEnv`. Omitting `proxy` allows a credential-free launch, not host key forwarding.
 
 ## Host API-key profiles
 
@@ -81,7 +81,7 @@ Response → stream back without exposing authentication headers
 
 There is **no host TCP listener**, published port, host network mode, or requirement to make host localhost reachable through Podman networking. Each launch gets an independent capability, socket, and request budget. The capability is invalid after shutdown.
 
-Only the Unix socket, dummy credentials, and container relay/configuration files are mounted at `/pis/proxy`. The host proxy implementation and real key are not mounted. The selected source key variable, host `OPENAI_API_KEY`, and host `BERGET_API_KEY` are removed from Podman build/run subprocess environments; the runtime gets only dummy values. The runtime directory is private (0700), its files/socket are 0600, and normal shutdown removes it. Forced process death can leave inert runtime files. They do not contain the host proxy credential, but preserved entries for other sandbox providers may contain previously stored secrets, so treat leftover runtime directories as sensitive.
+Only the Unix socket, dummy credentials, and container relay/configuration files are mounted at `/pis/proxy`. The host proxy implementation and real key are not mounted. The selected source key variable is removed from Podman build/run subprocess environments. Host `OPENAI_API_KEY`, `BERGET_API_KEY`, and `MISTRAL_API_KEY` are removed even for credential-free launches; the runtime gets only dummy values. The runtime directory is private (0700), its files/socket are 0600, and normal shutdown removes it. Forced process death can leave inert runtime files. They do not contain the host proxy credential, but preserved entries for other sandbox providers may contain previously stored secrets, so treat leftover runtime directories as sensitive.
 
 The container entry process starts the relay, launches Pi/Bash/the selected program, forwards signals, and stops the relay when that program exits. The host wrapper stops the proxy after container cleanup.
 

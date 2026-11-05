@@ -17,6 +17,7 @@ This file summarizes the recent design decisions and operational context. Start 
 ### Credentials and spending
 
 - `pis --login-codex`, import and logout are already **global per PIS_HOME**. There is no separate `--global` flag and no per-project Codex login. Default store: `~/.local/share/pis/auth/openai-codex.json`.
+- Direct host credential forwarding has been removed: `credentials.env` must always be `[]`. Legacy nonempty arrays fail with proxy migration guidance; configuration is not silently converted. A missing proxy supports credential-free launches. OpenAI API keys work via host `keyEnv` or `pis --login openai` profiles. Known API-key variables are stripped from Podman subprocess environments even without a proxy.
 - Real OAuth/API credentials remain on the host. Per-run sandbox auth/model overlays contain dummy capabilities, not usable upstream credentials. Do not run `/login` inside a proxied sandbox.
 - API-key profiles support OpenAI, Berget, Mistral and custom endpoints. `pis --login-mistral` / `--logout-mistral` are aliases for the Mistral profile flow. In project config use `provider: "mistral", profile: "mistral"`, without `keyEnv`, and `credentials.env: []`.
 - Mistral proxy uses native Pi Mistral Chat Completions at `/v1/chat/completions`; its Pi base URL is the local origin, **without /v1**, because Pi appends that path. Mistral subscription/browser authentication is **not implemented**.

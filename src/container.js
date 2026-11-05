@@ -70,12 +70,10 @@ export function inspectPodman() {
 
 export function podmanEnvironment(config) {
   const env = { ...process.env };
-  if (config.credentials.proxy) {
-    delete env[config.credentials.proxy.keyEnv || (config.credentials.proxy.provider === 'berget' ? 'BERGET_API_KEY' : config.credentials.proxy.provider === 'mistral' ? 'MISTRAL_API_KEY' : 'OPENAI_API_KEY')];
-    delete env.OPENAI_API_KEY;
-    delete env.BERGET_API_KEY;
-    delete env.MISTRAL_API_KEY;
-  }
+  if (config.credentials.proxy?.keyEnv) delete env[config.credentials.proxy.keyEnv];
+  delete env.OPENAI_API_KEY;
+  delete env.BERGET_API_KEY;
+  delete env.MISTRAL_API_KEY;
   return env;
 }
 
@@ -101,6 +99,7 @@ export async function ensureImage(store, config, { rebuild = false } = {}) {
 }
 
 export function launchArgs(store, config, command, { cwd, image, proxy, aptRequests, startupStarted, network, selinux = false, tty = Boolean(process.stdin.isTTY && process.stdout.isTTY && interactiveOutput(command)), stdinIsTTY = Boolean(process.stdin.isTTY), uid = process.getuid(), gid = process.getgid(), name = `pis-${config.id}-${randomBytes(5).toString('hex')}` } = {}) {
+  assert(config.credentials.env.length === 0, 'Direct credential forwarding is no longer supported; configure credentials.proxy.');
   assert(network === undefined || network === 'none', 'Unsupported internal network override.');
   const workdir = within(config.root, cwd) ? cwd : config.root;
   const state = path.join(store.projectDir(config.id), 'state');
@@ -131,8 +130,6 @@ export function launchArgs(store, config, command, { cwd, image, proxy, aptReque
       '--volume', `${proxy.directory}:/pis/proxy:ro${sharedLabel}`,
       '--volume', `${proxy.directory}/models.json:${CONTAINER_HOME}/.pi/agent/models.json:ro${sharedLabel}`,
       '--volume', `${proxy.directory}/auth.json:${CONTAINER_HOME}/.pi/agent/auth.json:ro${sharedLabel}`);
-  } else {
-    for (const variable of config.credentials.env) if (process.env[variable]) args.push('--env', variable);
   }
   for (const variable of ['TERM', 'COLORTERM']) if (process.env[variable]) args.push('--env', variable);
   args.push('--entrypoint', '/usr/local/bin/node', image, ...(proxy ? ['/pis/proxy/entry.mjs', '/usr/local/bin/node'] : []), '/opt/pis/image-entry.mjs', ...command);
@@ -180,10 +177,6 @@ async function launchOnce(store, config, options) {
     }
     if (options.buildOnly) return 0;
     const command = options.mode === 'bash' ? ['bash', '-i'] : options.mode === 'exec' ? options.args : piCommand(options.args, options.fresh);
-    if (options.mode === 'pi' && !config.credentials.proxy) {
-      const missing = config.credentials.env.filter(variable => !process.env[variable]);
-      if (missing.length) console.error(`pis: credentials not set: ${missing.join(', ')}. Set them on the host, adjust pis --edit, or use sandbox-local Pi login.`);
-    }
     const state = path.join(store.projectDir(config.id), 'state');
     privateDir(state);
     let proxy, invocation, aptRequests, status, proposal, containerStopped = false;

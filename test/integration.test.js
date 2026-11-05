@@ -38,8 +38,8 @@ test('real rootless Podman: build, identity, mounts, credentials, state, Pi, pip
   const shown = JSON.parse(success(['--show']).stdout);
   const config = shown.config;
   projectId = config.id;
-  // Keep coverage for explicitly opted-in legacy/direct credential forwarding.
-  config.credentials = { env: ['OPENAI_API_KEY'] };
+  // Credential-free launches must not inherit host API keys.
+  config.credentials = { env: [] };
   config.extensions = [];
   config.image.packages = ['jq'];
   config.image.extraInstructions = ['RUN printf customization-works > /opt/pis-build-marker'];
@@ -47,7 +47,7 @@ test('real rootless Podman: build, identity, mounts, credentials, state, Pi, pip
   fs.writeFileSync(shown.configurationFile, JSON.stringify(config));
   image = JSON.parse(success(['--show']).stdout).image;
   success(['--build']);
-  assert.deepEqual(fs.readdirSync(path.join(path.dirname(shown.configurationFile), 'build')).sort(), ['Containerfile', 'extensions.json', 'fetch-bridge.mjs', 'image-entry.mjs', 'pi-launcher']);
+  assert.deepEqual(fs.readdirSync(path.join(path.dirname(shown.configurationFile), 'build')).sort(), ['Containerfile', 'extensions.json', 'fetch-bridge.mjs', 'image-entry.mjs', 'pi-launcher', 'request-apt.mjs']);
 
   const script = `
     const fs = require('fs');
@@ -63,7 +63,7 @@ test('real rootless Podman: build, identity, mounts, credentials, state, Pi, pip
   assert.equal(result.uid, process.getuid());
   assert.equal(result.gid, process.getgid());
   assert.equal(result.cwd, sub);
-  assert.equal(result.key, env.OPENAI_API_KEY);
+  assert.equal(result.key, undefined);
   assert.equal(result.leaked, undefined);
   assert.equal(result.outside, false);
   assert.equal(result.readOnly, true);

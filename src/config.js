@@ -53,10 +53,7 @@ export function validate(config, { storage, home = os.homedir(), identity, paths
   }
   object(config.credentials, ['env', 'proxy'], 'credentials');
   strings(config.credentials.env, 'credentials.env');
-  for (const name of config.credentials.env) {
-    assert(/^[A-Z_][A-Z0-9_]*$/.test(name), `Invalid credential variable name: ${name}`);
-    assert(!RESERVED_ENV.includes(name) && !name.startsWith('PI_') && !name.startsWith('PIS_'), `Reserved environment variable: ${name}`);
-  }
+  assert(config.credentials.env.length === 0, 'Direct credential forwarding is no longer supported. Set credentials.env to [] and configure credentials.proxy (for OpenAI: provider=openai with keyEnv=OPENAI_API_KEY, or profile=openai after pis --login openai). Real keys must stay on the host.');
   if (config.credentials.proxy !== undefined) {
     const proxy = config.credentials.proxy;
     object(proxy, ['provider', 'keyEnv', 'profile', 'models', 'maxRequests', 'maxConcurrent'], 'credentials.proxy');
@@ -142,7 +139,6 @@ export function completeConfig(input) {
     berget: { env: [], proxy: { provider: 'berget', keyEnv: 'BERGET_API_KEY', models: [], maxRequests: 1000, maxConcurrent: 4 } },
     mistral: { env: [], proxy: { provider: 'mistral', profile: 'mistral', models: [], maxRequests: 1000, maxConcurrent: 4 } },
     codex: { env: [], proxy: { provider: 'openai-codex', models: [], maxRequests: 1000, maxConcurrent: 4 } },
-    direct: { env: ['OPENAI_API_KEY'] },
   });
   return config;
 }
