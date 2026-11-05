@@ -4,6 +4,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { assert, atomicWrite, directory, privateDir, run, within } from './util.js';
 import { prepareProxy } from './proxy-runtime.js';
+import { schedulePrune } from './prune.js';
 import { startAptRequestServer, applyAptProposal, approveAptProposal } from './apt-requests.js';
 import { extensionManifest, IMAGE_AGENT_DIR, shellQuote } from './extensions.js';
 
@@ -92,6 +93,8 @@ export async function ensureImage(store, config, { rebuild = false } = {}) {
     console.error(`pis: building ${plan.image}`);
     const code = await run('podman', ['build', '--http-proxy=false', ...(rebuild ? ['--no-cache'] : []), '--tag', plan.image, '--file', path.join(context, 'Containerfile'), context], { env: podmanEnvironment(config), stdio: ['ignore', 2, 2] });
     assert(code === 0, `Image build failed (exit ${code}).`);
+    plan.built = true;
+    schedulePrune(store);
   }
   return plan;
 }
@@ -152,6 +155,7 @@ export async function launch(store, config, options) {
 const RESTART = Symbol('restart-after-approved-packages');
 
 async function launchOnce(store, config, options) {
+  let built = false;
   return store.projectLock(config.id, async () => {
     // Re-read and validate after acquiring exclusivity (configuration may have changed).
     config = store.load(config.id);
@@ -162,6 +166,7 @@ async function launchOnce(store, config, options) {
     progress('Checking Podman and sandbox image…');
     const info = inspectPodman();
     const plan = await ensureImage(store, config, options);
+    built = Boolean(plan.built);
     progress('Image ready.');
     if (options.buildOnly) return 0;
     const command = options.mode === 'bash' ? ['bash', '-i'] : options.mode === 'exec' ? options.args : piCommand(options.args, options.fresh);
@@ -205,5 +210,5 @@ async function launchOnce(store, config, options) {
       } else console.error('pis: package request declined; configuration unchanged.');
     }
     return status;
-  });
+  }).finally(() => { if (built) schedulePrune(store); });
 }

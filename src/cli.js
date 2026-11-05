@@ -3,6 +3,7 @@ import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { createInterface } from 'node:readline/promises';
 import { Store } from './store.js';
+import { pruneImages } from './prune.js';
 import { getCodexUsage, hasCodexCredential, importCodexCredential, loginCodex, logoutCodex } from './codex-auth.js';
 import { apiProfileStatus, promptApiProfile, logoutApiProfile, readApiProfile } from './api-auth.js';
 import { validate } from './config.js';
@@ -21,6 +22,7 @@ Usage:
   pis [--project ID_OR_NAME] --edit | --check | --show | --build | --rebuild
   pis [--project ID_OR_NAME] --extensions-list
   pis --doctor
+  pis --prune [--dry-run]           # old pis images only; no project data
   pis --login-codex                 # global host sign-in
   pis --import-codex FILE            # global host sign-in
   pis --logout-codex                 # remove global host sign-in
@@ -36,7 +38,10 @@ Pi arguments belong after --. Explicit Pi session selectors override continuatio
 --new registers the current directory; it does not start a conversation.
 --edit uses $VISUAL, $EDITOR, or vim and saves only valid JSON configuration.
 --show prints effective settings and mounts without credential values.
---rebuild disables build cache. Runtime containers are disposable.
+--rebuild disables build cache. Runtime containers are disposable (--rm).
+Old pis images are cleaned in the background after builds by default.
+--prune previews with --dry-run; keeps current/previous, recent and used images.
+PIS_AUTO_PRUNE=0 disables automatic cleanup; project data is never pruned.
 
 Storage: $PIS_HOME, otherwise $XDG_DATA_HOME/pis or ~/.local/share/pis.
 New projects use the global host Codex OAuth proxy. Existing projects are unchanged.
@@ -71,22 +76,25 @@ export function parse(argv) {
         assert(options[property] === undefined, `Repeated option: ${key}`);
         options[property] = value;
       }
+    } else if (key === '--dry-run' && equals === -1) {
+      assert(!options.dryRun, 'Repeated option: --dry-run'); options.dryRun = true;
     } else if (key === '--fresh' && equals === -1) {
       assert(!options.fresh, 'Repeated option: --fresh'); options.fresh = true;
     } else if (['--bash', '--exec'].includes(key) && equals === -1) {
       assert(!mode, 'Choose either --bash or --exec.'); mode = key.slice(2);
-    } else if (['--new', '--list', '--edit', '--check', '--show', '--build', '--rebuild', '--extensions-list', '--doctor', '--login-codex', '--logout-codex', '--login-mistral', '--logout-mistral', '--codex-usage', '--login-status', '--help', '-h', '--version'].includes(key) && equals === -1) {
+    } else if (['--new', '--list', '--edit', '--check', '--show', '--build', '--rebuild', '--extensions-list', '--doctor', '--prune', '--login-codex', '--logout-codex', '--login-mistral', '--logout-mistral', '--codex-usage', '--login-status', '--help', '-h', '--version'].includes(key) && equals === -1) {
       assert(!action, 'Choose only one management action.'); action = key === '-h' ? 'help' : key.slice(2);
     } else throw new Error(`Unknown pis option: ${token}. Pass Pi arguments after --; see pis --help.`);
   }
   options.action = action || 'run';
   options.mode = mode || 'pi';
   assert(!options.name || action === 'new', '--name is only valid with --new.');
+  assert(!options.dryRun || action === 'prune', '--dry-run is only valid with --prune.');
   assert(!mode || !action, 'Shell/exec modes cannot be combined with management actions.');
   assert(!options.fresh || (!action && !mode), '--fresh is only valid when running Pi.');
   assert(!args.length || (!action && mode !== 'bash'), 'Trailing arguments are only valid for Pi or --exec.');
   assert(mode !== 'exec' || args.length > 0, '--exec requires a command after --.');
-  assert(!options.project || !['new', 'list', 'relocate', 'doctor', 'login-codex', 'logout-codex', 'login-mistral', 'logout-mistral', 'codex-usage', 'import-codex', 'login', 'logout', 'login-status', 'help', 'version'].includes(action), '--project is not valid with this action.');
+  assert(!options.project || !['new', 'list', 'relocate', 'doctor', 'prune', 'login-codex', 'logout-codex', 'login-mistral', 'logout-mistral', 'codex-usage', 'import-codex', 'login', 'logout', 'login-status', 'help', 'version'].includes(action), '--project is not valid with this action.');
   return options;
 }
 
@@ -131,6 +139,11 @@ export async function main(argv = process.argv.slice(2)) {
   assert(process.getuid() !== 0, 'Run pis as your normal user, not root or sudo.');
   const store = new Store();
   const cwd = directory(process.cwd());
+  if (options.action === 'prune') {
+    const result = await pruneImages(store, { dryRun: Boolean(options.dryRun) });
+    console.log(JSON.stringify({ dryRun: Boolean(options.dryRun), ...result }, null, 2));
+    return result.failed.length ? 1 : 0;
+  }
   if (options.action === 'login' || options.action === 'login-mistral') {
     const provider = options.action === 'login-mistral' ? 'mistral' : options.target;
     await promptApiProfile(store, provider);

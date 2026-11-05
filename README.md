@@ -198,6 +198,19 @@ pis --rebuild                  # Rebuild without cached build steps
 
 The Node base image is digest-pinned and Pi is pinned to 1.2.0. apt repositories and npm transitive dependencies are not fully locked, so uncached builds are not guaranteed to be bit-for-bit reproducible. Updating pinned versions currently requires a source change in `src/container.js`.
 
+## Image cleanup
+
+Automatic cleanup is enabled by default for normal pis launches after a successful image build. A detached host process works in the background, skips locked projects and retries after the built session exits. A fully successful pass runs at most once per day; incomplete passes can be retried sooner. Disable automatic scheduling with `PIS_AUTO_PRUNE=0 pis`.
+
+```sh
+pis --prune --dry-run   # List eligible old pis image tags; delete nothing
+pis --prune             # Remove eligible old pis images
+```
+
+Cleanup only considers fingerprint-tagged `localhost/pis-<id>` images for registered projects in the current `PIS_HOME`. It retains the configured image and the most recent other image (or two existing versions if the configured image is not built), images younger than 24 hours, images referenced by containers, and images shared with another repository/project. Builds, sessions and cleanup use the same project locks; configuration changes are also locked during cleanup. Busy projects are reported as skipped. Deletion never uses force or recursive parent pruning.
+
+This deliberately does **not** remove arbitrary Podman images, untagged build-cache layers, Buildah workspaces, volumes, project files, sandbox homes or credentials. Podman run containers already use `--rm`. You may still need occasional separate cleanup of abandoned build workspaces and dangling layers when no builds are running. The automatic worker records its last result in `$PIS_HOME/prune-report.json` (default `~/.local/share/pis/prune-report.json`); removal failures leave images in place and do not prevent Pi from starting.
+
 ## Extensions
 
 Specify Pi install sources in `pis --edit`—not local installation paths:
