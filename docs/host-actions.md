@@ -2,13 +2,13 @@
 
 ## Implemented first step: apt packages
 
-Interactive `pis` runs expose an image-owned `request_apt_packages` Pi tool. It submits one small, typed JSON proposal over a private Unix socket. The socket grants permission to **suggest**, not permission to change anything. Direct, print, RPC and custom-stdio launches do not expose this service.
+Interactive `pis` runs expose an image-owned `request_apt_packages` Pi tool. It submits one small, typed JSON proposal over a private Unix socket. The socket grants permission to **suggest**, not permission to change anything. Direct, print, RPC, `--no-session` and custom-stdio launches do not expose this service.
 
-The tool reports that nothing has been installed and requests an orderly Pi shutdown. After Podman exits, pis removes the container and checks that it no longer exists. It then closes the proposal service before prompting on the host terminal. The user must type a fresh random six-digit confirmation code; Enter or any other response declines.
+The tool reports that nothing has been installed and requests an orderly Pi shutdown. After Podman exits, pis removes the container and checks that it no longer exists. It then closes the proposal service before prompting on the host terminal. The user must type a fresh random two-digit confirmation code; Enter or any other response declines.
 
 Only the validated package list held in host memory is used after confirmation. No approval field, filename, shell command, configuration patch, URL, or generic command is accepted from the sandbox. Unknown action types and unknown fields are rejected. At most ten simple apt names and a bounded explanation are accepted; shell syntax, versions, terminal controls and bidirectional formatting controls are rejected.
 
-Approval saves an additive `image.packages` change using the normal registry lock, stale-config check, validation and atomic write. Existing settings are retained. The next `pis` launch builds the new image; it does not automatically restart or resume the model. Decline makes no changes. If another process edited the configuration meanwhile, saving fails rather than overwriting it.
+Approval saves an additive `image.packages` change using the normal registry lock, stale-config check, validation and atomic write. Existing settings are retained. After approval, pis releases the old project lock, builds the new image and restarts Pi with `--continue`. It does not replay an initial prompt or one-off CLI arguments, and does not trigger a model turn automatically. A build/start failure is reported normally; approved configuration changes remain saved for retry. Decline makes no changes and does not restart Pi. If another process edited the configuration meanwhile, saving fails rather than overwriting it.
 
 New projects start with `build-essential` and `python3` as visible, editable package defaults. Existing explicit package lists, including an empty list, are not migrated.
 
@@ -16,7 +16,7 @@ New projects start with `build-essential` and `python3` as visible, editable pac
 
 The model can suggest inappropriate packages or misleading reasons. The reason is explicitly untrusted; the exact package names are what the user approves. Package installation can execute Debian maintainer scripts inside the image build. Confirmation does not mean a package has been audited.
 
-This is not a defense against a malicious host user, kernel/container escape, or all terminal-emulator attacks. The sandbox may print misleading text while it runs. Real authorization happens in pis after the sandbox has been stopped, with a new confirmation challenge not supplied by the sandbox. Never approve solely because the model says an operation is safe.
+This is not a defense against a malicious host user, kernel/container escape, or all terminal-emulator attacks. The sandbox may print misleading text while it runs. Real authorization happens in pis after the sandbox has been stopped, with a new confirmation challenge not supplied by the sandbox. The two-digit code prioritizes usability and protection against accidental generic responses, not strong resistance to guessing; it is not an authentication secret. Never approve solely because the model says an operation is safe.
 
 ## Future: git push (not implemented)
 

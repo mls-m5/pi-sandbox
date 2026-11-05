@@ -5,9 +5,9 @@ import os from 'node:os';
 import path from 'node:path';
 import net from 'node:net';
 import { Store } from '../src/store.js';
-import { applyAptProposal, startAptRequestServer, validateAptProposal, approveAptProposal } from '../src/apt-requests.js';
+import { applyAptProposal, startAptRequestServer, validateAptProposal, approveAptProposal, formatAptApproval } from '../src/apt-requests.js';
 import { PassThrough, Writable } from 'node:stream';
-import { launchArgs } from '../src/container.js';
+import { launchArgs, restartOptions } from '../src/container.js';
 
 async function fixture(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pis-apt-test-'));
@@ -29,13 +29,28 @@ function send(file, data) {
   });
 }
 
+test('approval formatting provides full-width separators and optional terminal colors', () => {
+  const proposal = { packages: ['curl', 'python3-venv'], reason: 'Run project tests' };
+  const plain = formatAptApproval(proposal, '42', { columns: 32 });
+  assert.ok(plain.text.includes('─'.repeat(32)));
+  assert.ok(!plain.text.includes('─'.repeat(33)));
+  assert.ok(!plain.text.includes('\x1b'));
+  assert.match(plain.text, /Debian packages: curl, python3-venv/);
+  assert.match(plain.prompt, /Type 42 to approve/);
+  const colored = formatAptApproval(proposal, '42', { columns: 120, color: true });
+  assert.ok(colored.text.includes(`\x1b[31m${'─'.repeat(120)}\x1b[0m`));
+  assert.ok(colored.text.includes('\x1b[1m'));
+  assert.ok(colored.prompt.includes('\x1b[1;36m42\x1b[0m'));
+  assert.equal(colored.text.replace(/\x1b\[[0-9;]*m/g, ''), formatAptApproval(proposal, '42', { columns: 120 }).text);
+});
+
 test('host approval requires the fresh challenge; Enter and ordinary yes decline', async () => {
   for (const response of ['challenge', '', 'yes', 'true', '000000']) {
     const input = new PassThrough();
     let transcript = '';
     const output = new Writable({ write(chunk, _encoding, done) {
       transcript += chunk.toString();
-      const code = chunk.toString().match(/Type (\d{6}) to approve/);
+      const code = chunk.toString().match(/Type (\d{2}) to approve/);
       if (code) setImmediate(() => input.write(`${response === 'challenge' ? code[1] : response}\n`));
       done();
     } });
@@ -45,6 +60,17 @@ test('host approval requires the fresh challenge; Enter and ordinary yes decline
     assert.match(transcript, /untrusted/);
     input.destroy(); output.destroy();
   }
+});
+
+test('automatic restart resumes without replaying prompts or fresh/rebuild flags', () => {
+  const original = { mode: 'pi', fresh: true, rebuild: true, cwd: '/project', args: ['--no-session', 'do this expensive task'] };
+  const resumed = restartOptions(original);
+  assert.deepEqual(resumed.args, ['--continue']);
+  assert.equal(resumed.fresh, false);
+  assert.equal(resumed.rebuild, false);
+  assert.equal(resumed.buildOnly, false);
+  assert.equal(resumed.cwd, original.cwd);
+  assert.equal(original.fresh, true);
 });
 
 test('default packages, proposal validation and host save', async t => {

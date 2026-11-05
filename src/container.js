@@ -135,7 +135,23 @@ export function launchArgs(store, config, command, { cwd, image, proxy, aptReque
   return { args, name, workdir };
 }
 
+export function restartOptions(options) {
+  // Do not replay an initial prompt, --fresh or management/session-creation flags.
+  return { ...options, mode: 'pi', fresh: false, rebuild: false, buildOnly: false, args: ['--continue'] };
+}
+
 export async function launch(store, config, options) {
+  while (true) {
+    const result = await launchOnce(store, config, options);
+    if (result !== RESTART) return result;
+    // launchOnce has released the project lock and closed all old sockets.
+    options = restartOptions(options);
+  }
+}
+
+const RESTART = Symbol('restart-after-approved-packages');
+
+async function launchOnce(store, config, options) {
   return store.projectLock(config.id, async () => {
     // Re-read and validate after acquiring exclusivity (configuration may have changed).
     config = store.load(config.id);
@@ -163,7 +179,8 @@ export async function launch(store, config, options) {
         progress(`Preparing ${config.credentials.proxy.provider} credential proxy…`);
         proxy = await prepareProxy(store, config, { upstream: options.proxyUpstream, codexAuthFetch: options.codexAuthFetch });
       }
-      if (options.mode === 'pi' && interactiveOutput(command) && !options.stdio && process.stdin.isTTY && process.stdout.isTTY && process.stderr.isTTY) aptRequests = await startAptRequestServer(config, store);
+      const piOptions = command.slice(1, command.indexOf('--') === -1 ? command.length : command.indexOf('--'));
+      if (options.mode === 'pi' && !piOptions.includes('--no-session') && interactiveOutput(command) && !options.stdio && process.stdin.isTTY && process.stdout.isTTY && process.stderr.isTTY) aptRequests = await startAptRequestServer(config, store);
       invocation = launchArgs(store, config, command, { cwd: options.cwd, image: plan.image, proxy, aptRequests, startupStarted: showProgress ? startupStarted : undefined, network: options.network, selinux: info.host.security.selinuxEnabled });
       progress('Starting container (first start after a build can take longer)…');
       status = await run('podman', invocation.args, { env: podmanEnvironment(config), stdio: options.stdio || 'inherit' });
@@ -183,7 +200,8 @@ export async function launch(store, config, options) {
       assert(containerStopped, 'Cannot confirm sandbox shutdown; package request not applied. Configuration unchanged.');
       if (await approveAptProposal(proposal)) {
         await applyAptProposal(store, config, proposal);
-        console.error(`pis: packages added to ${store.configPath(config.id)}. Run pis again to build and use the updated image.`);
+        console.error(`pis: packages added to ${store.configPath(config.id)}. Rebuilding and restarting Pi with the latest session…`);
+        return RESTART;
       } else console.error('pis: package request declined; configuration unchanged.');
     }
     return status;

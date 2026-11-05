@@ -71,12 +71,31 @@ export async function startAptRequestServer(config, store) {
   };
 }
 
+export function formatAptApproval(proposal, code, { columns = 80, color = false } = {}) {
+  const style = (text, ansi) => color ? `\x1b[${ansi}m${text}\x1b[0m` : text;
+  const width = Number.isFinite(columns) ? Math.max(1, Math.min(500, Math.floor(columns))) : 80;
+  const rule = style('─'.repeat(width), '31');
+  return {
+    text: `\n${rule}\n${style('pis · Package installation approval', '1')}\n\n`
+      + `${style('Debian packages:', '1')} ${style(proposal.packages.join(', '), '33')}\n\n`
+      + `${style('Reason supplied by the sandbox (untrusted):', '2')}\n  ${proposal.reason}\n\n`
+      + 'Approval saves the package list, rebuilds the image and restarts Pi.\n'
+      + `${style('The latest session is resumed; no prompt is sent automatically.', '2')}\n`
+      + `${rule}\n`,
+    prompt: `Type ${style(code, '1;36')} to approve ${style('(Enter or any other answer declines)', '2')}: `,
+  };
+}
+
 export async function approveAptProposal(proposal, { input = process.stdin, output = process.stderr } = {}) {
-  const code = String(randomInt(100000, 1000000));
-  output.write(`\npis: Pi requested Debian packages: ${proposal.packages.join(', ')}\nReason supplied by the sandbox (untrusted): ${proposal.reason}\nThis changes the image configuration for this project and installs packages on the next start.\n`);
+  const code = String(randomInt(10, 100));
+  const formatted = formatAptApproval(proposal, code, {
+    columns: output.columns,
+    color: Boolean(output.isTTY) && process.env.NO_COLOR === undefined && process.env.TERM !== 'dumb',
+  });
+  output.write(formatted.text);
   const prompt = createInterface({ input, output });
   try {
-    const answer = await prompt.question(`Type ${code} to approve (Enter declines): `);
+    const answer = await prompt.question(formatted.prompt);
     return answer.trim() === code;
   } finally { prompt.close(); }
 }
