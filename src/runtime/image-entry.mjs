@@ -45,7 +45,14 @@ export function initializeWebSettings(extensions, env = process.env) {
   }
 }
 
+export function startupProgress(message, env = process.env, write = text => console.error(text), now = Date.now()) {
+  const started = Number(env.PIS_STARTUP_STARTED);
+  if (!Number.isFinite(started) || started <= 0) return;
+  write(`pis: [${Math.max(0, (now - started) / 1000).toFixed(1)}s] ${message}`);
+}
+
 async function main() {
+  startupProgress('Container started. Preparing sandbox settings…');
   const extensions = JSON.parse(fs.readFileSync('/opt/pis/extensions.json', 'utf8'));
   initializeWebSettings(extensions);
   const command = imageCommand(process.argv.slice(2), extensions);
@@ -56,6 +63,9 @@ async function main() {
   const env = { ...process.env };
   const bridge = '--import=/opt/pis/fetch-bridge.mjs';
   if (env.PIS_PROXY_PROVIDER === 'openai-codex' && !(env.NODE_OPTIONS || '').split(/\s+/).includes(bridge)) env.NODE_OPTIONS = `${env.NODE_OPTIONS || ''} ${bridge}`.trim();
+  startupProgress(command[0] === '/usr/local/bin/pis-pi-real'
+    ? `Loading Pi, session and extensions (${command.filter(arg => arg === '--extension').length} explicit extensions). Startup may take seconds or longer on a cold start; there is no reliable ETA.`
+    : 'Starting sandbox command…');
   const child = spawn(command[0], command.slice(1), { stdio: 'inherit', env });
   const handlers = ['SIGINT', 'SIGTERM', 'SIGHUP'].map(signal => {
     const handler = () => child.kill(signal);

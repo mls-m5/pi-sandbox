@@ -2,13 +2,23 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { imageCommand, initializeWebSettings } from '../src/runtime/image-entry.mjs';
+import { imageCommand, initializeWebSettings, startupProgress } from '../src/runtime/image-entry.mjs';
 import { usageProxyRequest } from '../src/runtime/fetch-bridge.mjs';
 import { extensionManifest } from '../src/extensions.js';
 import { imagePlan } from '../src/container.js';
 import { defaults } from '../src/config.js';
 
 const extensions = extensionManifest();
+
+test('startup progress is opt-in, timed and absent from protocol output by default', () => {
+  const lines = [];
+  const write = text => lines.push(text);
+  startupProgress('hidden', {}, write, 3000);
+  startupProgress('invalid', { PIS_STARTUP_STARTED: 'bad' }, write, 3000);
+  assert.deepEqual(lines, []);
+  startupProgress('Container started', { PIS_STARTUP_STARTED: '1000' }, write, 3500);
+  assert.deepEqual(lines, ['pis: [2.5s] Container started']);
+});
 
 test('image startup loads installed package directories without remote install requests', () => {
   const command = imageCommand(['pi', '--continue', '-p', 'hello'], extensions);

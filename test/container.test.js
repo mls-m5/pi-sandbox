@@ -66,6 +66,9 @@ test('launch preserves paths, identity, isolation flags, and literal arguments',
   assert.ok(args.includes('--security-opt=no-new-privileges'));
   assert.ok(args.includes('--http-proxy=false'));
   assert.ok(!args.includes('--tty'));
+  assert.ok(!args.some(arg => arg.startsWith('PIS_STARTUP_STARTED=')));
+  const progressArgs = launchArgs(store, config, ['pi'], { cwd: config.root, image: 'test', startupStarted: 1234 }).args;
+  assert.ok(progressArgs.includes('PIS_STARTUP_STARTED=1234'));
   assert.ok(args.includes('/work/project:/work/project:rw'));
   assert.ok(args.includes(`/storage/projects/abc12/state:${CONTAINER_HOME}:rw`));
   assert.deepEqual(args.slice(-4), ['/opt/pis/image-entry.mjs', 'bash', '-c', 'echo "$HOME"']);

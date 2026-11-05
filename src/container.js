@@ -96,7 +96,7 @@ export async function ensureImage(store, config, { rebuild = false } = {}) {
   return plan;
 }
 
-export function launchArgs(store, config, command, { cwd, image, proxy, aptRequests, network, selinux = false, tty = Boolean(process.stdin.isTTY && process.stdout.isTTY && interactiveOutput(command)), stdinIsTTY = Boolean(process.stdin.isTTY), uid = process.getuid(), gid = process.getgid(), name = `pis-${config.id}-${randomBytes(5).toString('hex')}` } = {}) {
+export function launchArgs(store, config, command, { cwd, image, proxy, aptRequests, startupStarted, network, selinux = false, tty = Boolean(process.stdin.isTTY && process.stdout.isTTY && interactiveOutput(command)), stdinIsTTY = Boolean(process.stdin.isTTY), uid = process.getuid(), gid = process.getgid(), name = `pis-${config.id}-${randomBytes(5).toString('hex')}` } = {}) {
   assert(network === undefined || network === 'none', 'Unsupported internal network override.');
   const workdir = within(config.root, cwd) ? cwd : config.root;
   const state = path.join(store.projectDir(config.id), 'state');
@@ -115,6 +115,7 @@ export function launchArgs(store, config, command, { cwd, image, proxy, aptReque
     '--volume', `${config.root}:${config.root}:rw${sharedLabel}`,
     '--volume', `${state}:${CONTAINER_HOME}:rw${privateLabel}`];
   for (const mount of config.mounts) args.push('--volume', `${mount.source}:${mount.source}:${mount.access === 'read-write' ? 'rw' : 'ro'}${sharedLabel}`);
+  if (startupStarted) args.push('--env', `PIS_STARTUP_STARTED=${startupStarted}`);
   if (aptRequests) args.push('--env', 'PIS_APT_SOCKET=/pis/apt/request.sock', '--volume', `${aptRequests.directory}:/pis/apt:ro${sharedLabel}`);
   if (config.credentials.proxy) {
     assert(proxy, 'Proxy-enabled launches require an active host proxy.');
@@ -139,8 +140,13 @@ export async function launch(store, config, options) {
     // Re-read and validate after acquiring exclusivity (configuration may have changed).
     config = store.load(config.id);
     directory(config.root);
+    const startupStarted = Date.now();
+    const showProgress = !options.stdio && process.stderr.isTTY;
+    const progress = message => { if (showProgress) console.error(`pis: [${((Date.now() - startupStarted) / 1000).toFixed(1)}s] ${message}`); };
+    progress('Checking Podman and sandbox image…');
     const info = inspectPodman();
     const plan = await ensureImage(store, config, options);
+    progress('Image ready.');
     if (options.buildOnly) return 0;
     const command = options.mode === 'bash' ? ['bash', '-i'] : options.mode === 'exec' ? options.args : piCommand(options.args, options.fresh);
     if (options.mode === 'pi' && !config.credentials.proxy) {
@@ -153,9 +159,13 @@ export async function launch(store, config, options) {
     try {
       // Proxy and package proposal sockets are separate. Package proposals cannot
       // carry a host approval; the user is prompted only after Podman exits.
-      if (config.credentials.proxy) proxy = await prepareProxy(store, config, { upstream: options.proxyUpstream, codexAuthFetch: options.codexAuthFetch });
+      if (config.credentials.proxy) {
+        progress(`Preparing ${config.credentials.proxy.provider} credential proxy…`);
+        proxy = await prepareProxy(store, config, { upstream: options.proxyUpstream, codexAuthFetch: options.codexAuthFetch });
+      }
       if (options.mode === 'pi' && interactiveOutput(command) && !options.stdio && process.stdin.isTTY && process.stdout.isTTY && process.stderr.isTTY) aptRequests = await startAptRequestServer(config, store);
-      invocation = launchArgs(store, config, command, { cwd: options.cwd, image: plan.image, proxy, aptRequests, network: options.network, selinux: info.host.security.selinuxEnabled });
+      invocation = launchArgs(store, config, command, { cwd: options.cwd, image: plan.image, proxy, aptRequests, startupStarted: showProgress ? startupStarted : undefined, network: options.network, selinux: info.host.security.selinuxEnabled });
+      progress('Starting container (first start after a build can take longer)…');
       status = await run('podman', invocation.args, { env: podmanEnvironment(config), stdio: options.stdio || 'inherit' });
       proposal = aptRequests?.proposal;
     } finally {

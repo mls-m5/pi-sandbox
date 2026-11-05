@@ -58,7 +58,7 @@ export OPENAI_API_KEY='your-key'
 pis
 ```
 
-The first launch builds an image with Node, Pi, Bash, Git, ripgrep, and CA certificates. Later launches reuse it. `pis --new` registers the directory; it does not launch Pi or build the image.
+The first launch builds an image with Node, Pi, Bash, Git, ripgrep, and CA certificates. Later launches reuse it. Interactive terminal launches print startup stages with elapsed time on stderr: image ready, credential proxy preparation, container start, then Pi/session/extension loading. The build completion line does not mean Pi is ready yet. These timings help locate a slow stage; they are not an estimate of remaining time. Protocol/custom-stdio launches do not enable startup progress. `pis --new` registers the directory; it does not launch Pi or build the image.
 
 By default `pis` runs **`pi --tui-mode regular --continue`**. Pi uses sandbox-local state, not your host Pi installation or configuration. Pass an explicit `--tui-mode` after the wrapper separator to choose another Pi TUI mode. New projects keep the host OpenAI key outside the container and give Pi a temporary dummy key. Existing projects retain their previous credential settings; see [enabling the proxy](docs/proxy.md#enable-it) to switch.
 
