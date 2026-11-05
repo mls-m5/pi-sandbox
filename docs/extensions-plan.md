@@ -46,7 +46,7 @@ pis -- list                # Image sources, then additional sandbox-state packag
 pis --show                 # Full effective project configuration
 ```
 
-Use `"extensions": []` to opt out. Missing fields receive the two defaults; explicit existing arrays are never appended to. Removing one entry keeps it removed, including on later configuration loads. Changing the program's defaults does not upgrade explicitly stored package versions.
+Use `"extensions": []` to opt out. Missing fields receive the current default (`pi-web-access`); explicit existing arrays are never appended to. Removing one entry keeps it removed, including on later configuration loads. Changing the program's defaults does not upgrade explicitly stored package versions.
 
 ## Supported specifications
 
@@ -117,7 +117,7 @@ Manual packages and project-local extensions retain Pi's normal trust/discovery 
 
 Fast tests cover source parsing/injection rejection, configuration completion, schema emission, preserving explicit choices, package startup arguments, web settings, and the narrow usage fetch adapter.
 
-The real-Podman Codex integration builds both default npm packages, verifies their installed versions and web tool registration, exercises a real Pi tool call to `pi-web-access`, obtains Codex quota numbers through the compatibility adapter, and completes a streamed conversation. Container networking is disabled and host services are fakes; no paid model/search calls are made. Live provider behavior and the graphical quota footer still need real-account/terminal verification.
+The real-Podman Codex integration builds the default npm package, verifies its installed version and web tool registration, exercises a real Pi tool call to `pi-web-access`, obtains Codex quota numbers through the compatibility adapter, and completes a streamed conversation. Container networking is disabled and host services are fakes; no paid model/search calls are made. The former graphical Pi quota footer is no longer a default; the separate host GNOME indicator still needs graphical lifecycle verification. Live provider behavior requires real-account verification.
 
 Remaining possibilities:
 

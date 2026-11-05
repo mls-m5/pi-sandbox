@@ -7,6 +7,7 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
+import {usageWindows} from './usage-format.js';
 
 const REFRESH_SECONDS = 300;
 
@@ -26,20 +27,27 @@ class UsageIndicator extends PanelMenu.Button {
             this._refresh();
             return GLib.SOURCE_CONTINUE;
         });
+        this._tick = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 60, () => {
+            if (this._data) this._renderUsage();
+            return GLib.SOURCE_CONTINUE;
+        });
         this._refresh();
     }
 
     _refresh() {
-        if (this._process) return;
+        if (this._destroyed || this._process) return;
         try {
             const pis = GLib.build_filenamev([GLib.get_home_dir(), '.local', 'bin', 'pis']);
             this._process = Gio.Subprocess.new([pis, '--codex-usage'], Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_PIPE);
-            this._process.communicate_utf8_async(null, null, (_process, result) => {
+            this._process.communicate_utf8_async(null, null, (process, result) => {
                 try {
-                    const [, stdout, stderr] = this._process.communicate_utf8_finish(result);
-                    if (!this._process.get_successful()) throw new Error(stderr.trim() || 'pis failed');
+                    const [, stdout, stderr] = process.communicate_utf8_finish(result);
+                    if (this._destroyed) return;
+                    if (!process.get_successful()) throw new Error(stderr.trim() || 'pis failed');
                     this._update(JSON.parse(stdout));
                 } catch (error) {
+                    if (this._destroyed) return;
+                    this._data = null;
                     this._label.set_text('Codex —');
                     this._status.label.set_text(`Unavailable: ${error.message}`);
                 } finally {
@@ -47,21 +55,32 @@ class UsageIndicator extends PanelMenu.Button {
                 }
             });
         } catch (error) {
+            this._process = null;
+            this._data = null;
+            this._label.set_text('Codex —');
             this._status.label.set_text(`Unavailable: ${error.message}`);
         }
     }
 
     _update(data) {
-        const windows = ['primary_window', 'secondary_window']
-            .map(name => data.rate_limit?.[name])
-            .filter(window => window && Number.isFinite(window.used_percent))
-            .map(window => Math.max(0, Math.min(100, 100 - window.used_percent)));
-        if (!windows.length) throw new Error('No quota windows returned');
-        this._label.set_text(`Codex ${windows.map(value => `${Math.round(value)}%`).join(' / ')}`);
-        this._status.label.set_text(`Remaining: ${windows.map(value => `${value.toFixed(1)}%`).join(' / ')}`);
+        const fetchedAt = Date.now();
+        if (!usageWindows(data, fetchedAt, fetchedAt).length)
+            throw new Error('No quota windows returned');
+        this._data = data;
+        this._fetchedAt = fetchedAt;
+        this._renderUsage();
+    }
+
+    _renderUsage() {
+        const windows = usageWindows(this._data, this._fetchedAt);
+        this._label.set_text(`Codex ${windows.map(window => `${Math.round(window.remaining)}% (${window.resetIn})`).join(' / ')}`);
+        this._status.label.set_text(windows.map(window => `${window.label}: ${window.remaining.toFixed(1)}% left · resets in ${window.resetIn}`).join('\n'));
     }
 
     destroy() {
+        this._destroyed = true;
+        this._data = null;
+        if (this._tick) GLib.source_remove(this._tick);
         if (this._timeout) GLib.source_remove(this._timeout);
         if (this._process) this._process.force_exit();
         super.destroy();

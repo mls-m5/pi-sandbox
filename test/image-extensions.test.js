@@ -21,15 +21,15 @@ test('startup progress is opt-in, timed and absent from protocol output by defau
 });
 
 test('image startup loads installed package directories without remote install requests', () => {
-  const command = imageCommand(['pi', '--continue', '-p', 'hello'], extensions);
+  const command = imageCommand(['pi', '--continue', '-p', 'hello'], extensions, {});
   assert.deepEqual(command.slice(0, 3), ['/usr/local/bin/pis-pi-real', '--extension', extensions[0].path]);
   assert.equal(command.filter(value => value === '--extension').length, 1);
   assert.deepEqual(command.slice(-3), ['--continue', '-p', 'hello']);
   assert.deepEqual(imageCommand(['pi', '--continue'], extensions, { PIS_APT_SOCKET: '/pis/apt/request.sock' }), ['/usr/local/bin/pis-pi-real', '--extension', extensions[0].path, '--extension', '/opt/pis/request-apt.mjs', '--continue']);
   assert.deepEqual(imageCommand(['pi', '--no-extensions'], extensions, { PIS_APT_SOCKET: '/pis/apt/request.sock' }), ['/usr/local/bin/pis-pi-real', '--no-extensions']);
-  assert.deepEqual(imageCommand(['pi', '-ne', '-e', '/project/probe.ts'], extensions), ['/usr/local/bin/pis-pi-real', '-ne', '-e', '/project/probe.ts']);
-  assert.deepEqual(imageCommand(['pi', 'install', 'npm:foo'], extensions), ['/usr/local/bin/pis-pi-real', 'install', 'npm:foo']);
-  assert.deepEqual(imageCommand(['bash', '-i'], extensions), ['bash', '-i']);
+  assert.deepEqual(imageCommand(['pi', '-ne', '-e', '/project/probe.ts'], extensions, {}), ['/usr/local/bin/pis-pi-real', '-ne', '-e', '/project/probe.ts']);
+  assert.deepEqual(imageCommand(['pi', 'install', 'npm:foo'], extensions, {}), ['/usr/local/bin/pis-pi-real', 'install', 'npm:foo']);
+  assert.deepEqual(imageCommand(['bash', '-i'], extensions, {}), ['bash', '-i']);
 });
 
 test('web settings fill proxy-compatible defaults but preserve explicit preferences and invalid files', t => {

@@ -271,11 +271,11 @@ Verify support and practical behavior on the target Linux system rather than ass
 
 ### Credential modes
 
-New projects use `credentials.proxy` for OpenAI and have an empty `credentials.env`. The host reads the key from the named variable, creates a private per-run Unix-socket HTTP proxy, and gives the container only a random temporary dummy capability. A container-local relay listens on loopback; no host TCP port is opened.
+New projects use `credentials.proxy.provider: "openai-codex"` with global host OAuth and an empty `credentials.env`. API-key routes remain explicit alternatives. The host creates a private per-run Unix-socket HTTP proxy and gives the container only a temporary dummy capability. A container-local relay listens on loopback; no host TCP port is opened.
 
 Read-only per-run `models.json` and `auth.json` overlays redirect Pi's selected provider to the relay and replace its OpenAI credentials without changing existing files. Runtime files contain no host-supplied key and are removed on normal shutdown. Host reads of sandbox-controlled state reject symlinked directories/files and non-regular or oversized JSON files.
 
-OpenAI API-key mode fixes the upstream to `https://api.openai.com` and allows Responses/Chat Completions/model-list routes. Berget fixes the upstream to `https://api.berget.ai` and initially allows only Chat Completions. Custom API profiles select a host-trusted HTTPS `/v1` base URL with public-DNS pinning and only Chat Completions; profile credentials/endpoints never enter project configuration. Codex mode (`provider: "openai-codex"`, without `keyEnv`) uses private host OAuth sign-in/import/refresh and only `https://chatgpt.com/backend-api/codex/responses`, injecting the real account header on the host. Pi receives a synthetic JWT, and its automatic transport falls back to SSE; bounded zstd requests are decoded before validation. See [Codex setup](codex.md).
+OpenAI API-key mode fixes the upstream to `https://api.openai.com` and allows Responses/Chat Completions/model-list routes. Berget fixes the upstream to `https://api.berget.ai` and allows only Chat Completions. Mistral fixes it to `https://api.mistral.ai` and supports Pi's native Chat Completions path with host API-key storage. Custom API profiles select a host-trusted HTTPS `/v1` base URL with public-DNS pinning and only Chat Completions; profile credentials/endpoints never enter project configuration. Codex mode (`provider: "openai-codex"`, without `keyEnv`) uses private host OAuth sign-in/import/refresh and only `https://chatgpt.com/backend-api/codex/responses`, injecting the real account header on the host. Pi receives a synthetic JWT, and its automatic transport falls back to SSE; bounded zstd requests are decoded before validation. See [Codex setup](codex.md).
 
 All proxy modes reject redirects, rebuild request headers, and bound request size, response size, time, concurrency, and per-run request count. They support streaming and cancellation and do not log payloads or credentials. See [proxy configuration and limits](proxy.md).
 
@@ -291,6 +291,10 @@ The initial runtime allows outbound networking for model APIs and development wo
 
 Stronger egress controls, host/LAN restrictions, and proxy-only access are a separate tested milestone.
 
+### User-approved host actions
+
+Image-owned tools can propose apt package additions or an exact-commit Git push. The container cannot approve them. The host stops the sandbox, checks that it is gone, presents a colored two-digit confirmation dialog, then applies only the validated action. Successful actions restart Pi with one English user message asking it to continue; this consumes model tokens. Host Git runs from a fresh verified bare snapshot with controlled configuration, not the shared repository. See [host actions](host-actions.md) and [the development handover](handover.md) for detailed contracts and verification limits.
+
 ## 8. Open implementation decisions
 
 - Version update workflow and a broader supported Podman compatibility matrix; the current implementation is tested on Podman 4.9.3.
@@ -298,6 +302,6 @@ Stronger egress controls, host/LAN restrictions, and proxy-only access are a sep
 - Concurrent Pi invocations within one project are currently rejected with a per-project lock; independent projects can run concurrently. Crash-left locks require explicit manual recovery.
 - Mount overlap is currently rejected entirely, including overlaps with project root, pis storage, and reserved container paths; evaluate whether narrower exceptions are useful.
 - Resource-limit defaults and read-only root filesystem feasibility.
-- Project deletion, image cleanup, and state-retention commands; these must never delete project source files accidentally.
+- Project deletion and state-retention commands remain future work. Conservative old-image cleanup is implemented (`--prune` and default background scheduling); it never deletes project source or sandbox state. See README for retention and locking.
 - Configuration schema migration strategy; XDG/PIS_HOME storage overrides are implemented.
 - npm-source image extensions and configuration completion are implemented. Git/local build sources, transitive dependency update/rollback, and advanced package reconciliation remain future work; see [extension setup and remaining plans](extensions-plan.md).

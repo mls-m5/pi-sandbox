@@ -54,13 +54,13 @@ Alternatively, run `./bin/pis.js` directly, use `npm exec -- pis`, or install th
 cd ~/Prog/my-app
 pis --new --name my-app
 pis --edit
-export OPENAI_API_KEY='your-key'
+pis --login-codex              # Once on the host; shared by projects in this PIS_HOME
 pis
 ```
 
 The first launch builds an image with Node, Pi, Bash, Git, ripgrep, and CA certificates. Later launches reuse it. Interactive terminal launches print startup stages with elapsed time on stderr: image ready, credential proxy preparation, container start, then Pi/session/extension loading. The build completion line does not mean Pi is ready yet. These timings help locate a slow stage; they are not an estimate of remaining time. Protocol/custom-stdio launches do not enable startup progress. `pis --new` registers the directory; it does not launch Pi or build the image.
 
-By default `pis` runs **`pi --tui-mode regular --continue`**. Pi uses sandbox-local state, not your host Pi installation or configuration. Pass an explicit `--tui-mode` after the wrapper separator to choose another Pi TUI mode. New projects keep the host OpenAI key outside the container and give Pi a temporary dummy key. Existing projects retain their previous credential settings; see [enabling the proxy](docs/proxy.md#enable-it) to switch.
+By default `pis` runs **`pi --tui-mode regular --continue`**. Pi uses sandbox-local state, not your host Pi installation or configuration. Pass an explicit `--tui-mode` after the wrapper separator to choose another Pi TUI mode. New projects use host Codex OAuth and give Pi a temporary dummy capability; real credentials stay outside the container. Existing projects retain their previous credential settings; see [enabling the proxy](docs/proxy.md#enable-it) to switch.
 
 ```sh
 pis -- --model <model-id>       # Continue with additional Pi arguments
@@ -95,7 +95,7 @@ Use `pis --edit` to set `credentials` to:
 }
 ```
 
-Remove any old `keyEnv` field; keep the rest of the project configuration. Then select `pis -- --model openai-codex/<model-id>`. The real access/refresh tokens remain in private host storage and refresh there automatically; Pi and extensions get only a synthetic proxy token. `pis --logout-codex` removes the shared host sign-in.
+Remove any old `keyEnv` field; keep the rest of the project configuration. Start `pis` and select a Codex model using `/model`, or pass `pis -- --model openai-codex/<model-id>` explicitly. The real access/refresh tokens remain in private host storage and refresh there automatically; Pi and extensions get only a synthetic proxy token. `pis --logout-codex` removes the shared host sign-in.
 
 Prefer a dedicated sign-in: importing copies rotating tokens without synchronizing the original client. See [Codex setup, imports, and limitations](docs/codex.md). Live subscription sign-in is not covered by the fake-service tests.
 
@@ -301,7 +301,12 @@ Real-container coverage includes package/custom instruction builds, absolute wor
 
 ## Further documentation
 
-- [API proxy: OpenAI, Berget, custom profiles, and security](docs/proxy.md)
+- [Start here when continuing development inside a container](docs/handover.md)
+- [User-approved apt and host Git operations](docs/host-actions.md)
+- [Planned host Git identity defaults](docs/git-identity-plan.md)
+- [Known issues and resolved CNI warning](docs/known-issues.md)
+- [GNOME Codex quota indicator](gnome-codex-usage/README.md)
+- [API proxy: OpenAI, Berget, Mistral, custom profiles, and security](docs/proxy.md)
 - [Berget/API-key implementation notes](docs/berget-plan.md)
 - [Codex subscription sign-in and proxy](docs/codex.md)
 - [Image extension setup and remaining plans](docs/extensions-plan.md)
