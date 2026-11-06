@@ -6,13 +6,21 @@ This file summarizes the recent design decisions and operational context. Start 
 
 ### Startup, defaults and models
 
-- `pis` wraps pinned Pi 1.2.0 in rootless Podman. Experimental official Claude Code 2.1.318 support is available with `--agent claude` or project `agent: "claude"`; Pi remains the default. Host Node must be >=22.19; container base is pinned Node 24.
+- `pis` wraps pinned Pi 1.5.0 in rootless Podman. Experimental official Claude Code 2.1.318 support is available with `--agent claude` or project `agent: "claude"`; Pi remains the default. Host Node must be >=22.19; container base is pinned Node 24.
 - Default Pi invocation: `pi --tui-mode regular --continue`. `--fresh` removes implicit continuation; explicit TUI/session options override defaults. Management subcommands do not receive these defaults.
 - New projects use the **openai-codex host OAuth proxy**, not the paid OpenAI API-key route. Existing explicit configurations are preserved, not migrated automatically.
 - An empty proxy `models` list allows any model through that provider. The user can start `pis` and choose `/model`; a model CLI argument is not required. A saved/continued session may restore a previously selected model.
 - New project `image.packages` defaults: `build-essential`, `python3`. Existing lists, including explicit `[]`, remain unchanged.
 - Interactive startup logs elapsed times for image readiness, proxy preparation, container startup and Pi/session/extension loading. These are stage timings, **not** a reliable remaining-time estimate. They are kept out of default noninteractive/custom-stdio protocol runs.
 - `project.json` accepts `//` and `/* ... */` comments. Normalization/edit-save can remove them. This is comment support, not preservation or full JSON5/trailing-comma support.
+
+### Pi/plugin upgrade and future automatic maintenance
+
+- Image Pi pin is now **1.5.0** (npm latest checked during this work); running containers are never updated in place. The next host launch builds/selects the new fingerprint. Existing explicit extension versions/arrays remain untouched; default Web Access is still 0.40.0.
+- Image approval tools now import `Type` from `typebox`, as recommended by Pi 1.5. A new opt-in `npm run test:pi-compat` executes an already-installed candidate CLI against local fake Codex/proposal services, through our actual proxy/Unix relay. It checks synthetic auth, schema bounds, tool registration and `agent_settled`. It passed with real Pi 1.5.0 and the real image Web Access 0.40.0, without any live model requests. The child has fresh fake auth and a network guard; this is not an OS sandbox for untrusted candidate code. Full Podman/TUI/real-account gates remain separate.
+- The old `gpt-5.3-codex-spark` fixture was removed from upstream's Codex catalogue; the integration fixture now selects `gpt-6-luna`. Do not silently rewrite user models or allowlists. A user may need to select a supported model with `/model` after upgrade.
+- `pi-continue-watchdog` requires Pi >=1.3.0, now satisfied, but is **not installed/enabled/verified** in user state. Its Git-pinned utils/private runtime needs a package-local preparation script; current npm-only image declarations cannot represent that Git source. Do not enable arbitrary scripts or install on the host to work around it. Watchdog private decisions, budgets and our quota continuation need joint verification before automatic adoption.
+- A proposed managed-stable updater is documented in [updates-plan.md](updates-plan.md): daily metadata checks, exact release/dependency locks, credential-free isolated candidate builds/tests, next-launch atomic promotion, known-good fallback and state-aware rollback. **No automatic updater or new update-policy config is implemented/enabled.** Preserve exact user pins unless explicitly opted into movement. Do not execute candidate code, package scripts or generic Git commands on the host. Do not misuse Pi 1.5's `selfUpdateCommand` as a host shell bridge.
 
 ### Credentials and spending
 
@@ -125,6 +133,7 @@ Exact backup location, diagnosis and restoration instructions: [Known issues](kn
 5. Verify host SSH/HTTPS push authentication interactively, including non-fast-forward rejection. The real transfer test is local/offline; no external remote was pushed during development.
 6. Check graphical GNOME enable/disable/refresh behavior, stale data and failure presentation.
 7. Continue conservative cleanup testing across concurrent launches/edits; never broaden pruning to host data or Buildah workspaces silently.
+8. **Stale-lock recovery implemented:** host `pis --unlock [--dry-run]` checks global registry and selected/current project locks before normal registry acquisition. Only proven-dead owners are released; project recovery requires a local rootless Podman inventory with no remaining project container. Registry repair needs no Podman and is independent of unrelated running projects. A kernel `flock` serializes recoveries and releases on crash; files are private/regular/bounded, file identity is rechecked with the original inode held open, live/unknown owners are refused. New locks record boot/start stamps; old PID-only locks work conservatively. `withLock` cleanup never deletes a replacement file. No force option, container deletion or host-control tool was added. Ten tests, including real CLI/flock and crash guard release, pass; broader host orphan-container scenarios still need manual verification.
 
 ## Verification and working inside a container
 
@@ -133,7 +142,7 @@ npm run check             # Syntax + fast tests; no paid model calls
 npm run test:integration  # Opt-in rootless Podman builds/runs against fake services
 ```
 
-Latest check including Claude and Codex wait/resume suites: **114 tests: 109 passed, 5 skipped**. The added real-Podman Claude suite is opt-in and was not run here. The skipped suites need real Podman; availability inside a sandbox is not assumed. The Git tests include a real local bare-repo transfer with a test-only file transport substitution, not external credentials/network pushes. Mistral live model access, host SSH auth and complete interactive approvals were not verified end-to-end.
+Latest ordinary check including the optional Pi compatibility suite: **125 tests: 119 passed, 6 skipped**. The extra skipped suite needs `PIS_PI_PACKAGE`; running `test:pi-compat` separately passed with real Pi 1.5.0 plus Web Access 0.40.0. The remaining five skipped suites need real Podman. The added real-Podman Claude suite is opt-in and was not run here. Podman availability inside a sandbox is not assumed. The Git tests include a real local bare-repo transfer with a test-only file transport substitution, not external credentials/network pushes. Mistral live model access, host SSH auth and complete interactive approvals were not verified end-to-end.
 
 Inside a normal sandbox you can read/edit the shared checkout and run fast tests. In Pi proxy mode you do **not** have host project.json, credentials, GNOME Shell or Podman control access. Claude mode intentionally exposes a project-specific copy of subscription credentials, not host originals. Use the image-owned approval tools to request supported host actions; if they are unavailable, ask the user to restart the host wrapper with an updated image or perform the step in a host terminal. Do not mount host home, SSH agents or Podman sockets to bypass this boundary.
 

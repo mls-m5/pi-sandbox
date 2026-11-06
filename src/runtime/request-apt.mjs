@@ -1,6 +1,6 @@
 // Trusted image-owned Pi extension. The container may suggest host actions, never approve them.
 import net from 'node:net';
-import { Type } from '@earendil-works/pi-ai';
+import { Type } from 'typebox';
 
 async function requestHostAction(data, ctx) {
   const accepted = await new Promise((resolve, reject) => {

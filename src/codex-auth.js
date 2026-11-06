@@ -5,7 +5,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { assert, withLock, writeJson } from './util.js';
 import { codexUsageSummary } from './codex-usage.js';
 
-// Matches Pi 1.2's OpenAI Codex device authorization flow. No credentials are
+// Matches Pi 1.5's OpenAI Codex device authorization flow. No credentials are
 // resolved through a container, shell command, project extension, or host Pi.
 const AUTH_ORIGIN = 'https://auth.openai.com';
 const CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann';

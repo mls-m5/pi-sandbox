@@ -4,6 +4,7 @@ import { randomBytes } from 'node:crypto';
 import { createInterface } from 'node:readline/promises';
 import { Store } from './store.js';
 import { pruneImages } from './prune.js';
+import { unlockLocks } from './locks.js';
 import { getCodexUsage, hasCodexCredential, importCodexCredential, loginCodex, logoutCodex } from './codex-auth.js';
 import { apiProfileStatus, promptApiProfile, logoutApiProfile, readApiProfile } from './api-auth.js';
 import { validate } from './config.js';
@@ -28,6 +29,7 @@ Usage:
   pis [--project ID_OR_NAME] --extensions-list
   pis --doctor
   pis --prune [--dry-run]           # old pis images only; no project data
+  pis [--project ID_OR_NAME] --unlock [--dry-run] # recover only proven stale locks
   pis --login-codex                 # global host sign-in
   pis --import-codex FILE            # global host sign-in
   pis --logout-codex                 # remove global host sign-in
@@ -58,6 +60,8 @@ or PIS_CLAUDE_BIN set to its absolute executable path. No host home is mounted.
 Old pis images are cleaned in the background after builds by default.
 --prune previews with --dry-run; keeps current/previous, recent and used images.
 PIS_AUTO_PRUNE=0 disables automatic cleanup; project data is never pruned.
+--unlock checks the global registry lock and current project's lock on the host.
+Live/unknown owners and project containers are never force-stopped or unlocked.
 
 Storage: $PIS_HOME, otherwise $XDG_DATA_HOME/pis or ~/.local/share/pis.
 New projects use the global host Codex OAuth proxy. Existing projects are unchanged.
@@ -102,7 +106,7 @@ export function parse(argv) {
       assert(!options.fresh, 'Repeated option: --fresh'); options.fresh = true;
     } else if (['--bash', '--exec'].includes(key) && equals === -1) {
       assert(!mode, 'Choose either --bash or --exec.'); mode = key.slice(2);
-    } else if (['--new', '--list', '--edit', '--check', '--show', '--build', '--rebuild', '--extensions-list', '--doctor', '--prune', '--login-codex', '--logout-codex', '--login-claude', '--logout-claude', '--login-mistral', '--logout-mistral', '--codex-usage', '--login-status', '--help', '-h', '--version'].includes(key) && equals === -1) {
+    } else if (['--new', '--list', '--edit', '--check', '--show', '--build', '--rebuild', '--extensions-list', '--doctor', '--prune', '--unlock', '--login-codex', '--logout-codex', '--login-claude', '--logout-claude', '--login-mistral', '--logout-mistral', '--codex-usage', '--login-status', '--help', '-h', '--version'].includes(key) && equals === -1) {
       assert(!action, 'Choose only one management action.'); action = key === '-h' ? 'help' : key.slice(2);
     } else throw new Error(`Unknown pis option: ${token}. Pass Pi/Claude arguments after --; see pis --help.`);
   }
@@ -113,7 +117,7 @@ export function parse(argv) {
   assert(!options.autoWaitCodex || (!action && !mode && (!options.agent || options.agent === 'pi')), '--auto-wait-codex is only valid for a normal Pi launch.');
   assert(!options.waitCodex || (!action && !mode && !options.fresh && !args.length && (!options.agent || options.agent === 'pi')), '--wait-codex is only valid for a normal Pi launch without --fresh or trailing arguments.');
   assert(!options.name || action === 'new', '--name is only valid with --new.');
-  assert(!options.dryRun || action === 'prune', '--dry-run is only valid with --prune.');
+  assert(!options.dryRun || ['prune', 'unlock'].includes(action), '--dry-run is only valid with --prune or --unlock.');
   assert(!mode || !action, 'Shell/exec modes cannot be combined with management actions.');
   assert(!options.fresh || (!action && !mode), '--fresh is only valid when running an agent.');
   assert(!args.length || (!action && mode !== 'bash'), 'Trailing arguments are only valid for an agent or --exec.');
@@ -163,6 +167,7 @@ export async function main(argv = process.argv.slice(2)) {
   assert(process.getuid() !== 0, 'Run pis as your normal user, not root or sudo.');
   const store = new Store();
   const cwd = directory(process.cwd());
+  if (options.action === 'unlock') return unlockLocks(store, { cwd, project: options.project, dryRun: Boolean(options.dryRun) });
   if (options.action === 'prune') {
     const result = await pruneImages(store, { dryRun: Boolean(options.dryRun) });
     console.log(JSON.stringify({ dryRun: Boolean(options.dryRun), ...result }, null, 2));

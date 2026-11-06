@@ -232,7 +232,7 @@ pis --build                    # Ensure the configured image exists
 pis --rebuild                  # Rebuild without cached build steps
 ```
 
-The Node base image is digest-pinned and Pi is pinned to 1.2.0. apt repositories and npm transitive dependencies are not fully locked, so uncached builds are not guaranteed to be bit-for-bit reproducible. Updating pinned versions currently requires a source change in `src/container.js`.
+The Node base image is digest-pinned and Pi is pinned to 1.5.0. apt repositories and npm transitive dependencies are not fully locked, so uncached builds are not guaranteed to be bit-for-bit reproducible. Updating pinned versions currently requires a source change in `src/container.js`. A pin change produces a new image fingerprint on the next launch; running sessions are not updated in place. Pi 1.5 changed the Codex model catalogue: if a previously saved model is missing, choose a supported model using `/model` and explicitly adjust any allowlist. [Automatic update channels and rollback](docs/updates-plan.md) are a design proposal, not an enabled background updater.
 
 ## User-approved host Git
 
@@ -305,7 +305,7 @@ Host Pi state at `~/.pi/agent` is not mounted. Conversations are stored in the p
 
 Only one build or running container per registered project is allowed at a time. Separate projects can run concurrently. Registry updates are also locked; conflicting edits are rejected rather than silently overwriting changes.
 
-If a process is forcibly killed or the machine crashes, a lock may remain. The error reports its path. Inspect the PID recorded in the lock and check for associated `pis-<project-id>-...` containers before manually removing a stale lock. Locks are deliberately not automatically stolen.
+If a process is forcibly killed or the machine crashes, recover on the **host** with `pis --unlock --dry-run`, then `pis --unlock`. It checks the global `registry.lock` and the selected/current project's `project.lock` without acquiring the stale registry lock. Only proven-dead owners are recovered; live/unknown owners, unsafe files and project locks with any remaining container are kept. Registry recovery itself needs no Podman and can succeed while an unrelated project is active. There is no force option and no container is killed/deleted. Recovery requires `/usr/bin/flock` (util-linux); its kernel guard releases automatically on process death. Normal launches never steal locks. New locks record boot/process-start identity and cleanup never removes another process's replacement lock.
 
 No project deletion or image garbage-collection command exists yet. Do not edit or delete state/configuration while its project is running. Old generated image tags can accumulate when image configuration changes.
 
@@ -331,6 +331,8 @@ Hiding keys does not prevent API spending: sandboxed commands and extensions can
 ```sh
 npm run check                  # Syntax checks + fast tests; no model calls
 npm run test:integration       # Builds and runs real rootless Podman containers
+# Optional: real installed candidate CLI, only local fake model services:
+PIS_PI_PACKAGE=/path/to/node_modules/@earendil-works/pi-coding-agent npm run test:pi-compat
 ```
 
 Integration tests require the runtime prerequisites plus `script` from util-linux. They use fake credentials and a local fake OpenAI upstream, make no paid/external model API requests, remove temporary containers/project data/image tags, and may leave reusable Podman build caches/base images.
@@ -350,6 +352,7 @@ Real-container coverage includes package/custom instruction builds, absolute wor
 - [Wait for Codex quota, then resume a saved task](docs/codex-wait.md)
 - [Claude Code mode: setup and weaker credential boundary](docs/claude-code.md)
 - [Image extension setup and remaining plans](docs/extensions-plan.md)
+- [Pi 1.5 upgrade, watchdog compatibility, and proposed automatic updates](docs/updates-plan.md)
 - [Design and configuration](docs/design.md)
 - [Implementation roadmap and acceptance tests](docs/roadmap.md)
 

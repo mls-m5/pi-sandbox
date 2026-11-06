@@ -78,16 +78,47 @@ export function readJson(file) {
   catch (error) { throw new Error(`Cannot read JSON at ${file}: ${error.message}`); }
 }
 
-export async function withLock(file, action) {
-  // Do not automatically unlink stale locks: competing recoveries can break exclusivity.
+export function processIdentity(pid = process.pid) {
+  const result = {};
   try {
-    fs.writeFileSync(file, JSON.stringify({ pid: process.pid }), { flag: 'wx', mode: 0o600 });
+    const bootId = fs.readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim();
+    if (/^[a-f0-9-]{36}$/.test(bootId)) result.bootId = bootId;
+    const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
+    const startTime = stat.slice(stat.lastIndexOf(')') + 2).trim().split(/\s+/)[19];
+    if (/^\d{1,32}$/.test(startTime)) result.startTime = startTime;
+  } catch { /* Legacy/PID-only locks remain conservatively recoverable. */ }
+  return result;
+}
+
+export function lockOwnerState(record, { kill = process.kill, identity = processIdentity } = {}) {
+  const current = identity(record.pid);
+  if (record.bootId && current.bootId && record.bootId !== current.bootId) return 'dead';
+  if (record.bootId && record.bootId === current.bootId && record.startTime && current.startTime && record.startTime !== current.startTime) return 'dead';
+  try { kill(record.pid, 0); return 'alive'; }
+  catch (error) { return error.code === 'ESRCH' ? 'dead' : 'unknown'; }
+}
+
+function removeOwnLock(file, snapshot) {
+  try {
+    const current = fs.lstatSync(file);
+    if (current.dev === snapshot.dev && current.ino === snapshot.ino) fs.unlinkSync(file);
+  } catch (error) { if (error.code !== 'ENOENT') throw error; }
+}
+
+export async function withLock(file, action) {
+  // Recovery is explicit and serialized by a kernel flock, never based on age.
+  let fd, snapshot;
+  try {
+    fd = fs.openSync(file, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, 0o600);
+    snapshot = fs.fstatSync(fd);
+    fs.writeFileSync(fd, JSON.stringify({ version: 1, pid: process.pid, nonce: randomBytes(16).toString('hex'), ...processIdentity() }));
   } catch (error) {
+    if (fd !== undefined) { try { if (snapshot) removeOwnLock(file, snapshot); } finally { fs.closeSync(fd); } }
     if (error.code !== 'EEXIST') throw error;
-    throw Object.assign(new Error(`Resource is busy (${file}). If a previous pis crashed, inspect the lock PID and remove it only after confirming no pis/container is using this project.`), { code: 'PIS_LOCKED' });
+    throw Object.assign(new Error(`Resource is busy (${file}). On the host, run pis --unlock --dry-run to inspect stale locks, then pis --unlock to recover them. Live or unverifiable owners are never removed.`), { code: 'PIS_LOCKED' });
   }
   try { return await action(); }
-  finally { fs.rmSync(file, { force: true }); }
+  finally { try { removeOwnLock(file, snapshot); } finally { fs.closeSync(fd); } }
 }
 
 export function run(program, args, options = {}) {

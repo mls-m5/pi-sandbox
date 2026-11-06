@@ -1,6 +1,6 @@
 # Image extensions and configuration completion
 
-**Implemented:** project JSON install sources, image-baked npm packages, automatic loading, a source inventory command, JSON defaults/hints, and a generated editor schema. Git/local build sources and advanced package lock/update management remain future work.
+**Implemented:** project JSON install sources, image-baked npm packages, automatic loading, a source inventory command, JSON defaults/hints, and a generated editor schema. Git/local build sources and advanced package lock/update management remain future work. The image now pins Pi 1.5.0; see [the upgrade and proposed automatic maintenance design](updates-plan.md) for verification, watchdog requirements and the distinction between managed channels and explicit pins.
 
 ## Install by source, not by path
 

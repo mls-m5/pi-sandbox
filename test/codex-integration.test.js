@@ -43,7 +43,7 @@ test('real Codex Pi provider: host refresh, synthetic JWT, compressed SSE fallba
   const root = path.join(base, 'project'); fs.mkdirSync(root);
   const store = new Store(path.join(base, 'storage'));
   const config = await store.register(root);
-  const model = 'gpt-5.3-codex-spark';
+  const model = 'gpt-6-luna';
   config.credentials = { env: [], proxy: { provider: 'openai-codex', models: [model] } };
   await store.save(config, store.load(config.id));
   const expired = fakeCodexCredential({ expires: Math.floor(Date.now() / 1000) - 10 });

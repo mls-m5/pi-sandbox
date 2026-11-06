@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { defaults } from '../src/config.js';
-import { piCommand, interactiveOutput, imagePlan, launchArgs, podmanEnvironment, CONTAINER_HOME } from '../src/container.js';
+import { piCommand, interactiveOutput, imagePlan, launchArgs, podmanEnvironment, CONTAINER_HOME, PI_VERSION } from '../src/container.js';
 
 const config = { ...defaults('abc12', '/work/project', 'app'), credentials: { env: [] } };
 const store = { projectDir: id => `/storage/projects/${id}` };
@@ -46,6 +46,8 @@ test('only image configuration affects image fingerprint', () => {
   changed.image.packages.push('curl');
   assert.notEqual(imagePlan(changed).image, first.image);
   assert.match(first.content, /npm install -g --ignore-scripts/);
+  assert.ok(first.content.includes(`@earendil-works/pi-coding-agent@${PI_VERSION}`));
+  assert.ok(!first.content.includes('@earendil-works/pi-coding-agent@latest'));
   assert.match(first.content, /image-entry\.mjs/);
   assert.match(first.content, /pi install 'npm:pi-web-access@0\.40\.0'/);
   changed.extensions = [];

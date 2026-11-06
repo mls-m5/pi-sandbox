@@ -217,7 +217,7 @@ Before launching a project:
 
 Mount, credential, formatting, and hint changes do not trigger image rebuilds. Package lists, extension install sources, generated startup helpers, and custom instruction changes do. Build failure must stop startup rather than silently running an outdated environment.
 
-`pis --build` ensures the image exists. `pis --rebuild` explicitly rebuilds with `--no-cache`. The Node 24.14.0 Bookworm-slim base is digest-pinned and Pi is pinned to 1.2.0 in source; apt packages and npm transitive dependencies are not fully locked. Updating pinned versions currently requires a source change.
+`pis --build` ensures the image exists. `pis --rebuild` explicitly rebuilds with `--no-cache`. The Node 24.14.0 Bookworm-slim base is digest-pinned and Pi is pinned to 1.5.0 in source; apt packages and npm transitive dependencies are not fully locked. Updating pinned versions currently requires a source change. Proposed automatic stable-channel resolution, candidate verification and rollback are described in [the update plan](updates-plan.md); they are not enabled yet.
 
 Packages installed manually in a disposable running container do not persist. Add permanent tools to configuration.
 

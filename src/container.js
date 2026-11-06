@@ -15,7 +15,7 @@ import { extensionManifest, IMAGE_AGENT_DIR, shellQuote } from './extensions.js'
 
 // Multi-architecture manifest digest; updates are intentional source changes.
 export const BASE_IMAGE = 'docker.io/library/node:24.14.0-bookworm-slim@sha256:d8e448a56fc63242f70026718378bd4b00f8c82e78d20eefb199224a4d8e33d8';
-export const PI_VERSION = '1.2.0';
+export const PI_VERSION = '1.5.0';
 export const CONTAINER_HOME = '/pis/home';
 const COMMANDS = new Set(['install', 'remove', 'uninstall', 'update', 'list', 'config', 'auth', 'mcp']);
 const SESSION_OPTIONS = new Set(['-c', '--continue', '-r', '--resume', '--session', '--session-id', '--fork', '--no-session']);

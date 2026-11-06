@@ -1,4 +1,4 @@
-// Image-owned Pi 1.2 extension. Real credentials and quota checks stay on the host.
+// Image-owned Pi extension (validated against the pinned Pi 1.5 API). Real credentials and quota checks stay on the host.
 import net from 'node:net';
 
 export const AUTO_RESUME_NOTICE = '[pis] The host confirmed that Codex quota was exhausted and now reports available quota again. Continue the previous task in this same session. Review the current state before repeating tool actions; do not restart completed work.';

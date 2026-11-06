@@ -105,7 +105,7 @@ Codex mode allows **POST `/backend-api/codex/responses`** and **GET `/backend-ap
 
 The host replaces `Authorization` and derives `chatgpt-account-id` from the current real token; client-supplied account headers cannot choose the billed account. `originator` and the SSE beta header are host-controlled. Only bounded session/request IDs are optionally preserved from client headers.
 
-Codex uses SSE through this proxy. Pi 1.2's automatic WebSocket transport attempt is rejected locally and falls back to SSE; no authenticated WebSocket is forwarded. You can use Pi's `transport: "sse"` setting to skip that attempt. This implementation is not a WebSocket proxy.
+Codex uses SSE through this proxy. Pi 1.5's automatic WebSocket transport attempt is rejected locally and falls back to SSE; no authenticated WebSocket is forwarded. You can use Pi's `transport: "sse"` setting to skip that attempt. This implementation is not a WebSocket proxy.
 
 Pi running on Node 24 sends zstd-compressed Codex requests. The host accepts bounded zstd input, enforces the decompressed 16 MiB limit before parsing/model checks, then sends uncompressed JSON upstream. Responses are streamed with backpressure and exact access-token redaction; long JWTs do not cause ordinary SSE frames to be buffered until completion.
 
@@ -134,7 +134,7 @@ Tests cover host device flow with mocked responses, explicit imports, private fi
 
 The real rootless Podman integration test uses Pi's actual `openai-codex` provider and a local fake OAuth/upstream service, with container networking disabled. It builds the default `pi-web-access` npm package and verifies a streamed conversation, a real `pi-web-access` tool call, sanitized quota retrieval via the usage adapter, and extensions seeing only synthetic credentials. API-key proxy and credential-free integration tests are also retained. No live account sign-in or paid subscription/model requests are performed by tests.
 
-The protocol follows the pinned Pi 1.2 implementation. Live OpenAI device authentication, backend behavior, workspace policy, and future protocol changes still require real-account verification. If OpenAI changes this protocol, update the host integration and pinned Pi compatibility together.
+The protocol follows the pinned Pi 1.5 implementation. Its device-code endpoints/client ID and dummy-token claim expectations were checked against that package, and its real CLI completed the local fake-upstream compatibility probe. Pi 1.5's Codex catalogue removed some older models; user-selected models and allowlists are not silently rewritten. Live OpenAI device authentication, backend behavior, workspace policy, and future protocol changes still require real-account verification. If OpenAI changes this protocol, update the host integration and pinned Pi compatibility together.
 
 References:
 
