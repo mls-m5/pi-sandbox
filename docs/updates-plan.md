@@ -1,4 +1,4 @@
-# Pi/plugin updates: current upgrade and proposed automatic maintenance
+# Pi/plugin updates: baseline upgrade and remaining maintenance design
 
 ## Implemented now
 
@@ -28,6 +28,10 @@ PIS_PI_WEB_ACCESS=/opt/pis/agent/npm/node_modules/pi-web-access \
 
 `test:pi-compat` fails if its target is omitted; ordinary `npm run check` skips this opt-in suite when `PIS_PI_PACKAGE` is absent. The other skipped suites need real Podman.
 
+## Implemented managed-updater slice
+
+See [updates.md](updates.md) for the implemented `updates` policy and `pis --updates on|all|off|status|check|rollback`. It is opt-in/off by default. The first slice provides daily fixed-registry resolution, stable compatible lines/48-hour aging, exact top-level SHA-512-verified installs without scripts, separate credential-free candidate builds, an actual-Pi fake-service probe in a read-only network-disabled container, later-launch activation, protected image leases, bounded private `.pi` snapshots and image-only rollback. Exact pins move only with explicit consent; Git/watchdog and state-installed plugins remain outside scope. Ordinary offline tests and the production probe against real Pi 1.5/Web Access passed; full new Podman build/probe integration is present but not run here. This is **not** implementation of every broader gate below.
+
 ## pi-continue-watchdog
 
 The current upstream watchdog requires Pi >=1.3.0, so the image's Pi-version requirement is now satisfied. **The watchdog has not been installed into a user's project, enabled by default, or verified end-to-end here.** It is a Git package, not an npm package accepted by the current image `extensions` schema.
@@ -44,13 +48,13 @@ Upstream's current package declares commit-pinned `pi-extension-utils` and a pri
 
 The watchdog makes private model decisions and can continue apparently completed work. These use model quota. Its terminal-error unlock, per-cycle continuation budget and recognition of extension-injected user messages must be tested with our `--auto-wait-codex` continuation; do not assume the two independent continuation controllers share one budget or are proven compatible. Git `master` can change while its `package.json` version remains unchanged, so updates must track commit IDs, not just a version string.
 
-## Proposed automatic maintenance — NOT implemented or enabled
+## Broader automatic-maintenance design — partially implemented
 
 The goal is no per-update user work after opting into a trusted managed channel. **Do not implement this by installing `latest` on every launch or letting a running Pi update its own root-owned installation.** Pi/plugin updates are executable-code changes, not just a freshness check.
 
 ### Policy and resolution
 
-- Add one explicit policy choice, e.g. `managed-stable` versus `manual`, with an off switch and rollback command. These are proposed names, not accepted config fields/commands today.
+- Implemented policy: `updates.enabled` and `updates.includePinnedExtensions`, with host `--updates` commands documented above. `managed-stable`/`manual` were design labels, not accepted config values. Wider channels and migration certification remain follow-up work.
 - Follow a tested release channel, with a release-age window and exact resolved versions/commits/integrities. New major versions or incompatible migrations wait for maintainer review, not blind promotion. Semver/peer ranges alone are not a compatibility or security proof.
 - Keep a private, atomic host release manifest recording active, candidate and previous-known-good Pi/plugin artifacts and verification results. Source URLs must be bounded validated public package/Git metadata endpoints, never shell strings, credentialed URLs or sandbox-selected arbitrary host paths.
 - Distinguish **managed moving sources** from deliberate exact pins/tags. Preserve explicit project choices: `extensions: []` stays empty, removed plugins stay removed, and pinned user versions do not silently become `latest`. Opting a pin into automatic movement needs an explicit policy decision once, not a silent rewrite of the JSON.
@@ -64,20 +68,20 @@ The goal is no per-update user work after opting into a trusted managed channel.
 4. Gate promotion on fast tests, the real-Pi compatibility probe, real-Podman fake-upstream tests, extension loading, and fake-backend PTY tests for approval/cancellation/quota continuation. Include the actual configured extension set, particularly watchdog private children, not only an empty Pi install. Test jobs have no live credentials or publishing tokens. Do not spend model quota as an automatic smoke test.
 5. If a release removes the user's selected model or requires an incompatible state migration, keep the old image and report the required decision instead of silently renaming models or changing providers. Routine compatible updates should need no user action; genuinely breaking/account-specific changes can still require one.
 6. Promote atomically at a safe launch boundary under the project lock. Never stop/restart a running task to update it; a long quota-waiting session keeps its original image/runtime. Never replay a task because an update completed. Show one concise version/change notice, not a model-triggering user message.
-7. Keep known-good artifacts and the last failure report. Retry failed checks/builds with backoff, not on every launch. Integrate active/candidate/previous-good leases with `--prune` before enabling automatic maintenance: current retention logic does not know these new roles.
+7. Keep known-good artifacts and the last failure report. The initial implementation retries checks at most daily and protects active/candidate/previous leases in `--prune`; corrupt leases skip the project. Wider full-dependency/Git retention remains future work.
 
 ### State and rollback
 
-Rolling back an image **does not undo** session-format or plugin-state mutations. Before activating a candidate, define private state backups/migration checks and an explicit, bounded retention policy. Keep backups out of the container and never log their contents; existing sandbox state can contain sensitive data. Do not broaden cleanup to delete source, credentials or state silently. Reject promotion if compatibility/rollback requirements cannot be met.
+Rolling back an image **does not undo** session-format or plugin-state mutations. The implemented slice takes a bounded private physical `.pi` snapshot before activation and keeps one completed backup; it has no automatic restore or migration certification, and does not cover project files, symlink targets or the rest of HOME. Broader migration/rollback guarantees remain a design goal. Keep backups out of the container and never log their contents; existing sandbox state can contain sensitive data. Do not broaden cleanup to delete source, credentials or state silently. Reject promotion if compatibility/rollback requirements cannot be met.
 
 Manually installed plugins currently live in mutable project state. Running `pi update --extensions` while another agent uses that directory is not a safe background updater. Prefer migrating opted-in managed plugins to immutable, versioned image artifacts once Git builds/preparation are supported; otherwise maintenance needs an isolated staging copy, no active session, and an atomic switch with rollback. Never install/execute a manually configured package on the host or copy all Pi settings into the host update worker.
 
 Pi 1.5 also refreshes unpinned temporary `-e npm:...` / branch-based `-e git:...` packages at startup/reload, retaining cached copies on failed checks. Our image bootstrap loads local immutable package roots instead, and ordinary manual installed packages have different update semantics. Per-launch untested moving dependencies are not a replacement for a jointly tested Pi/plugin release set.
 
-Pi 1.5 provides `PI_SELF_UPDATE_COMMAND` / `selfUpdateCommand`, but that command runs **where Pi runs — inside our container**. It is not permission to call a generic host command or expose Podman. The existing apt/Git proposal approval contracts remain unchanged. A future wrapper-managed update action needs its own narrow design, not a shell bridge through those tools.
+Pi 1.5 provides `PI_SELF_UPDATE_COMMAND` / `selfUpdateCommand`, but that command runs **where Pi runs — inside our container**. It is not permission to call a generic host command or expose Podman. The existing apt/Git proposal approval contracts remain unchanged. The implemented wrapper update worker uses fixed host-side metadata/Podman operations, never a shell bridge through those tools.
 
 ## Related follow-up: stale locks
 
-Implemented host commands: `pis --unlock --dry-run` and `pis --unlock`, optionally with `--project`. Recovery distinguishes global registry and project locks, validates private bounded metadata/owner/file identity, refuses live/unverifiable owners, and checks remaining containers before releasing project locks. A kernel `flock` serializes recovery and releases automatically after crashes; the original inode remains open while rechecking. New locks record boot/start stamps, while legacy PID-only locks remain supported conservatively. No force option, container deletion or sandbox host-control bypass. Ten offline/local CLI tests pass. Automatic update workers must not introduce unconditional stale-lock stealing or hold the global registry lock during downloads/builds.
+Implemented host commands: `pis --unlock --dry-run` and `pis --unlock`, optionally with `--project`. Recovery distinguishes global registry, project and existing update-maintenance locks, validates private bounded metadata/owner/file identity, refuses live/unverifiable owners, and checks remaining containers before releasing project locks. A kernel `flock` serializes recovery and releases automatically after crashes; the original inode remains open while rechecking. New locks record boot/start stamps, while legacy PID-only locks remain supported conservatively. No force option, container deletion or sandbox host-control bypass. Offline/local CLI tests include update-lock status, live-owner/orphan-probe refusal and recovery. Automatic update workers must not introduce unconditional stale-lock stealing or hold the global registry lock during downloads/builds.
 
 References: [Pi npm release metadata](https://registry.npmjs.org/@earendil-works/pi-coding-agent/latest), [Pi package/update docs](https://pi.dev/docs/latest/packages), [watchdog source and requirements](https://github.com/xz-dev/pi-continue-watchdog), [existing image package behavior](extensions-plan.md).

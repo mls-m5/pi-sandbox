@@ -1,6 +1,6 @@
 # Image extensions and configuration completion
 
-**Implemented:** project JSON install sources, image-baked npm packages, automatic loading, a source inventory command, JSON defaults/hints, and a generated editor schema. Git/local build sources and advanced package lock/update management remain future work. The image now pins Pi 1.5.0; see [the upgrade and proposed automatic maintenance design](updates-plan.md) for verification, watchdog requirements and the distinction between managed channels and explicit pins.
+**Implemented:** project JSON install sources, image-baked npm packages, automatic loading, a source inventory command, JSON defaults/hints, and a generated editor schema. An opt-in [managed Pi/npm updater](updates.md) now stages exact top-level integrity-checked candidates for later-launch activation and image rollback; full transitive locks and Git/local builds remain future work. The source baseline pins Pi 1.5.0; see [the upgrade and remaining maintenance design](updates-plan.md) for verification, watchdog requirements and the distinction between managed channels and explicit pins.
 
 ## Install by source, not by path
 
@@ -55,7 +55,7 @@ Use `"extensions": []` to opt out. Missing fields receive the current default (`
 - `npm:@scope/package-name@1.2.3`
 - `npm:package-name@canary`
 
-Exact versions are recommended. Unversioned packages and tags resolve during image creation, not each launch; use `pis --rebuild` to refresh them. npm's lockfile remains in the image, but clean builds do not yet have a host-managed transitive dependency lock.
+Exact versions are recommended. Unversioned packages and tags resolve during image creation, not each launch; use `pis --rebuild` or opt-in [managed updates](updates.md) to refresh them. npm's lockfile remains in the image, but clean builds do not yet have a host-managed transitive dependency lock.
 
 Duplicate package names—even with different versions—are rejected. Shell fragments, arbitrary URLs, credentialed URLs, Git sources, and local paths are rejected. Git/local source builds are future work; the first implementation deliberately supports the npm sources used by the chosen defaults.
 

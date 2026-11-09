@@ -14,7 +14,7 @@ async function podman(args) {
 }
 
 // Pure selection: no untagged layers, foreign tags, recent images or used images.
-export function pruneCandidates(images, projectId, currentImage, now = Date.now()) {
+export function pruneCandidates(images, projectId, currentImage, now = Date.now(), protectedImages = []) {
   const prefix = `localhost/pis-${projectId}:`;
   const entries = images.flatMap(image => {
     const names = image.Names || [];
@@ -26,6 +26,7 @@ export function pruneCandidates(images, projectId, currentImage, now = Date.now(
   // configured image isn't built yet, keep two existing versions for rollback.
   const current = entries.find(entry => entry.tag === currentImage);
   const keep = new Set(current ? [current.id] : []);
+  for (const entry of entries) if (protectedImages.includes(entry.tag)) keep.add(entry.id);
   for (const entry of entries) {
     if (keep.size < 2 && typeof entry.id === 'string') keep.add(entry.id);
   }
@@ -41,15 +42,19 @@ export async function pruneImages(store, { dryRun = false, automatic = false, ru
       catch (error) { if (error.code !== 'ENOENT') throw error; }
     }
     const { imagePlan } = await import('./container.js');
+    const { protectedUpdateImages } = await import('./updates.js');
     const result = { candidates: [], removed: [], skipped: [], failed: [] };
     for (const project of store.all()) {
       try {
         await store.projectLock(project.id, () => store.lock(async () => {
           // Same lock as launch/build; re-read config and inventory while held.
           const current = store.load(project.id, false);
+          let leased;
+          try { leased = protectedUpdateImages(store, project.id); }
+          catch { result.skipped.push(project.id); return; } // Unknown update leases: fail closed.
           const images = JSON.parse(await runPodman(['images', '--all', '--format', 'json']));
           if (!Array.isArray(images)) throw new Error('Invalid Podman image inventory.');
-          const candidates = pruneCandidates(images, project.id, imagePlan(current).image, now);
+          const candidates = pruneCandidates(images, project.id, imagePlan(current).image, now, leased);
           result.candidates.push(...candidates.map(entry => entry.tag));
           if (dryRun) return;
           for (const entry of candidates) {
@@ -57,7 +62,7 @@ export async function pruneImages(store, { dryRun = false, automatic = false, ru
               // Check again immediately before removal. Never force deletion and
               // never recursively prune parents that may belong to other builds.
               const latest = JSON.parse(await runPodman(['images', '--all', '--format', 'json']));
-              if (!pruneCandidates(latest, project.id, imagePlan(current).image, now).some(candidate => candidate.tag === entry.tag && candidate.id === entry.id)) {
+              if (!pruneCandidates(latest, project.id, imagePlan(current).image, now, protectedUpdateImages(store, project.id)).some(candidate => candidate.tag === entry.tag && candidate.id === entry.id)) {
                 result.skipped.push(entry.tag); continue;
               }
               await runPodman(['rmi', '--no-prune', entry.tag]);

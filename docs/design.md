@@ -215,9 +215,9 @@ Before launching a project:
 3. Fingerprint the template version, pinned dependencies, image configuration, and generated build inputs.
 4. Reuse the matching image if available; otherwise build it.
 
-Mount, credential, formatting, and hint changes do not trigger image rebuilds. Package lists, extension install sources, generated startup helpers, and custom instruction changes do. Build failure must stop startup rather than silently running an outdated environment.
+Mount, credential, formatting, and hint changes do not trigger image rebuilds. Package lists, extension install sources, generated startup helpers, and custom instruction changes do. A declared-configuration build failure must stop startup rather than silently ignoring requested settings. A separately staged optional update failure keeps the existing release; it does not replace a running agent.
 
-`pis --build` ensures the image exists. `pis --rebuild` explicitly rebuilds with `--no-cache`. The Node 24.14.0 Bookworm-slim base is digest-pinned and Pi is pinned to 1.5.0 in source; apt packages and npm transitive dependencies are not fully locked. Updating pinned versions currently requires a source change. Proposed automatic stable-channel resolution, candidate verification and rollback are described in [the update plan](updates-plan.md); they are not enabled yet.
+`pis --build` ensures the image exists. `pis --rebuild` explicitly rebuilds with `--no-cache`. The Node 24.14.0 Bookworm-slim base is digest-pinned and Pi is pinned to 1.5.0 in source; apt packages and npm transitive dependencies are not fully locked. The declared baseline is source-pinned; opt-in [managed updates](updates.md) can stage Pi patches/compatible image npm releases with exact top-level SHA-512 locks. Separate credential-free builds and network-disabled fake-service probes use an update lock, not the normal session lock. Later-launch activation preserves a bounded private `.pi` snapshot and checks current policy under a short registry lock; image rollback is not state restoration. Managed build IDs prevent a rebuilt version set from overwriting a retained image tag. This initial slice is off by default; Git, full dependency locks and broader migration/TUI certification remain in [the remaining design](updates-plan.md).
 
 Packages installed manually in a disposable running container do not persist. Add permanent tools to configuration.
 
@@ -305,7 +305,7 @@ Image-owned tools can propose apt package additions or an exact-commit Git push.
 
 ## 8. Open implementation decisions
 
-- Version update workflow and a broader supported Podman compatibility matrix; the current implementation is tested on Podman 4.9.3.
+- Real-Podman verification of the new managed-updater slice and a broader supported compatibility matrix; earlier container behavior was tested on Podman 4.9.3, not the new update flags/build path.
 - Verification on an SELinux-enforcing host. Shared project labels are implemented, but not tested there yet.
 - Concurrent Pi invocations within one project are currently rejected with a per-project lock; independent projects can run concurrently. Crash-left locks require explicit manual recovery.
 - Mount overlap is currently rejected entirely, including overlaps with project root, pis storage, and reserved container paths; evaluate whether narrower exceptions are useful.

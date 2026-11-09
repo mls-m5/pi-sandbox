@@ -29,9 +29,11 @@ export function safeMount(source, { home = os.homedir(), storage }) {
 }
 
 export function validate(config, { storage, home = os.homedir(), identity, paths = true } = {}) {
-  object(config, ['$schema', 'version', 'id', 'name', 'root', 'agent', 'image', 'mounts', 'credentials', 'extensions', 'examples', 'hints'], 'project');
+  object(config, ['$schema', 'version', 'id', 'name', 'root', 'agent', 'image', 'mounts', 'credentials', 'extensions', 'updates', 'examples', 'hints'], 'project');
   if (config.$schema !== undefined) assert(config.$schema === SCHEMA_REFERENCE, `Use ${SCHEMA_REFERENCE} for $schema.`);
   extensionManifest(config.extensions);
+  object(config.updates, ['enabled', 'includePinnedExtensions'], 'updates');
+  assert(typeof config.updates.enabled === 'boolean' && typeof config.updates.includePinnedExtensions === 'boolean', 'updates.enabled and updates.includePinnedExtensions must be booleans.');
   if (config.hints !== undefined) {
     object(config.hints, Object.keys(HINTS), 'hints');
     assert(Object.values(config.hints).every(value => typeof value === 'string'), 'hints must contain strings.');
@@ -116,8 +118,9 @@ export function completeConfig(input) {
   fill(config, {
     $schema: SCHEMA_REFERENCE, version: 1, agent: 'pi', image: {}, mounts: [],
     credentials: { env: [], proxy: { ...DEFAULT_PROXY, models: [] } },
-    extensions: DEFAULT_EXTENSIONS, examples: {}, hints: {},
+    extensions: DEFAULT_EXTENSIONS, updates: {}, examples: {}, hints: {},
   });
+  fill(config.updates, { enabled: false, includePinnedExtensions: false });
   fill(config.image, { packages: [], extraInstructions: [] });
   fill(config.credentials, { env: [] });
   if (record(config.credentials?.proxy)) {

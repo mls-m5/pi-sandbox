@@ -4,6 +4,7 @@ export const SCHEMA_REFERENCE = './project.schema.json';
 export const HINTS = {
   credentials: 'New projects default to openai-codex host OAuth. Choose OpenAI/Berget/Mistral with keyEnv or a matching host profile (not both), custom with the custom host profile, or omit proxy for credential-free launches. Direct credential forwarding is disabled; env must be []. Examples below are inert.',
   extensions: 'Pi install sources baked into the image, e.g. npm:pi-web-access@0.40.0. Use [] to disable defaults. Changes rebuild the image; no source paths or -e flags are needed.',
+  updates: 'Opt in once with pis --updates on (or all to include exact npm pins). Only tested Pi patch/npm image updates activate on later launches. Off freezes the current managed release; rollback disables automatic updates.',
   image: 'packages are apt names; extraInstructions are trusted single-line RUN instructions. Never put credentials here.',
   mounts: 'Explicit extra directories at identical absolute paths. Access defaults to read-only. The project root is already shared read-write.',
   examples: 'Documentation only: copy a value into its active field to enable it. Missing defaults/hints are restored and JSON is formatted when loaded or saved with pis --edit.',
@@ -46,6 +47,13 @@ export const PROJECT_SCHEMA = {
           },
           allOf: [{ if: { properties: { provider: { const: 'openai-codex' } } }, then: { not: { anyOf: [{ required: ['keyEnv'] }, { required: ['profile'] }] } } }, { if: { properties: { provider: { const: 'custom' } } }, then: { properties: { profile: { const: 'custom' } }, required: ['profile'], not: { required: ['keyEnv'] } } }, { not: { required: ['keyEnv', 'profile'] } }],
         },
+      },
+    },
+    updates: {
+      type: 'object', additionalProperties: false, description: HINTS.updates,
+      properties: {
+        enabled: { type: 'boolean', default: false },
+        includePinnedExtensions: { type: 'boolean', default: false, description: 'Explicit consent to follow compatible updates of exact image npm pins without rewriting their declared sources.' },
       },
     },
     extensions: { type: 'array', uniqueItems: true, default: DEFAULT_EXTENSIONS, description: HINTS.extensions, items: { type: 'string', pattern: '^npm:' } },

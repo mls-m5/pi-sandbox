@@ -31,6 +31,14 @@ function readLock(file, keepOpen = false) {
   } finally { if (fd !== undefined && (!keepOpen || !success)) fs.closeSync(fd); }
 }
 
+export function inspectLock(file) {
+  try {
+    const { owner } = readLock(file);
+    const state = lockOwnerState(owner);
+    return { status: state === 'dead' ? 'stale' : state === 'alive' ? 'locked' : 'unknown-owner', pid: owner.pid };
+  } catch (error) { return { status: error.code === 'ENOENT' ? 'absent' : 'unsafe' }; }
+}
+
 export function projectContainers(id, { execute = spawnSync } = {}) {
   const invoke = args => {
     const result = execute('podman', args, { env: maintenanceEnvironment(), encoding: 'utf8', timeout: 15_000, maxBuffer: 4 * 1024 * 1024 });
@@ -92,6 +100,9 @@ export function recoverProjectLocks(store, { cwd, project, dryRun = false, ...de
   try { assert(fs.realpathSync(dir) === dir && fs.lstatSync(dir).uid === process.getuid(), 'unsafe'); }
   catch { locks.push({ scope: 'project', status: 'blocked', reason: 'Project storage must be canonical and owned by you.' }); return { locks }; }
   locks.push(recoverLock(path.join(dir, 'project.lock'), 'project', { dryRun, projectId: selected.id, ...dependencies }));
+  const updates = path.join(dir, 'updates.lock');
+  try { fs.lstatSync(updates); locks.push(recoverLock(updates, 'updates', { dryRun, projectId: selected.id, ...dependencies })); }
+  catch (error) { if (error.code !== 'ENOENT') locks.push({ scope: 'updates', status: 'blocked', reason: 'Cannot inspect update lock.' }); }
   return { locks };
 }
 

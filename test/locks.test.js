@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { Store } from '../src/store.js';
 import { parse } from '../src/cli.js';
 import { lockOwnerState, processIdentity, withLock } from '../src/util.js';
-import { maintenanceEnvironment, projectContainers, recoverLock, recoverProjectLocks } from '../src/locks.js';
+import { maintenanceEnvironment, projectContainers, recoverLock, recoverProjectLocks, inspectLock } from '../src/locks.js';
 
 const cli = fileURLToPath(new URL('../bin/pis.js', import.meta.url));
 const dead = () => 'dead';
@@ -102,6 +102,20 @@ test('project recovery refuses remaining containers and unavailable/remote engin
   assert.deepEqual(commands.map(args => args[0]), ['info', 'ps']);
   assert.throws(() => projectContainers('abc12', { execute: () => ({ status: 0, stdout: '{"host":{"security":{"rootless":true},"serviceIsRemote":true}}' }) }), /Cannot verify/);
   assert.equal(recoverLock(file, 'project', { ownerState: dead, projectId: 'abc12', containers: () => [] }).status, 'removed');
+});
+
+test('update maintenance locks are visible and explicit recovery refuses live owners or orphan probes', async t => {
+  const { base, store } = fixture(t);
+  const root = path.join(base, 'project'); fs.mkdirSync(root); const config = await store.register(root);
+  const file = path.join(store.projectDir(config.id), 'updates.lock');
+  assert.equal(inspectLock(file).status, 'absent');
+  fs.writeFileSync(file, JSON.stringify({ pid: process.pid }), { mode: 0o600 });
+  assert.equal(inspectLock(file).status, 'locked');
+  assert.equal(recoverProjectLocks(store, { cwd: root, containers: () => assert.fail() }).locks.at(-1).status, 'blocked');
+  fs.writeFileSync(file, JSON.stringify({ pid: process.pid, bootId: '00000000-0000-0000-0000-000000000000' }));
+  assert.equal(inspectLock(file).status, 'stale');
+  assert.equal(recoverProjectLocks(store, { cwd: root, containers: () => [`pis-${config.id}-update-orphan`] }).locks.at(-1).status, 'blocked');
+  assert.equal(recoverProjectLocks(store, { cwd: root, containers: () => [] }).locks.at(-1).status, 'removed');
 });
 
 test('recovery rechecks inode/content/owner and never deletes a changed replacement', t => {

@@ -193,6 +193,7 @@ Configuration includes these editable fields. `project.json` accepts `//` and `/
   "extensions": [
     "npm:pi-web-access@0.40.0"
   ],
+  "updates": { "enabled": false, "includePinnedExtensions": false },
   "image": {
     "packages": ["build-essential", "python3", "python3-venv", "make"],
     "extraInstructions": ["RUN npm install -g typescript"]
@@ -228,11 +229,26 @@ Generated configuration also contains an **inert `examples` section**. Copy exam
 ```sh
 pis --check                    # Validate configuration and active paths
 pis --show                     # Effective settings; no credential values
-pis --build                    # Ensure the configured image exists
-pis --rebuild                  # Rebuild without cached build steps
+pis --build                    # Ensure the declared baseline image exists
+pis --rebuild                  # Rebuild/select that baseline without cached build steps
 ```
 
-The Node base image is digest-pinned and Pi is pinned to 1.5.0. apt repositories and npm transitive dependencies are not fully locked, so uncached builds are not guaranteed to be bit-for-bit reproducible. Updating pinned versions currently requires a source change in `src/container.js`. A pin change produces a new image fingerprint on the next launch; running sessions are not updated in place. Pi 1.5 changed the Codex model catalogue: if a previously saved model is missing, choose a supported model using `/model` and explicitly adjust any allowlist. [Automatic update channels and rollback](docs/updates-plan.md) are a design proposal, not an enabled background updater.
+The Node base image is digest-pinned and Pi is pinned to 1.5.0. apt repositories and npm transitive dependencies are not fully locked, so uncached builds are not guaranteed to be bit-for-bit reproducible. The source baseline changes in `src/container.js`; an opt-in managed updater can additionally stage tested Pi patch/npm plugin releases without source edits. Running sessions are never updated in place. Pi 1.5 changed the Codex model catalogue: if a previously saved model is missing, choose a supported model using `/model` and explicitly adjust any allowlist. See [managed updates and verification limits](docs/updates.md) and the [remaining design](docs/updates-plan.md).
+
+### Automatic Pi/npm image updates (opt-in)
+
+```sh
+pis --updates all       # Enable once: Pi patches + compatible image npm updates, including pins
+pis --updates on        # Or preserve exact plugin pins (keeps an existing prior 'all' choice)
+pis --updates status
+pis --updates check     # Optional immediate preparation/build, using only fake model services
+pis --updates off       # Freeze the active release; no further checks/activation
+pis --updates rollback  # Previous retained image, updates disabled; NOT a state restore
+```
+
+Checks run in a detached credential-free worker, at most daily after enable/start/exit. Exact candidates are built separately, SHA-512 checked and probed in a read-only, network-disabled container. They activate only on a later launch after a bounded private Pi-state backup. No task is interrupted/replayed and the update notice does not trigger a model turn. Default policy is off; `extensions: []` and declared sources remain unchanged. `PIS_AUTO_UPDATE=0` suppresses scheduling/activation. `--rebuild` selects the declared baseline for that invocation, not a reset of the active managed pointer.
+
+Initial scope: Pi's pinned minor line (1.5.x), compatible stable npm plugin lines, no Git/watchdog, Claude or state-installed plugin updates. Backups cover persisted `.pi`, not project files or the whole home; image rollback does not revert migrated state. Real Pi 1.5/Web Access fake-service probes passed, but the complete new Podman build path still needs host verification. [Policy, rollback, backup and test details](docs/updates.md).
 
 ## User-approved host Git
 
@@ -249,7 +265,7 @@ pis --prune --dry-run   # List eligible old pis image tags; delete nothing
 pis --prune             # Remove eligible old pis images
 ```
 
-Cleanup only considers fingerprint-tagged `localhost/pis-<id>` images for registered projects in the current `PIS_HOME`. It retains the configured image and the most recent other image (or two existing versions if the configured image is not built), images younger than 24 hours, images referenced by containers, and images shared with another repository/project. Builds, sessions and cleanup use the same project locks; configuration changes are also locked during cleanup. Busy projects are reported as skipped. Deletion never uses force or recursive parent pruning.
+Cleanup only considers fingerprint-tagged `localhost/pis-<id>` images for registered projects in the current `PIS_HOME`. It retains the configured image and the most recent other image (or two existing versions if the configured image is not built), images younger than 24 hours, images referenced by containers, and images shared with another repository/project. Managed active/candidate/previous image leases are also protected; invalid leases skip that project. Update staging tags and private Pi snapshots are not swept. Builds, sessions and cleanup use the same project locks; configuration changes are also locked during cleanup. Busy projects are reported as skipped. Deletion never uses force or recursive parent pruning.
 
 This deliberately does **not** remove arbitrary Podman images, untagged build-cache layers, Buildah workspaces, volumes, project files, sandbox homes or credentials. Podman run containers already use `--rm`. You may still need occasional separate cleanup of abandoned build workspaces and dangling layers when no builds are running. The automatic worker records its last result in `$PIS_HOME/prune-report.json` (default `~/.local/share/pis/prune-report.json`); removal failures leave images in place and do not prevent Pi from starting.
 
@@ -276,7 +292,7 @@ pis -- --no-extensions         # Diagnostic run without image/discovered extensi
 
 Use `"extensions": []` to disable all image defaults. Existing arrays are preserved, so removed packages are not silently re-added. Missing fields in older project files are completed on their next selected-project load.
 
-Supported install sources are `npm:<name>`, scoped npm packages, and optional exact versions or dist-tags. Default versions are pinned; unversioned/tagged sources require `pis --rebuild` to fetch updates. Git sources and local source copying are not implemented. Local development through explicit `pis -- -e ./tools/my-extension.ts` remains supported.
+Supported install sources are `npm:<name>`, scoped npm packages, and optional exact versions or dist-tags. Default versions are pinned; unversioned/tagged sources require `pis --rebuild` or opt-in [managed updates](docs/updates.md) to fetch updates. Git sources and local source copying are not implemented. Local development through explicit `pis -- -e ./tools/my-extension.ts` remains supported.
 
 Codex quota reads are routed through the credential proxy and return only validated usage windows and optional boolean availability flags. Web Access receives proxy-compatible defaults in sandbox `web-search.json`; existing explicit preferences are preserved. Neither package receives the real host token. See [extension setup and compatibility](docs/extensions-plan.md) for details and limitations.
 
@@ -299,15 +315,17 @@ Default: `~/.local/share/pis/`. Override with `$PIS_HOME`, or `$XDG_DATA_HOME/pi
     Containerfile               # Generated; do not edit
     build/                      # Generated Containerfile, manifest and bootstraps only
     state/                      # Persistent sandbox home and Pi state
+    updates.json                # Private managed-release receipts, when enabled
+    update-backup/              # Latest private pre-activation .pi snapshot; never mounted
 ```
 
 Host Pi state at `~/.pi/agent` is not mounted. Conversations are stored in the project's sandbox state, with a shared session directory across invocation subdirectories. Pi still uses the invocation working directory for its own context/resource discovery.
 
-Only one build or running container per registered project is allowed at a time. Separate projects can run concurrently. Registry updates are also locked; conflicting edits are rejected rather than silently overwriting changes.
+Only one ordinary build/running container per registered project is allowed at a time. Opted-in update maintenance uses a separate private context/lock and may build/probe concurrently without touching the running session. Separate projects can run concurrently. Registry updates are also locked; conflicting edits are rejected rather than silently overwriting changes.
 
-If a process is forcibly killed or the machine crashes, recover on the **host** with `pis --unlock --dry-run`, then `pis --unlock`. It checks the global `registry.lock` and the selected/current project's `project.lock` without acquiring the stale registry lock. Only proven-dead owners are recovered; live/unknown owners, unsafe files and project locks with any remaining container are kept. Registry recovery itself needs no Podman and can succeed while an unrelated project is active. There is no force option and no container is killed/deleted. Recovery requires `/usr/bin/flock` (util-linux); its kernel guard releases automatically on process death. Normal launches never steal locks. New locks record boot/process-start identity and cleanup never removes another process's replacement lock.
+If a process is forcibly killed or the machine crashes, recover on the **host** with `pis --unlock --dry-run`, then `pis --unlock`. It checks the global `registry.lock` and the selected/current project's `project.lock` and existing `updates.lock` without acquiring the stale registry lock. Only proven-dead owners are recovered; live/unknown owners, unsafe files and project locks with any remaining container are kept. Registry recovery itself needs no Podman and can succeed while an unrelated project is active. There is no force option and no container is killed/deleted. Recovery requires `/usr/bin/flock` (util-linux); its kernel guard releases automatically on process death. Normal launches never steal locks. New locks record boot/process-start identity and cleanup never removes another process's replacement lock.
 
-No project deletion or image garbage-collection command exists yet. Do not edit or delete state/configuration while its project is running. Old generated image tags can accumulate when image configuration changes.
+No project/state deletion command exists; `--prune` only handles eligible image tags. Do not edit or delete state/configuration while its project is running. Old generated image tags can accumulate when image configuration changes.
 
 ## Security boundary
 
@@ -352,7 +370,8 @@ Real-container coverage includes package/custom instruction builds, absolute wor
 - [Wait for Codex quota, then resume a saved task](docs/codex-wait.md)
 - [Claude Code mode: setup and weaker credential boundary](docs/claude-code.md)
 - [Image extension setup and remaining plans](docs/extensions-plan.md)
-- [Pi 1.5 upgrade, watchdog compatibility, and proposed automatic updates](docs/updates-plan.md)
+- [Managed Pi/npm updates, rollback and verification limits](docs/updates.md)
+- [Pi 1.5 upgrade, watchdog compatibility and remaining update design](docs/updates-plan.md)
 - [Design and configuration](docs/design.md)
 - [Implementation roadmap and acceptance tests](docs/roadmap.md)
 

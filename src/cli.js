@@ -5,6 +5,7 @@ import { createInterface } from 'node:readline/promises';
 import { Store } from './store.js';
 import { pruneImages } from './prune.js';
 import { unlockLocks } from './locks.js';
+import { updatesAction, scheduleUpdates, readUpdateState, updateSourceKey, managedPlan } from './updates.js';
 import { getCodexUsage, hasCodexCredential, importCodexCredential, loginCodex, logoutCodex } from './codex-auth.js';
 import { apiProfileStatus, promptApiProfile, logoutApiProfile, readApiProfile } from './api-auth.js';
 import { validate } from './config.js';
@@ -27,6 +28,7 @@ Usage:
   pis --relocate ID_OR_NAME
   pis [--project ID_OR_NAME] --edit | --check | --show | --build | --rebuild
   pis [--project ID_OR_NAME] --extensions-list
+  pis [--project ID_OR_NAME] --updates on|all|off|status|check|rollback
   pis --doctor
   pis --prune [--dry-run]           # old pis images only; no project data
   pis [--project ID_OR_NAME] --unlock [--dry-run] # recover only proven stale locks
@@ -62,6 +64,13 @@ Old pis images are cleaned in the background after builds by default.
 PIS_AUTO_PRUNE=0 disables automatic cleanup; project data is never pruned.
 --unlock checks the global registry lock and current project's lock on the host.
 Live/unknown owners and project containers are never force-stopped or unlocked.
+--updates on enables daily background Pi patch/unpinned npm image checks
+(and retains any prior 'all' pin-movement choice);
+--updates all also opts exact npm pins into compatible updates. No sources are rewritten.
+Checked candidates activate only on later launches. Off freezes the active release.
+Check prepares a candidate now (may build); rollback switches images and disables updates.
+Git/state-installed plugins and Claude updates are not managed. PIS_AUTO_UPDATE=0
+suppresses background checks/activation. --rebuild rebuilds the declared baseline.
 
 Storage: $PIS_HOME, otherwise $XDG_DATA_HOME/pis or ~/.local/share/pis.
 New projects use the global host Codex OAuth proxy. Existing projects are unchanged.
@@ -85,10 +94,10 @@ export function parse(argv) {
     const token = wrapper[i];
     const equals = token.indexOf('=');
     const key = equals === -1 ? token : token.slice(0, equals);
-    if (['--project', '--agent', '--name', '--relocate', '--import-codex', '--login', '--logout'].includes(key)) {
+    if (['--project', '--agent', '--name', '--relocate', '--import-codex', '--login', '--logout', '--updates'].includes(key)) {
       const value = equals === -1 ? wrapper[++i] : token.slice(equals + 1);
       assert(value && !value.startsWith('-'), `${key} requires a value.`);
-      if (['--relocate', '--import-codex', '--login', '--logout'].includes(key)) {
+      if (['--relocate', '--import-codex', '--login', '--logout', '--updates'].includes(key)) {
         assert(!action, 'Choose only one management action.');
         action = key.slice(2); options.target = value;
       } else {
@@ -112,6 +121,7 @@ export function parse(argv) {
   }
   options.action = action || 'run';
   options.mode = mode || 'pi';
+  assert(action !== 'updates' || ['on', 'all', 'off', 'status', 'check', 'rollback'].includes(options.target), 'Use --updates on|all|off|status|check|rollback.');
   assert(options.agent === undefined || ['pi', 'claude'].includes(options.agent), '--agent must be pi or claude.');
   assert(!options.agent || !action || ['show', 'build', 'rebuild', 'check'].includes(action), '--agent is only valid for launches, --show, --check, --build or --rebuild. Set project.agent via --edit for a persistent choice.');
   assert(!options.autoWaitCodex || (!action && !mode && (!options.agent || options.agent === 'pi')), '--auto-wait-codex is only valid for a normal Pi launch.');
@@ -235,6 +245,12 @@ export async function main(argv = process.argv.slice(2)) {
   }
   const selected = store.select(cwd, options.project);
   let config = await store.refresh(selected.id);
+  if (options.action === 'updates') {
+    const result = await updatesAction(store, config, options.target);
+    console.log(JSON.stringify(result, null, 2));
+    if (['on', 'all'].includes(options.target)) scheduleUpdates(store, store.load(config.id, false));
+    return result.failed ? 1 : 0;
+  }
   if (options.action === 'login-claude') {
     assert(process.stdin.isTTY && process.stdout.isTTY, 'Run pis --login-claude interactively on the host.');
     await loginClaude(store, config);
@@ -255,7 +271,14 @@ export async function main(argv = process.argv.slice(2)) {
   }
   if (options.action === 'check') { console.log(`Valid: ${store.configPath(config.id)}`); return 0; }
   if (options.action === 'show') {
-    const plan = imagePlan(config);
+    let plan = imagePlan(config), managedUpdate = null;
+    try {
+      const state = readUpdateState(store, config.id);
+      if (config.agent === 'pi' && state?.sourceKey === updateSourceKey(config)) {
+        plan = managedPlan(config, state.active);
+        managedUpdate = { active: state.active, candidate: state.candidate, lastError: state.lastError };
+      }
+    } catch { managedUpdate = { status: 'invalid-state', fallback: 'declared-image' }; }
     const workdir = within(config.root, cwd) ? cwd : config.root;
     const proxyKeyEnv = config.credentials.proxy?.keyEnv || (config.credentials.proxy?.provider === 'berget' ? 'BERGET_API_KEY' : config.credentials.proxy?.provider === 'mistral' ? 'MISTRAL_API_KEY' : 'OPENAI_API_KEY');
     const isClaude = config.agent === 'claude';
@@ -264,7 +287,7 @@ export async function main(argv = process.argv.slice(2)) {
       ? (isCodex || config.credentials.proxy.profile ? [] : [{ name: proxyKeyEnv, present: Boolean(process.env[proxyKeyEnv]), handling: 'host-proxy' }])
       : [];
     const credentialSource = isClaude ? { kind: 'sandbox-oauth-copy', provider: 'claude-code', warning: 'Real tokens are readable and writable inside the sandbox. Pi proxy is not used.' } : isCodex ? { kind: 'host-oauth', provider: 'openai-codex', present: hasCodexCredential(store) } : config.credentials.proxy?.profile ? { kind: 'host-api-key', provider: config.credentials.proxy.profile, present: Boolean(readApiProfile(store, config.credentials.proxy.profile)) } : undefined;
-    console.log(JSON.stringify({ config, configurationFile: store.configPath(config.id), image: plan.image, workingDirectory: workdir, containerHome: CONTAINER_HOME, agentCommand: isClaude ? claudeCommand() : piCommand(), piCommand: piCommand(), claudeVersion: CLAUDE_VERSION, mounts: [{ source: config.root, target: config.root, access: 'read-write' }, ...config.mounts.map(m => ({ source: m.source, target: m.source, access: m.access || 'read-only' }))], credentialVariables, credentialSource }, null, 2));
+    console.log(JSON.stringify({ config, configurationFile: store.configPath(config.id), image: plan.image, piVersion: plan.piVersion, managedUpdate, workingDirectory: workdir, containerHome: CONTAINER_HOME, agentCommand: isClaude ? claudeCommand() : piCommand(), piCommand: piCommand(), claudeVersion: CLAUDE_VERSION, mounts: [{ source: config.root, target: config.root, access: 'read-write' }, ...config.mounts.map(m => ({ source: m.source, target: m.source, access: m.access || 'read-only' }))], credentialVariables, credentialSource }, null, 2));
     return 0;
   }
   return launch(store, config, { ...options, cwd, rebuild: options.action === 'rebuild', buildOnly: ['build', 'rebuild'].includes(options.action) });

@@ -2,6 +2,8 @@
 
 The opt-in [`--auto-wait-codex` quota service](codex-wait.md#hostcontainer-boundary) is **separate** from these approval tools. Its socket accepts only a fixed usage-wait query and returns availability states; it cannot approve/install packages, execute Git or arbitrary commands, select URLs, or supply continuation prompts. Automatic quota recovery never bypasses the host confirmations described below. An apt/Git-approved Pi restart preserves the CLI auto-wait opt-in and creates a fresh extension runtime.
 
+[Managed Pi/npm updates](updates.md) are another separate, **host-configured opt-in** (`pis --updates on|all`). They add no sandbox host-control tool and do not authorize apt/Git proposals. A worker builds only from the stored trusted image recipe and validated npm metadata, supplies no real model/auth capability, and tests with fake services in a separate network-disabled container. Next-launch activation is host-side and never interrupts a task or sends a model-triggering continuation prompt. Exact pins move only after explicit `all`/`includePinnedExtensions` consent. The bounded private `.pi` backup is outside container mounts; image rollback never restores state automatically. `PI_SELF_UPDATE_COMMAND` is not a generic host/Podman bridge.
+
 ## Implemented first step: apt packages
 
 Interactive `pis` runs expose an image-owned `request_apt_packages` Pi tool. It submits one small, typed JSON proposal over a private Unix socket. The socket grants permission to **suggest**, not permission to change anything. Direct, print, RPC, `--no-session` and custom-stdio launches do not expose this service.

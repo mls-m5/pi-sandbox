@@ -10,6 +10,8 @@ pis --project my-app --wait-codex
 
 `--wait-codex` is an **opt-in startup gate**. For automatic detection while Pi is running, opt into `--auto-wait-codex` instead (or combine the flags). Ordinary `pis` startup is unchanged.
 
+Opt-in [image update maintenance](updates.md) is separate: this waiting launch does not schedule it until the quota gate succeeds and the image is ready. An independently scheduled worker may already build/probe while quota is exhausted, using only fake services with no real account capability. It never replaces the waiting/running agent's image or resumes its task; activation waits for a later launch.
+
 ## Automatic wait during a run
 
 ```sh

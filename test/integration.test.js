@@ -6,6 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
+import { PI_VERSION } from '../src/container.js';
 
 const cli = fileURLToPath(new URL('../bin/pis.js', import.meta.url));
 
@@ -47,7 +48,7 @@ test('real rootless Podman: build, identity, mounts, credentials, state, Pi, pip
   fs.writeFileSync(shown.configurationFile, JSON.stringify(config));
   image = JSON.parse(success(['--show']).stdout).image;
   success(['--build']);
-  assert.deepEqual(fs.readdirSync(path.join(path.dirname(shown.configurationFile), 'build')).sort(), ['Containerfile', 'codex-auto.mjs', 'extensions.json', 'fetch-bridge.mjs', 'image-entry.mjs', 'pi-launcher', 'request-apt.mjs']);
+  assert.deepEqual(fs.readdirSync(path.join(path.dirname(shown.configurationFile), 'build')).sort(), ['Containerfile', 'codex-auto.mjs', 'extensions.json', 'fetch-bridge.mjs', 'image-entry.mjs', 'pi-launcher', 'probe-policy.json', 'request-apt.mjs', 'update-probe.mjs']);
 
   const script = `
     const fs = require('fs');
@@ -76,7 +77,7 @@ test('real rootless Podman: build, identity, mounts, credentials, state, Pi, pip
   const failure = invoke(['--exec', '--', 'bash', '-c', 'printf failure >&2; exit 7']);
   assert.equal(failure.status, 7, failure.stderr);
   assert.match(failure.stderr, /failure/);
-  assert.match(success(['--', '--version']).stdout, /1\.2\.0/);
+  assert.equal(success(['--', '--version']).stdout.trim(), PI_VERSION);
   assert.match(success(['--fresh', '--', '--help']).stdout, /continue/);
   // script(1) allocates a real terminal, exercising --tty and interactive Bash.
   const quote = value => `'${value.replaceAll("'", "'\\''")}'`;
