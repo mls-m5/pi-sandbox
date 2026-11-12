@@ -111,9 +111,28 @@ Use `pis --edit` to set `credentials` to:
 }
 ```
 
-Remove any old `keyEnv` field; keep the rest of the project configuration. Start `pis` and select a Codex model using `/model`, or pass `pis -- --model openai-codex/<model-id>` explicitly. The real access/refresh tokens remain in private host storage and refresh there automatically; Pi and extensions get only a synthetic proxy token. `pis --logout-codex` removes the shared host sign-in.
+Remove any old `keyEnv` field; keep the rest of the project configuration. Start `pis` and select a Codex model using `/model`, or pass `pis -- --model openai-codex/<model-id>` explicitly. The real access/refresh tokens remain in private host storage and refresh there automatically; Pi and extensions get only a synthetic proxy token. `pis --logout-codex` removes only the selected local host profile; other saved accounts remain.
 
 Prefer a dedicated sign-in: importing copies rotating tokens without synchronizing the original client. See [Codex setup, imports, and limitations](docs/codex.md). Live subscription sign-in is not covered by the fake-service tests.
+
+### Multiple Codex accounts
+
+The existing login is named `default`. Run management commands on the host:
+
+```sh
+pis --login-codex --codex-account spare  # Choose another account in the browser
+pis --codex-accounts                    # Aliases and selected/automatic status
+pis --codex-use spare                   # Switch subsequent requests, including live proxies
+pis --codex-use default
+pis --codex-auto-switch default,spare   # Optional ordered pool; OFF by default
+pis --codex-auto-switch off
+pis --codex-usage --codex-account spare
+pis --logout-codex --codex-account spare # Other accounts untouched; no remote revocation
+# Optional: rename your original login without signing in again:
+pis --codex-rename primary --codex-account default
+```
+
+Selection/pooling is global per `PIS_HOME`. Pool members must be authorized to receive **the same project and conversation history**; new logins never join a pool implicitly. Automatic routing confirms exhausted subscription quota and an available enrolled alternative. It does not switch on an ordinary 429/auth/network error, reset proxy budgets, change provider/model, replay an upstream request or interrupt an in-flight stream. Partial-turn recovery still uses native retries or opt-in `--auto-wait-codex`; account-bound remote history is not rewritten. After installing this host-code change, start the updated wrapper once; subsequent account switches do not require restarting Pi. [Storage, privacy, routing and verification details](docs/codex.md#multiple-accounts-and-live-selection).
 
 ### Wait for Codex quota and continue
 
@@ -123,7 +142,7 @@ After exiting a quota-limited Pi session, run:
 pis --wait-codex
 ```
 
-This opt-in mode checks host usage every one to five minutes, waits until the returned short/weekly limits allow work, then starts the latest saved Pi session with an English continuation prompt (**uses model quota**). Ctrl-C cancels. No container or model request runs while waiting. It requires the Codex proxy and a saved session; no `--fresh` or trailing agent arguments. Usage/auth/network errors stop safely without starting Pi. This flag alone does not monitor an already running agent or switch to paid API access. See [behavior, session selection and verification limits](docs/codex-wait.md).
+This opt-in mode checks host usage every one to five minutes, considers an explicitly configured account pool, waits until the returned short/weekly limits allow work, then starts the latest saved Pi session with an English continuation prompt (**uses model quota**). Ctrl-C cancels. No container or model request runs while waiting. It requires the Codex proxy and a saved session; no `--fresh` or trailing agent arguments. Usage/auth/network errors stop safely without starting Pi. This flag alone does not monitor an already running agent or switch to paid API access. See [behavior, session selection and verification limits](docs/codex-wait.md).
 
 For automatic handling during a long-running **terminal Pi session**:
 
@@ -323,7 +342,7 @@ Host Pi state at `~/.pi/agent` is not mounted. Conversations are stored in the p
 
 Only one ordinary build/running container per registered project is allowed at a time. Opted-in update maintenance uses a separate private context/lock and may build/probe concurrently without touching the running session. Separate projects can run concurrently. Registry updates are also locked; conflicting edits are rejected rather than silently overwriting changes.
 
-If a process is forcibly killed or the machine crashes, recover on the **host** with `pis --unlock --dry-run`, then `pis --unlock`. It checks the global `registry.lock` and the selected/current project's `project.lock` and existing `updates.lock` without acquiring the stale registry lock. Only proven-dead owners are recovered; live/unknown owners, unsafe files and project locks with any remaining container are kept. Registry recovery itself needs no Podman and can succeed while an unrelated project is active. There is no force option and no container is killed/deleted. Recovery requires `/usr/bin/flock` (util-linux); its kernel guard releases automatically on process death. Normal launches never steal locks. New locks record boot/process-start identity and cleanup never removes another process's replacement lock.
+If a process is forcibly killed or the machine crashes, recover on the **host** with `pis --unlock --dry-run`, then `pis --unlock`. It checks the global `registry.lock` and the host-only Codex auth lock, and the selected/current project's `project.lock` and existing `updates.lock` without acquiring the stale registry lock. Only proven-dead owners are recovered; live/unknown owners, unsafe files and project locks with any remaining container are kept. Registry/Codex-auth recovery needs no Podman and can succeed while an unrelated project is active. There is no force option and no container is killed/deleted. Recovery requires `/usr/bin/flock` (util-linux); its kernel guard releases automatically on process death. Normal launches never steal locks. New locks record boot/process-start identity and cleanup never removes another process's replacement lock.
 
 No project/state deletion command exists; `--prune` only handles eligible image tags. Do not edit or delete state/configuration while its project is running. Old generated image tags can accumulate when image configuration changes.
 

@@ -12,6 +12,12 @@ pis --project my-app --wait-codex
 
 Opt-in [image update maintenance](updates.md) is separate: this waiting launch does not schedule it until the quota gate succeeds and the image is ready. An independently scheduled worker may already build/probe while quota is exhausted, using only fake services with no real account capability. It never replaces the waiting/running agent's image or resumes its task; activation waits for a later launch.
 
+## Account pools
+
+With an explicitly configured [Codex account pool](codex.md#optional-automatic-quota-failover), the startup gate can select an enrolled account whose usage is verified available instead of waiting for the old one to reset. In-session auto-wait first confirms the selected account's exhaustion, then can select an available pool member and continue the same settled session without sleeping. If no member is verified available, normal polling/cancellation applies. Missing/auth/network errors do not authorize a change, and profiles outside the pool remain manual.
+
+Account routing is separate from continuation: the proxy may select an enrolled account **before** forwarding a new full-context request, but never replays an upstream request or moves a partially streamed answer. If another request/manual action already selected an available account before auto-wait's initial check, it still returns `not-quota` rather than blindly repeating a turn. `/codex-auto off` disables in-session resumption only; use host `pis --codex-auto-switch off` to disable global account failover. The account pool is global per PIS_HOME, not per project; every member must be authorized for the same history/data. No provider/model change or paid API fallback occurs.
+
 ## Automatic wait during a run
 
 ```sh

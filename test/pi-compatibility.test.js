@@ -8,11 +8,14 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { PI_VERSION } from '../src/container.js';
 import { startOpenAIProxy } from '../src/proxy.js';
+import { Store } from '../src/store.js';
+import { saveCodexCredential, useCodexAccount } from '../src/codex-auth.js';
+import { createCodexAccountRouter } from '../src/codex-accounts.js';
 import { fakeCodexAccess } from './fixtures/codex.js';
 
 // Supply an already-installed package. This suite never installs dependencies,
 // reads personal auth, calls real model services or needs Podman.
-test('pinned real Pi CLI: Codex SSE through proxy, TypeBox approval tools, bounds and settlement hooks', {
+test('pinned real Pi CLI: Codex SSE across host accounts, full context, TypeBox tools and settlement hooks', {
   skip: !process.env.PIS_PI_PACKAGE, timeout: 60_000,
 }, async t => {
   const pkg = path.resolve(process.env.PIS_PI_PACKAGE);
@@ -22,15 +25,20 @@ test('pinned real Pi CLI: Codex SSE through proxy, TypeBox approval tools, bound
   const base = fs.mkdtempSync('/tmp/pis-pi-compat-');
   const cwd = path.join(base, 'project'), home = path.join(base, 'home'), agent = path.join(home, '.pi/agent');
   fs.mkdirSync(cwd); fs.mkdirSync(agent, { recursive: true, mode: 0o700 });
-  const access = fakeCodexAccess();
+  const access = fakeCodexAccess(), secondAccess = fakeCodexAccess({ accountId: 'second-fake-account', signature: 'second-fake-signature' });
+  const store = new Store(path.join(base, 'host-auth'));
+  await saveCodexCredential(store, { access, refresh: 'probe-default-refresh' });
+  await saveCodexCredential(store, { access: secondAccess, refresh: 'probe-spare-refresh' }, undefined, 'spare');
+  const router = createCodexAccountRouter(store, { fetchImpl: async () => assert.fail('Manual profile switching must not need an online quota request') });
   const received = [], proposals = [], sockets = new Set();
   const model = 'gpt-6-luna'; // Present in the pinned 1.5 catalogue; old spark was removed upstream.
   const upstream = http.createServer((req, res) => {
     const chunks = [];
     req.on('data', chunk => chunks.push(chunk));
-    req.on('end', () => {
-      received.push({ url: req.url, authorization: req.headers.authorization, body: JSON.parse(Buffer.concat(chunks)) });
+    req.on('end', async () => {
+      received.push({ url: req.url, authorization: req.headers.authorization, account: req.headers['chatgpt-account-id'], body: JSON.parse(Buffer.concat(chunks)) });
       const index = received.length;
+      if (index === 1) await useCodexAccount(store, 'spare');
       const item = index <= 2
         ? { id: `fc_${index}`, type: 'function_call', call_id: `call_${index}`, name: 'request_apt_packages', arguments: JSON.stringify({ packages: index === 1 ? [] : ['git'], reason: 'Compatibility probe only' }) }
         : { id: 'msg_done', type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: 'Compatibility probe OK.', annotations: [] }] };
@@ -49,7 +57,7 @@ test('pinned real Pi CLI: Codex SSE through proxy, TypeBox approval tools, bound
     });
   });
   await new Promise(resolve => upstream.listen(0, '127.0.0.1', resolve));
-  const proxy = await startOpenAIProxy({ provider: 'openai-codex', socketPath: path.join(base, 'api.sock'), apiKey: access, models: [model], upstream: `http://127.0.0.1:${upstream.address().port}` });
+  const proxy = await startOpenAIProxy({ provider: 'openai-codex', socketPath: path.join(base, 'api.sock'), apiKey: access, getCredentials: router.credentials, models: [model], upstream: `http://127.0.0.1:${upstream.address().port}` });
   const relay = net.createServer(client => {
     const host = net.createConnection(path.join(base, 'api.sock'));
     for (const socket of [client, host]) { sockets.add(socket); socket.on('close', () => sockets.delete(socket)); }
@@ -123,7 +131,7 @@ test('pinned real Pi CLI: Codex SSE through proxy, TypeBox approval tools, bound
   assert.equal(result.code, 0, result.output);
   assert.match(result.output, /Compatibility probe OK/);
   assert.doesNotMatch(result.output, /Failed to load extension|External fetch blocked|Network blocked/);
-  assert.ok(!result.output.includes(access));
+  assert.ok(!result.output.includes(access) && !result.output.includes(secondAccess));
   const loaded = JSON.parse(fs.readFileSync(report, 'utf8'));
   assert.equal(loaded.model, model);
   assert.ok(loaded.commands.includes('codex-auto'));
@@ -131,7 +139,10 @@ test('pinned real Pi CLI: Codex SSE through proxy, TypeBox approval tools, bound
   if (webAccess) assert.ok(loaded.tools.some(tool => tool.name === 'web_search'));
   assert.equal(loaded.tools.find(tool => tool.name === 'request_apt_packages').parameters.properties.packages.minItems, 1);
   assert.equal(received.length, 3);
-  assert.ok(received.every(req => req.url === '/backend-api/codex/responses' && req.body.model === model && req.authorization === `Bearer ${access}`));
+  assert.ok(received.every(req => req.url === '/backend-api/codex/responses' && req.body.model === model));
+  assert.deepEqual(received.map(req => req.authorization), [access, secondAccess, secondAccess].map(value => `Bearer ${value}`));
+  assert.deepEqual(received.map(req => req.account), ['host-account-only', 'second-fake-account', 'second-fake-account']);
+  assert.ok(received.slice(1).every(req => Array.isArray(req.body.input) && req.body.input.length > 1 && !req.body.previous_response_id && !req.body.conversation), 'Cross-account SSE continuation requires full context, not account-bound remote history.');
   assert.deepEqual(proposals, [{ type: 'apt-packages', packages: ['git'], reason: 'Compatibility probe only' }]); // Invalid [] never executed.
   assert.match(fs.readFileSync(eventsFile, 'utf8'), /agent_settled/);
 });

@@ -104,6 +104,20 @@ test('project recovery refuses remaining containers and unavailable/remote engin
   assert.equal(recoverLock(file, 'project', { ownerState: dead, projectId: 'abc12', containers: () => [] }).status, 'removed');
 });
 
+test('Codex auth lock recovery is host-only and never needs Podman or reads credentials', t => {
+  const { base, store } = fixture(t);
+  const auth = path.join(store.root, 'auth'); fs.mkdirSync(auth, { mode: 0o700 });
+  const file = path.join(auth, 'openai-codex.lock');
+  const credential = path.join(auth, 'openai-codex.json'); fs.writeFileSync(credential, 'private-do-not-read', { mode: 0o600 });
+  fs.writeFileSync(file, JSON.stringify({ pid: process.pid }), { mode: 0o600 });
+  const options = { cwd: base, containers: () => assert.fail('Global auth recovery must not query Podman') };
+  assert.equal(recoverProjectLocks(store, options).locks.at(-1).status, 'blocked');
+  fs.writeFileSync(file, JSON.stringify({ pid: process.pid, bootId: '00000000-0000-0000-0000-000000000000' }));
+  assert.equal(recoverProjectLocks(store, { ...options, dryRun: true }).locks.at(-1).status, 'would-remove');
+  assert.equal(recoverProjectLocks(store, options).locks.at(-1).status, 'removed');
+  assert.equal(fs.readFileSync(credential, 'utf8'), 'private-do-not-read');
+});
+
 test('update maintenance locks are visible and explicit recovery refuses live owners or orphan probes', async t => {
   const { base, store } = fixture(t);
   const root = path.join(base, 'project'); fs.mkdirSync(root); const config = await store.register(root);

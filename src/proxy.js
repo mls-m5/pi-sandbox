@@ -96,7 +96,7 @@ function body(req, maxBytes) {
  * upstream parameter and limit overrides exist only for local fake-service tests.
  * No headers, URLs, payloads, or credentials are logged or included in errors.
  */
-export async function startOpenAIProxy({ socketPath, apiKey, provider = 'openai', getCredentials, token, models = [], maxRequests = 1000, maxConcurrent = 4, upstream, upstreamBaseUrl, lookup, maxBodyBytes = 16 * 1024 * 1024, timeoutMs = 300_000 }) {
+export async function startOpenAIProxy({ socketPath, apiKey, provider = 'openai', getCredentials, onUpstreamStatus, token, models = [], maxRequests = 1000, maxConcurrent = 4, upstream, upstreamBaseUrl, lookup, maxBodyBytes = 16 * 1024 * 1024, timeoutMs = 300_000 }) {
   assert(['openai', 'openai-codex', 'berget', 'mistral', 'custom'].includes(provider), 'Unsupported proxy provider.');
   const initialCredential = credentialFor(provider, apiKey);
   token ??= provider === 'openai-codex' ? dummyCodexToken() : `sk-pis-${randomBytes(32).toString('hex')}`;
@@ -140,7 +140,7 @@ export async function startOpenAIProxy({ socketPath, apiKey, provider = 'openai'
     };
     res.once('close', finish);
     try {
-      let payload;
+      let payload, stateful = false;
       if (req.method === 'POST') {
         if (!/^application\/json(?:\s*;|$)/i.test(req.headers['content-type'] || '')) return reply(res, 415, 'JSON content type required.');
         payload = await body(req, maxBodyBytes);
@@ -154,6 +154,7 @@ export async function startOpenAIProxy({ socketPath, apiKey, provider = 'openai'
         try { parsed = JSON.parse(payload.toString('utf8')); } catch { return reply(res, 400, 'Invalid JSON request.'); }
         if (!parsed || typeof parsed.model !== 'string' || !parsed.model) return reply(res, 400, 'A model is required.');
         if (models.length && !models.includes(parsed.model)) return reply(res, 403, 'Model not allowed.');
+        stateful = Boolean(parsed.previous_response_id || parsed.conversation || parsed.conversation_id);
       }
       if (finished || res.destroyed || res.writableEnded) return;
       // Recheck after asynchronous body collection so parallel uploads cannot overspend the request count.
@@ -161,8 +162,12 @@ export async function startOpenAIProxy({ socketPath, apiKey, provider = 'openai'
       used++;
       let credential = initialCredential;
       if (getCredentials) {
-        try { credential = credentialFor(provider, (await getCredentials(controller.signal)).apiKey); }
-        catch { return reply(res, 503, 'Host credentials unavailable. For Codex, run pis --login-codex on the host.'); }
+        try { credential = credentialFor(provider, (await getCredentials(controller.signal, { method: req.method, path: req.url, stateful })).apiKey); }
+        catch (error) {
+          if (provider === 'openai-codex' && error?.code === 'PIS_CODEX_STATEFUL') return reply(res, 409, 'Codex account switch requires a full-context request; nothing was replayed.');
+          if (provider === 'openai-codex' && error?.code === 'PIS_CODEX_QUOTA') return reply(res, 429, 'Codex quota exhausted: no verified available account in the host pool.');
+          return reply(res, 503, 'Host credentials unavailable. For Codex, run pis --login-codex on the host.');
+        }
       }
       if (finished || res.destroyed || res.writableEnded) return;
       const sessionHeaders = {};
@@ -190,6 +195,7 @@ export async function startOpenAIProxy({ socketPath, apiKey, provider = 'openai'
         const status = upstreamResponse.statusCode || 502;
         if (status < 200 || status >= 300) {
           upstreamResponse.destroy();
+          try { onUpstreamStatus?.({ status, credential }); } catch { /* Never retry/replay on callback failure. */ }
           // In particular, never follow redirects or expose upstream error bodies/headers.
           return reply(res, status >= 400 && status <= 599 ? status : 502, `Provider upstream returned status ${status}.`);
         }

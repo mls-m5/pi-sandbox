@@ -1,6 +1,6 @@
-export function fakeCodexAccess({ accountId = 'host-account-only', expires = Math.floor(Date.now() / 1000) + 3600, signature = 'fake-signature-not-a-real-token' } = {}) {
+export function fakeCodexAccess({ accountId = 'host-account-only', expires = Math.floor(Date.now() / 1000) + 3600, signature = 'fake-signature-not-a-real-token', userId } = {}) {
   const encode = value => Buffer.from(JSON.stringify(value)).toString('base64url');
-  return `${encode({ alg: 'RS256', typ: 'JWT' })}.${encode({ exp: expires, 'https://api.openai.com/auth': { chatgpt_account_id: accountId } })}.${signature}`;
+  return `${encode({ alg: 'RS256', typ: 'JWT' })}.${encode({ exp: expires, 'https://api.openai.com/auth': { chatgpt_account_id: accountId, ...(userId ? { chatgpt_user_id: userId } : {}) } })}.${signature}`;
 }
 
 export function fakeCodexCredential(options = {}) {

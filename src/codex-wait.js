@@ -3,12 +3,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { assert } from './util.js';
-import { getCodexUsage } from './codex-auth.js';
-import { codexUsageSummary } from './codex-usage.js';
+import { getRoutedCodexUsage } from './codex-accounts.js';
+import { codexAvailability } from './codex-usage.js';
+export { codexAvailability } from './codex-usage.js';
 
 export const CODEX_RESUME_NOTICE = '[pis] Codex usage now reports available quota. Continue the previous task from this saved session. Review the current state before repeating any tool action; do not restart completed work.';
-const MIN_POLL = 60_000;
-const MAX_POLL = 300_000;
 
 export function validateCodexWait(config, options) {
   assert((config.agent || 'pi') === 'pi' && config.credentials.proxy?.provider === 'openai-codex', '--wait-codex requires the Pi agent with the openai-codex host proxy.');
@@ -37,18 +36,7 @@ export function requireSavedPiSession(store, id) {
   } catch { throw new Error('--wait-codex needs an existing saved Pi session. Start a normal pis session first. Symlinked session directories are not supported.'); }
 }
 
-export function codexAvailability(data, now = Date.now()) {
-  const { rate_limit } = codexUsageSummary(data);
-  const windows = [rate_limit.primary_window, rate_limit.secondary_window].filter(Boolean);
-  assert(windows.length > 0, 'Codex usage returned no quota windows; cannot safely decide when to resume.');
-  const exhausted = windows.filter(window => window.used_percent >= 100);
-  const available = !exhausted.length && rate_limit.allowed !== false && rate_limit.limit_reached !== true;
-  const resetTimes = exhausted.map(window => window.reset_at !== undefined ? window.reset_at * 1000 : now + window.reset_after_seconds * 1000);
-  const untilReset = resetTimes.length ? Math.max(...resetTimes) - now + 5000 : MAX_POLL;
-  return { available, delayMs: Math.max(MIN_POLL, Math.min(MAX_POLL, untilReset)) };
-}
-
-export async function waitForCodex(store, { signal, usage = getCodexUsage, sleep = delay, now = Date.now, notify = console.error } = {}) {
+export async function waitForCodex(store, { signal, usage = getRoutedCodexUsage, sleep = delay, now = Date.now, notify = console.error } = {}) {
   notify('pis: Checking Codex quota on the host (no model request). Ctrl-C cancels.');
   while (true) {
     signal?.throwIfAborted();

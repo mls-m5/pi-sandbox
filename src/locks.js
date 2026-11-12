@@ -87,6 +87,17 @@ export function recoverLock(file, scope, { dryRun = false, ownerState = lockOwne
 
 export function recoverProjectLocks(store, { cwd, project, dryRun = false, ...dependencies } = {}) {
   const locks = [recoverLock(path.join(store.root, 'registry.lock'), 'registry', { dryRun, ...dependencies })];
+  const auth = path.join(store.root, 'auth'), codex = path.join(auth, 'openai-codex.lock');
+  try {
+    fs.lstatSync(codex);
+    const stat = fs.lstatSync(auth);
+    assert(stat.isDirectory() && !stat.isSymbolicLink() && stat.uid === process.getuid() && (stat.mode & 0o077) === 0 && fs.realpathSync(auth) === auth, 'unsafe');
+    // Host-only refresh/account metadata: no container inventory is needed and
+    // no credential is read, changed, revoked or recovered by unlocking.
+    locks.push(recoverLock(codex, 'codex-auth', { dryRun, ...dependencies }));
+  } catch (error) {
+    if (error.code !== 'ENOENT') locks.push({ scope: 'codex-auth', status: 'blocked', reason: 'Cannot safely inspect private canonical Codex auth storage; lock kept.' });
+  }
   // Registry recovery does not require Podman or a selected project and may
   // proceed while unrelated containers run. It only protects registry writes.
   let selected;

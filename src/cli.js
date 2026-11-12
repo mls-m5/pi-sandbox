@@ -6,7 +6,7 @@ import { Store } from './store.js';
 import { pruneImages } from './prune.js';
 import { unlockLocks } from './locks.js';
 import { updatesAction, scheduleUpdates, readUpdateState, updateSourceKey, managedPlan } from './updates.js';
-import { getCodexUsage, hasCodexCredential, importCodexCredential, loginCodex, logoutCodex } from './codex-auth.js';
+import { getCodexUsage, hasCodexCredential, importCodexCredential, loginCodex, logoutCodex, codexAccountName, readCodexAccountsPolicy, codexAccountsStatus, useCodexAccount, setCodexAutoSwitch, renameCodexAccount } from './codex-auth.js';
 import { apiProfileStatus, promptApiProfile, logoutApiProfile, readApiProfile } from './api-auth.js';
 import { validate } from './config.js';
 import { CLAUDE_VERSION, claudeCommand, loginClaude, logoutClaude } from './claude-code.js';
@@ -32,10 +32,14 @@ Usage:
   pis --doctor
   pis --prune [--dry-run]           # old pis images only; no project data
   pis [--project ID_OR_NAME] --unlock [--dry-run] # recover only proven stale locks
-  pis --login-codex                 # global host sign-in
-  pis --import-codex FILE            # global host sign-in
-  pis --logout-codex                 # remove global host sign-in
-  pis --codex-usage                  # print sanitized global Codex quotas
+  pis --login-codex [--codex-account NAME] # add/re-authenticate a host profile
+  pis --import-codex FILE [--codex-account NAME]
+  pis --logout-codex [--codex-account NAME] # remove only that local profile
+  pis --codex-usage [--codex-account NAME] # sanitized quota, no auto-switch
+  pis --codex-accounts               # aliases, active account, explicit pool
+  pis --codex-use NAME               # change live proxies' subsequent requests
+  pis --codex-rename NEW [--codex-account OLD] # rename without signing in again
+  pis --codex-auto-switch off|on|NAME,NAME # opt-in quota-confirmed switching
   pis --login-mistral               # global Mistral API-key profile
   pis --logout-mistral
   pis --login openai|berget|mistral|custom
@@ -62,7 +66,7 @@ or PIS_CLAUDE_BIN set to its absolute executable path. No host home is mounted.
 Old pis images are cleaned in the background after builds by default.
 --prune previews with --dry-run; keeps current/previous, recent and used images.
 PIS_AUTO_PRUNE=0 disables automatic cleanup; project data is never pruned.
---unlock checks the global registry lock and current project's lock on the host.
+--unlock checks registry/Codex-auth locks and current project/update locks on the host.
 Live/unknown owners and project containers are never force-stopped or unlocked.
 --updates on enables daily background Pi patch/unpinned npm image checks
 (and retains any prior 'all' pin-movement choice);
@@ -75,7 +79,13 @@ suppresses background checks/activation. --rebuild rebuilds the declared baselin
 Storage: $PIS_HOME, otherwise $XDG_DATA_HOME/pis or ~/.local/share/pis.
 New projects use the global host Codex OAuth proxy. Existing projects are unchanged.
 Run --login-codex (or --import-codex ~/.pi/agent/auth.json / ~/.codex/auth.json) once;
-the sign-in is shared by every project under this PIS_HOME.
+the selected sign-in is shared by every Codex project under this PIS_HOME.
+Without --codex-account, login/import/logout/usage/rename address the selected profile
+(legacy sign-in is named default). Adding another profile does not switch it.
+Auto-switch on snapshots currently saved profiles; newly added accounts are NOT
+joined automatically. Prefer an explicit ordered NAME,NAME pool. Only enroll
+accounts authorized to receive the same project/history. No API-key fallback,
+no blind upstream replay, and no switching on auth/network/ordinary 429 errors.
 Berget: set credentials.proxy.provider=berget, and use BERGET_API_KEY on the host,
 or run --login berget and set credentials.proxy.profile=berget (remove keyEnv).
 Mistral: --login-mistral stores an API key; set provider=mistral, profile=mistral.
@@ -94,14 +104,14 @@ export function parse(argv) {
     const token = wrapper[i];
     const equals = token.indexOf('=');
     const key = equals === -1 ? token : token.slice(0, equals);
-    if (['--project', '--agent', '--name', '--relocate', '--import-codex', '--login', '--logout', '--updates'].includes(key)) {
+    if (['--project', '--agent', '--name', '--codex-account', '--codex-use', '--codex-rename', '--codex-auto-switch', '--relocate', '--import-codex', '--login', '--logout', '--updates'].includes(key)) {
       const value = equals === -1 ? wrapper[++i] : token.slice(equals + 1);
       assert(value && !value.startsWith('-'), `${key} requires a value.`);
-      if (['--relocate', '--import-codex', '--login', '--logout', '--updates'].includes(key)) {
+      if (['--relocate', '--import-codex', '--login', '--logout', '--updates', '--codex-use', '--codex-rename', '--codex-auto-switch'].includes(key)) {
         assert(!action, 'Choose only one management action.');
         action = key.slice(2); options.target = value;
       } else {
-        const property = key.slice(2);
+        const property = key === '--codex-account' ? 'codexAccount' : key.slice(2);
         assert(options[property] === undefined, `Repeated option: ${key}`);
         options[property] = value;
       }
@@ -115,13 +125,22 @@ export function parse(argv) {
       assert(!options.fresh, 'Repeated option: --fresh'); options.fresh = true;
     } else if (['--bash', '--exec'].includes(key) && equals === -1) {
       assert(!mode, 'Choose either --bash or --exec.'); mode = key.slice(2);
-    } else if (['--new', '--list', '--edit', '--check', '--show', '--build', '--rebuild', '--extensions-list', '--doctor', '--prune', '--unlock', '--login-codex', '--logout-codex', '--login-claude', '--logout-claude', '--login-mistral', '--logout-mistral', '--codex-usage', '--login-status', '--help', '-h', '--version'].includes(key) && equals === -1) {
+    } else if (['--new', '--list', '--edit', '--check', '--show', '--build', '--rebuild', '--extensions-list', '--doctor', '--prune', '--unlock', '--login-codex', '--logout-codex', '--login-claude', '--logout-claude', '--login-mistral', '--logout-mistral', '--codex-usage', '--codex-accounts', '--login-status', '--help', '-h', '--version'].includes(key) && equals === -1) {
       assert(!action, 'Choose only one management action.'); action = key === '-h' ? 'help' : key.slice(2);
     } else throw new Error(`Unknown pis option: ${token}. Pass Pi/Claude arguments after --; see pis --help.`);
   }
   options.action = action || 'run';
   options.mode = mode || 'pi';
   assert(action !== 'updates' || ['on', 'all', 'off', 'status', 'check', 'rollback'].includes(options.target), 'Use --updates on|all|off|status|check|rollback.');
+  if (options.codexAccount !== undefined) {
+    codexAccountName(options.codexAccount);
+    assert(['login-codex', 'import-codex', 'logout-codex', 'codex-usage', 'codex-rename'].includes(action), '--codex-account is only valid with Codex login/import/logout/usage/rename. Use --codex-use to select globally.');
+  }
+  if (['codex-use', 'codex-rename'].includes(action)) codexAccountName(options.target);
+  if (action === 'codex-auto-switch' && !['on', 'off'].includes(options.target)) {
+    const names = options.target.split(','); names.forEach(codexAccountName);
+    assert(names.length >= 2 && names.length <= 16 && new Set(names).size === names.length, 'Choose 2–16 distinct Codex profile names, or on/off.');
+  }
   assert(options.agent === undefined || ['pi', 'claude'].includes(options.agent), '--agent must be pi or claude.');
   assert(!options.agent || !action || ['show', 'build', 'rebuild', 'check'].includes(action), '--agent is only valid for launches, --show, --check, --build or --rebuild. Set project.agent via --edit for a persistent choice.');
   assert(!options.autoWaitCodex || (!action && !mode && (!options.agent || options.agent === 'pi')), '--auto-wait-codex is only valid for a normal Pi launch.');
@@ -132,7 +151,7 @@ export function parse(argv) {
   assert(!options.fresh || (!action && !mode), '--fresh is only valid when running an agent.');
   assert(!args.length || (!action && mode !== 'bash'), 'Trailing arguments are only valid for an agent or --exec.');
   assert(mode !== 'exec' || args.length > 0, '--exec requires a command after --.');
-  assert(!options.project || !['new', 'list', 'relocate', 'doctor', 'prune', 'login-codex', 'logout-codex', 'login-mistral', 'logout-mistral', 'codex-usage', 'import-codex', 'login', 'logout', 'login-status', 'help', 'version'].includes(action), '--project is not valid with this action.');
+  assert(!options.project || !['new', 'list', 'relocate', 'doctor', 'prune', 'login-codex', 'logout-codex', 'login-mistral', 'logout-mistral', 'codex-usage', 'codex-accounts', 'codex-use', 'codex-rename', 'codex-auto-switch', 'import-codex', 'login', 'logout', 'login-status', 'help', 'version'].includes(action), '--project is not valid with this action.');
   return options;
 }
 
@@ -197,30 +216,46 @@ export async function main(argv = process.argv.slice(2)) {
   }
   if (options.action === 'login-status') {
     const codexPresent = hasCodexCredential(store);
-    console.log(JSON.stringify([...apiProfileStatus(store), { provider: 'openai-codex', profilePresent: codexPresent, credentialPresent: codexPresent }], null, 2));
+    console.log(JSON.stringify([...apiProfileStatus(store), { provider: 'openai-codex', profilePresent: codexPresent, credentialPresent: codexPresent, ...codexAccountsStatus(store) }], null, 2));
+    return 0;
+  }
+  if (options.action === 'codex-accounts') { console.log(JSON.stringify(codexAccountsStatus(store), null, 2)); return 0; }
+  if (options.action === 'codex-use') {
+    await useCodexAccount(store, options.target);
+    console.log(`Selected host Codex profile ${options.target}. Subsequent requests in all Codex projects use it; in-flight requests are unchanged.`);
+    return 0;
+  }
+  if (options.action === 'codex-rename') {
+    console.log(JSON.stringify(await renameCodexAccount(store, options.codexAccount || readCodexAccountsPolicy(store).active, options.target), null, 2));
+    return 0;
+  }
+  if (options.action === 'codex-auto-switch') {
+    console.log(JSON.stringify(await setCodexAutoSwitch(store, options.target), null, 2));
     return 0;
   }
   if (options.action === 'login-codex') {
+    const account = options.codexAccount || readCodexAccountsPolicy(store).active;
     const controller = new AbortController();
     const cancel = () => controller.abort();
     process.on('SIGINT', cancel); process.on('SIGTERM', cancel);
-    try { await loginCodex(store, { signal: controller.signal }); }
+    try { await loginCodex(store, { signal: controller.signal, account }); }
     finally { process.off('SIGINT', cancel); process.off('SIGTERM', cancel); }
-    console.log('Global Codex sign-in saved on the host. It is shared by all projects using the openai-codex proxy.');
+    console.log(`Codex sign-in saved as host profile ${account}. Use --codex-accounts to list, --codex-use NAME to select. Adding a profile does not expand an automatic pool.`);
     return 0;
   }
   if (options.action === 'import-codex') {
-    await importCodexCredential(store, options.target);
+    await importCodexCredential(store, options.target, { account: options.codexAccount });
     console.log('Codex OAuth sign-in copied to private host storage. Original file unchanged.\nAvoid concurrent token refresh by the original client; a dedicated pis --login-codex session is recommended.');
     return 0;
   }
   if (options.action === 'logout-codex') {
-    await logoutCodex(store);
-    console.log('Removed the shared host Codex sign-in. This does not revoke tokens at OpenAI.');
+    const account = options.codexAccount || readCodexAccountsPolicy(store).active;
+    await logoutCodex(store, { account });
+    console.log(`Removed local Codex profile ${account}; other profiles remain. Tokens are not revoked. If it was active, select another profile explicitly with --codex-use.`);
     return 0;
   }
   if (options.action === 'codex-usage') {
-    console.log(JSON.stringify(await getCodexUsage(store)));
+    console.log(JSON.stringify(await getCodexUsage(store, { account: options.codexAccount })));
     return 0;
   }
   if (options.action === 'doctor') {

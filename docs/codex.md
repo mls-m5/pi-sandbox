@@ -65,29 +65,77 @@ Only the relevant access/refresh/expiry/account fields are copied. API keys, cre
 
 Device login must be enabled/allowed by your OpenAI account or workspace. If it is unavailable, use a supported host browser sign-in in Pi/Codex and explicitly import its file, or enable device-code login according to your organization's policy.
 
+## Multiple accounts and live selection
+
+The existing shared login remains usable as profile **`default`**, without copying or re-authenticating it. On the host:
+
+```sh
+pis --codex-accounts                         # aliases, selected profile, automatic pool
+pis --login-codex --codex-account spare       # sign into a DIFFERENT authorized account
+pis --codex-use spare                        # subsequent requests use this profile
+pis --codex-use default                      # select the original login again
+pis --codex-usage --codex-account spare       # quota for one profile; does not switch
+pis --logout-codex --codex-account spare      # remove only this local login
+```
+
+Use another browser session/private window if the device page otherwise chooses your first account again. A duplicate real identity under another alias is rejected; aliases do not create additional quota. Identity binds workspace/account ID and the JWT user subject when available, so distinct users sharing a workspace are not mistaken for the same login. These fields/fingerprints are not shown in status output. Fresh installations can name their first login with `--login-codex --codex-account primary`; the first saved profile is selected automatically. Later additions do not change the selection.
+
+Without `--codex-account`, login/import/logout/usage address the **selected profile**. Import also accepts the selector. Reauthentication updates only that alias. To rename an existing login without copying a rotating refresh token or signing in again:
+
+```sh
+pis --codex-rename primary --codex-account default
+```
+
+Rename follows the same credential identity into the selection/pool. `--codex-account` is a management selector, not a per-project launch flag. Selection is **global for all Codex projects in this PIS_HOME**, including already-running proxies loaded with this implementation. In-flight requests keep their original account; new requests read the current selection. Dummy capabilities, Pi processes, sessions and read-only provider overlays do not need replacement. An old wrapper process must be restarted once at a convenient boundary to load this new host code; this does not hot-patch a pre-upgrade proxy.
+
+`--codex-accounts` / `--login-status` print aliases and local presence/shape checks, not real account IDs, emails or tokens. `credentialValid` is a local format/permission check, not an online authentication guarantee. Removing the selected login leaves it selected but missing: choose another explicitly; logout does not silently spend a different account's quota. Renaming can fail closed if interrupted between its file/policy writes; list profiles and use `--codex-use NEW` to recover, then explicitly reconfigure the pool if needed.
+
+### Optional automatic quota failover
+
+```sh
+pis --codex-auto-switch default,spare  # explicit ordered pool; active profile must belong
+pis --codex-auto-switch off           # disable routing; leave current profile selected
+# Convenience: explicitly enroll ALL currently saved profiles (2–16):
+pis --codex-auto-switch on
+```
+
+Automatic mode is **off by default**. `on` snapshots the profiles present then; newly added profiles never join automatically. Only enroll accounts/workspaces authorized to receive **the same project, prompts, history and tool results**. This is not per-project account isolation. Keep unrelated contexts in separate PIS_HOME stores instead. Replacing an alias with a different real account removes it from the pool; removing a member disables automatic mode if fewer than two remain. Selecting an account outside the pool makes it manual until selecting a pool member again.
+
+Before forwarding a model POST, an enrolled proxy checks subscription usage on the host (60-second overall automatic-routing deadline; positive/exhausted evidence cached up to 60 seconds per credential, with short failure backoff). It switches only when a window is at 100% or `limit_reached` is true, and a subsequent enrolled account has recently verified usable quota. Both returned windows and denial flags gate the candidate; missing/malformed windows, active-account authentication/network errors and non-quota denials never authorize rotation. Failed candidates are skipped, not treated as available. The chosen account stays active until exhausted or manually changed; there is no round-robin or eager return to the first account.
+
+A host-side alias-only notice reports automatic changes; it is not a model/user continuation prompt. Selection commits check the current policy revision and target credential under the shared auth lock. Manual selection, pool withdrawal, logout and cancellation invalidate stale automatic decisions. Each forwarded request retains its own credential/header/redactor for its entire stream. Project route/model/request/concurrency budgets remain shared across the pool and are not reset by switching. No OpenAI API-key fallback is involved.
+
+An upstream HTTP 429 only invalidates quota evidence; it does **not** immediately switch or replay the request. A later request must confirm exhaustion via the fixed usage API. Ordinary rate limiting, 401/403 responses, network failures and arbitrary model text do not cause rotation. If the whole pool has no verified available account, the proxy returns a generic quota error without forwarding a model request.
+
+This is **request routing**, not automatic replay of a partially streamed turn/tool. Native client retries may issue a later request. For an exhausted turn that has already stopped, `--auto-wait-codex` can confirm exhaustion and resume the same settled Pi session using a verified available pool member; startup `--wait-codex` also considers the pool. If no pool member is available they keep normal polling behavior. Plain `--codex-usage` and the GNOME indicator report only the selected/explicit account and never rotate it. A cache/remote-quota race can still allow a request to hit a limit; availability is not a reservation. A pool member may lack the selected model even with quota: model/permission errors require an explicit decision, not model/provider substitution.
+
+Automatic movement is refused with HTTP 409 when a request needs account-bound remote history (`previous_response_id`, `conversation` or `conversation_id`); the proxy never strips these fields or fabricates missing context. Do not use a global automatic pool for clients depending on account-bound server state: another project/manual switch may also change the selected account. Pi 1.5's SSE path was tested sending full context across a host account switch in one actual CLI tool turn, but arbitrary clients/server-state schemes are not certified.
+
 ## Storage, refresh, and sign-out
 
 Credentials live at:
 
 ```text
-$PIS_HOME/auth/openai-codex.json
-# Default: ~/.local/share/pis/auth/openai-codex.json
+$PIS_HOME/auth/openai-codex.json               # legacy/default credential
+$PIS_HOME/auth/openai-codex-account-NAME.json  # named credential
+$PIS_HOME/auth/openai-codex-accounts.json      # active alias, explicit pool, revision
+# Default PIS_HOME: ~/.local/share/pis
 ```
 
 The storage root follows the same `PIS_HOME` / `XDG_DATA_HOME` selection as projects. The directory is 0700; the file is 0600 and owned by your user. It is plaintext sensitive data, not an OS keyring. Do not commit, publish, or expose this directory as a project mount. The existing mount policy forbids sharing pis storage.
 
-There is **one shared Codex sign-in per pis storage root**, reused by every project choosing `openai-codex`. Signing in or importing again changes the account for subsequent requests from those projects. Multi-account named profiles are not implemented.
+There is one **selected profile per pis storage root**, with up to 32 stored profiles and at most 16 distinct real accounts in an automatic pool. All aliases/settings and credentials stay on the host. No user/project choice is migrated to another provider or real account implicitly.
 
-Before a Codex request, the host checks expiration and refreshes if the access token expires within a minute. Refresh requests go directly to the fixed `https://auth.openai.com/oauth/token` endpoint, with redirects rejected. Rotated credentials are saved atomically on the host. A shared lock serializes refreshes across concurrent projects, and waiting requests re-read the latest token to avoid reusing a rotated refresh token.
+Before a Codex request, the host checks expiration and refreshes if the access token expires within a minute. Refresh requests go directly to the fixed `https://auth.openai.com/oauth/token` endpoint, with redirects rejected. Rotated credentials are saved atomically on the host. A shared lock serializes refresh/account mutations across concurrent projects, and waiting refreshes re-read the same captured alias to avoid reusing a rotated refresh token or writing it into a newly selected profile. An unexpected refresh account-identity change is rejected; explicitly reauthenticate instead.
 
 Cancellation or refresh failure preserves the previous credential file and releases the refresh lock. Errors do not include token response bodies or secret values. If refresh fails, requests fail closed with a host-authentication error; the wrapper never forwards a real token to the container as a fallback.
 
 ```sh
 pis --show           # Shows host-oauth presence, not token values or account identity
-pis --logout-codex   # Removes the shared host sign-in
+pis --logout-codex   # Removes only the selected local host profile
 ```
 
-Sign-out does not revoke tokens at OpenAI, remove imported source files, or cancel already forwarded requests. Future requests need a host sign-in. A crash can leave `auth/openai-codex.lock`; inspect its PID and active pis processes before manually removing a stale lock.
+Sign-out does not revoke tokens at OpenAI, remove imported source files, or cancel requests already being processed/forwarded. Other saved profiles remain. A crash can leave `auth/openai-codex.lock`: `pis --unlock --dry-run` / `pis --unlock` conservatively recover proven-dead host auth-lock owners without reading credentials or requiring Podman, even while unrelated project containers run. No live/unknown owner is stolen. Unlocking cannot recover a refresh token lost after remote rotation; reauthentication may still be needed.
 
 ## Request path and policy
 
@@ -130,11 +178,11 @@ The dummy capability grants permitted subscription usage for the lifetime of its
 
 ## Verification and compatibility
 
-Tests cover host device flow with mocked responses, explicit imports, private file handling, refresh rotation/concurrency/cancellation, fixed Codex routes, account-header replacement, bounded zstd decoding, dummy JWT compatibility, and token-safe errors/redaction.
+Tests cover host device flow with mocked responses, named imports/logins/rename/logout, private file handling, captured-alias refresh and identity checks, explicit pool membership, live proxy selection, quota-confirmed failover/backoff, cancellation/manual-change races, shared budgets, stateful-request refusal, fixed routes, bounded zstd decoding, dummy JWT compatibility and token-safe output/redaction. All quota/OAuth/model services in these tests are fake; no real accounts are logged in, rotated or logged out.
 
 The real rootless Podman integration test uses Pi's actual `openai-codex` provider and a local fake OAuth/upstream service, with container networking disabled. It builds the default `pi-web-access` npm package and verifies a streamed conversation, a real `pi-web-access` tool call, sanitized quota retrieval via the usage adapter, and extensions seeing only synthetic credentials. API-key proxy and credential-free integration tests are also retained. No live account sign-in or paid subscription/model requests are performed by tests.
 
-The protocol follows the pinned Pi 1.5 implementation. Its device-code endpoints/client ID and dummy-token claim expectations were checked against that package, and its real CLI completed the local fake-upstream compatibility probe. Pi 1.5's Codex catalogue removed some older models; user-selected models and allowlists are not silently rewritten. Live OpenAI device authentication, backend behavior, workspace policy, and future protocol changes still require real-account verification. If OpenAI changes this protocol, update the host integration and pinned Pi compatibility together.
+The protocol follows the pinned Pi 1.5 implementation. Its device-code endpoints/client ID and dummy-token claim expectations were checked against that package, and its real CLI completed a local fake-upstream tool turn across two host credential profiles with one unchanged dummy capability, full request context and settlement hooks. Pi 1.5's Codex catalogue removed some older models; user-selected models and allowlists are not silently rewritten. Live OpenAI device authentication, backend behavior, workspace policy, and future protocol changes still require real-account verification. If OpenAI changes this protocol, update the host integration and pinned Pi compatibility together.
 
 References:
 

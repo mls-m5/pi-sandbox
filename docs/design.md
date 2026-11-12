@@ -74,7 +74,7 @@ Initial default layout:
       state/
 ```
 
-- `auth/openai-codex.json` is an optional private, user-global host OAuth store, never mounted or included in builds; see [Codex sign-in](codex.md).
+- `auth/openai-codex.json` retains the legacy/default Codex credential. Named credentials use `auth/openai-codex-account-NAME.json`; `auth/openai-codex-accounts.json` contains only selected alias, explicit pool and revision. All are private/user-global, never mounted or included in builds; see [Codex accounts](codex.md).
 - `auth/{openai,berget,custom}-api-key.json` are optional private host API-key profiles, never mounted or included in builds; custom profiles include a trusted HTTPS endpoint and verified model catalog.
 - `project.json` is authoritative.
 - `index.json` is a rebuildable lookup cache for roots, IDs, and names.
@@ -281,7 +281,7 @@ OpenAI API-key mode fixes the upstream to `https://api.openai.com` and allows Re
 
 All proxy modes reject redirects, rebuild request headers, and bound request size, response size, time, concurrency, and per-run request count. They support streaming and cancellation and do not log payloads or credentials. See [proxy configuration and limits](proxy.md).
 
-Codex sign-in is explicit through host-only `--login-codex`, `--import-codex FILE`, and `--logout-codex`. Refresh rotation is serialized across projects using the shared host sign-in, with atomic writes and cancellation. Nothing imports or mounts host Pi credentials automatically.
+Codex sign-in is explicit through host-only `--login-codex`, `--import-codex FILE`, and `--logout-codex`, optionally targeting a named alias. Listing, selection and rename are host management actions; live proxies use the current selection for subsequent requests without changing the dummy capability. Refresh rotation is serialized across projects and bound to the captured alias, with atomic writes/cancellation and identity-change refusal. An opt-in explicit account pool supports quota-confirmed request routing, not blind retries, provider fallback or shared-budget resets. All members must be authorized for the same project/history. Account-bound remote history is not rewritten. Nothing imports or mounts host Pi credentials automatically.
 
 Existing projects are not silently migrated. Legacy nonempty `credentials.env` arrays fail validation with proxy migration instructions. Credentials previously stored inside sandbox state or mounted files remain accessible there; removing forwarding does not scrub old secrets.
 

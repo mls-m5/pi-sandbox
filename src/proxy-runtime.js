@@ -2,7 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { assert, privateDir, writeJson } from './util.js';
 import { DEFAULT_PROXY, startOpenAIProxy } from './proxy.js';
-import { getCodexCredential, readCodexCredential } from './codex-auth.js';
+import { readCodexCredential } from './codex-auth.js';
+import { createCodexAccountRouter } from './codex-accounts.js';
 import { publicHostLookup, readApiProfile } from './api-auth.js';
 
 export const PROXY_BASE_URL = 'http://127.0.0.1:43127/v1';
@@ -43,14 +44,15 @@ export async function prepareProxy(store, config, { upstream, codexAuthFetch } =
   const apiKey = isCodex ? credential.access : settings.profile ? apiProfile?.key : process.env[keyEnv];
   assert(apiKey, settings.profile ? `Host profile ${settings.profile} is missing. Run pis --login ${settings.profile}.` : `Set ${keyEnv} on the host before starting this proxy-enabled project.`);
   const baseUrl = isCodex ? CODEX_PROXY_BASE_URL : settings.provider === 'mistral' ? 'http://127.0.0.1:43127' : PROXY_BASE_URL;
-  const getCredentials = isCodex ? async signal => ({ apiKey: (await getCodexCredential(store, { signal, fetchImpl: codexAuthFetch })).access }) : undefined;
+  const router = isCodex ? createCodexAccountRouter(store, { fetchImpl: codexAuthFetch }) : undefined;
+  const getCredentials = router?.credentials;
   // Fixed short parent avoids AF_UNIX path-length limits even for deeply nested project storage.
   const runtimeDir = fs.mkdtempSync('/tmp/pis-proxy-');
   privateDir(runtimeDir);
   let proxy;
   try {
     const lookup = settings.provider === 'custom' && !upstream ? await publicHostLookup(new URL(apiProfile.url).hostname) : undefined;
-    proxy = await startOpenAIProxy({ ...settings, socketPath: path.join(runtimeDir, 'api.sock'), apiKey, getCredentials,
+    proxy = await startOpenAIProxy({ ...settings, socketPath: path.join(runtimeDir, 'api.sock'), apiKey, getCredentials, onUpstreamStatus: router?.invalidate,
       ...(apiProfile ? { upstreamBaseUrl: apiProfile.url } : {}), ...(lookup ? { lookup } : {}), ...(upstream ? { upstream } : {}) });
     const state = path.join(store.projectDir(config.id), 'state');
     privateDir(state);

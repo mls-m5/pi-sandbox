@@ -2,7 +2,8 @@ import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import { assert, privateDir } from './util.js';
-import { getCodexUsage } from './codex-auth.js';
+import { getCodexUsage, readCodexAccountsPolicy } from './codex-auth.js';
+import { getRoutedCodexUsage } from './codex-accounts.js';
 import { codexAvailability, waitForCodex } from './codex-wait.js';
 
 export function validateCodexAuto(config, options, command, { terminal = Boolean(process.stdin.isTTY && process.stdout.isTTY && process.stderr.isTTY) } = {}) {
@@ -15,7 +16,7 @@ export function validateCodexAuto(config, options, command, { terminal = Boolean
 
 // This is not an approval/host-command service. It accepts one fixed query and
 // returns only availability states. No error text, path, token or command crosses it.
-export async function startCodexAutoServer(store, { usage = getCodexUsage, sleep, now = Date.now, minCheckInterval = 60_000 } = {}) {
+export async function startCodexAutoServer(store, { usage = getCodexUsage, routeUsage = usage === getCodexUsage ? getRoutedCodexUsage : usage, sleep, now = Date.now, minCheckInterval = 60_000 } = {}) {
   const directory = fs.mkdtempSync('/tmp/pis-codex-auto-');
   privateDir(directory);
   const socketPath = path.join(directory, 'wait.sock');
@@ -58,8 +59,13 @@ export async function startCodexAutoServer(store, { usage = getCodexUsage, sleep
           await waitForCodex(store, {
             signal: controller.signal, sleep, now,
             usage: async (...args) => {
-              if (first) { first = false; return initial; }
-              return usage(...args);
+              if (first) {
+                first = false;
+                if (routeUsage === usage) return initial;
+                const policy = readCodexAccountsPolicy(store);
+                if (!policy.pool.includes(policy.active)) return initial;
+              }
+              return routeUsage(...args);
             },
             // Heartbeats are bounded fixed states, never host/upstream text.
             notify: () => { if (!socket.destroyed) socket.write('{"state":"waiting"}\n'); },
