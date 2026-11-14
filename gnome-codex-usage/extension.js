@@ -8,6 +8,7 @@ import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import {usageWindows} from './usage-format.js';
+import {usageDisplay} from './usage-display.js';
 
 const REFRESH_SECONDS = 300;
 
@@ -72,9 +73,9 @@ class UsageIndicator extends PanelMenu.Button {
     }
 
     _renderUsage() {
-        const windows = usageWindows(this._data, this._fetchedAt);
-        this._label.set_text(`Codex ${windows.map(window => `${Math.round(window.remaining)}% (${window.resetIn})`).join(' / ')}`);
-        this._status.label.set_text(windows.map(window => `${window.label}: ${window.remaining.toFixed(1)}% left · resets in ${window.resetIn}`).join('\n'));
+        const display = usageDisplay(this._data, this._fetchedAt);
+        this._label.set_text(display.panel);
+        this._status.label.set_text(display.menu);
     }
 
     destroy() {

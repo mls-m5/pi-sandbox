@@ -26,8 +26,13 @@ export function usageWindows(data, fetchedAt, now = Date.now()) {
         if (!window || !Number.isFinite(window.used_percent) || window.used_percent < 0 || window.used_percent > 100)
             return [];
         const resetAt = resetTimestamp(window, fetchedAt);
-        const weekly = index === 1;
-        return [{ key, label: weekly ? 'Weekly window' : 'Short window',
+        // Account tiers may return different/missing windows. Prefer the
+        // reported duration rather than assuming primary always means short.
+        const hasDuration = Number.isFinite(window.limit_window_seconds) && window.limit_window_seconds > 0;
+        const weekly = hasDuration ? window.limit_window_seconds >= 7 * 86400 : index === 1;
+        const label = hasDuration && !weekly && window.limit_window_seconds > 86400
+            ? 'Long window' : weekly ? 'Weekly window' : 'Short window';
+        return [{ key, label,
             remaining: 100 - window.used_percent, resetAt,
             resetIn: formatResetTime(resetAt, weekly, now) }];
     });
