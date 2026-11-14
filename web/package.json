@@ -1,0 +1,12 @@
+{
+  "name": "pis-web-local",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22.19.0" },
+  "scripts": {
+    "demo": "node cli.js demo",
+    "test": "node --test ../test/web-control.test.js ../test/web-ui.test.js ../test/web-app.test.js ../test/web-cli.test.js"
+  },
+  "dependencies": { "ws": "8.23.0" }
+}

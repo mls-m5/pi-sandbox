@@ -105,7 +105,7 @@ function removeOwnLock(file, snapshot) {
   } catch (error) { if (error.code !== 'ENOENT') throw error; }
 }
 
-export async function withLock(file, action) {
+export async function withLock(file, action, { retainOnError = () => false } = {}) {
   // Recovery is explicit and serialized by a kernel flock, never based on age.
   let fd, snapshot;
   try {
@@ -117,8 +117,10 @@ export async function withLock(file, action) {
     if (error.code !== 'EEXIST') throw error;
     throw Object.assign(new Error(`Resource is busy (${file}). On the host, run pis --unlock --dry-run to inspect stale locks, then pis --unlock to recover them. Live or unverifiable owners are never removed.`), { code: 'PIS_LOCKED' });
   }
+  let retain = false;
   try { return await action(); }
-  finally { try { removeOwnLock(file, snapshot); } finally { fs.closeSync(fd); } }
+  catch (error) { retain = retainOnError(error) === true; throw error; }
+  finally { try { if (!retain) removeOwnLock(file, snapshot); } finally { fs.closeSync(fd); } }
 }
 
 export function run(program, args, options = {}) {

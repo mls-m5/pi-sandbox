@@ -21,7 +21,7 @@ export class Store {
   }
   configPath(id) { return path.join(this.projectDir(id), 'project.json'); }
   lock(action) { return withLock(path.join(this.root, 'registry.lock'), action); }
-  projectLock(id, action) { return withLock(path.join(this.projectDir(id), 'project.lock'), action); }
+  projectLock(id, action, options) { return withLock(path.join(this.projectDir(id), 'project.lock'), action, options); }
 
   all() {
     const projects = [];

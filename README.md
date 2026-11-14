@@ -363,14 +363,33 @@ No project/state deletion command exists; `--prune` only handles eligible image 
 
 Hiding keys does not prevent API spending: sandboxed commands and extensions can use the capability within its host-enforced route/model/request limits. Outbound networking remains enabled; this is not a host/LAN access filter or exfiltration defense. Containers share the host kernel, not a VM-level boundary. Custom build instructions are trusted code; runtime keys and source are not supplied to builds. See [the proxy security notes](docs/proxy.md#security-boundaries-and-limitations).
 
+## Local web demo (dummy agents, no model tokens)
+
+Run in a **host terminal in this checkout**, with Node >=22.19 (not inside a sandbox if the browser is on the host):
+
+```sh
+npm --prefix web ci --ignore-scripts --omit=optional --no-audit --no-fund
+./start_server.sh
+```
+
+The launcher selects a compatible local/bundled Node or uses npm-provided Node 24 (may download on first use), without changing your default Node. Options: `./start_server.sh --port 43129 --agents 3`. With a supported Node already selected, `npm run web:demo` still works.
+
+Choose a hidden temporary password of at least 20 characters, then open **http://127.0.0.1:43128**. Select either dummy agent to try streaming chat, history, tools, stop and the **Simulera kvotstopp 5 s** button. The server binds loopback only; all demo credentials/history are memory-only and reset on exit. This does not launch Pi/Podman or spend model tokens. Real Pi/container web control and Internet deployment are not implemented yet. See [start options, security and verification limits](docs/web-control.md).
+
 ## Development and tests
 
 ```sh
 npm run check                  # Syntax checks + fast tests; no model calls
+npm run demo:dummy             # Offline lorem + simulated Codex exhaustion/refill/resume
+npm run test:web               # Optional local web suite, after installing web/ dependencies
 npm run test:integration       # Builds and runs real rootless Podman containers
 # Optional: real installed candidate CLI, only local fake model services:
 PIS_PI_PACKAGE=/path/to/node_modules/@earendil-works/pi-coding-agent npm run test:pi-compat
+# Optional: installed compatible Pi RPC state/history/shutdown, no model or network calls:
+PIS_PI_PACKAGE=/path/to/node_modules/@earendil-works/pi-coding-agent npm run test:rpc-compat
 ```
+
+The [offline dummy backend](docs/dummy-agent.md) speaks the same local JSONL RPC/control-view path without launching Pi or using provider credentials. It accepts test prompts such as `/dummy quota 5`, `/dummy quota hold`, `/dummy refill`, `/dummy transient` and `/dummy error`. Its automatic resumption is a simulator using the real host wait protocol, not production `--auto-wait-codex` support in RPC. The optional [local web demo](docs/web-control.md) now uses this backend; real Pi/container web mode remains planned.
 
 Integration tests require the runtime prerequisites plus `script` from util-linux. They use fake credentials and a local fake OpenAI upstream, make no paid/external model API requests, remove temporary containers/project data/image tags, and may leave reusable Podman build caches/base images.
 
@@ -379,6 +398,9 @@ Real-container coverage includes package/custom instruction builds, absolute wor
 ## Further documentation
 
 - [Start here when continuing development inside a container](docs/handover.md)
+- [Local dummy web demo: setup, security and verification](docs/web-control.md)
+- [Offline dummy agent and quota/resumption test messages](docs/dummy-agent.md)
+- [Local RPC adapter, bounded text views and verification](docs/pi-rpc.md)
 - [User-approved apt and host Git operations](docs/host-actions.md)
 - [Planned host Git identity defaults](docs/git-identity-plan.md)
 - [Known issues and resolved CNI warning](docs/known-issues.md)

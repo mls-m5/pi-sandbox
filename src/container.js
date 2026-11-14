@@ -190,6 +190,9 @@ async function launchOnce(store, config, options) {
     config = store.load(config.id);
     if (options.agent) config = { ...config, agent: options.agent };
     const isClaude = config.agent === 'claude';
+    if (options.webRpc) {
+      assert(!isClaude && options.mode === 'pi' && !options.agent && !options.waitCodex && !options.autoWaitCodex && !options.fresh && !options.stdio && !options.buildOnly && isDeepStrictEqual(options.args, ['--mode', 'rpc']), 'Web RPC requires the configured Pi agent and fixed RPC/session defaults; no Claude, custom commands, quota-auto or approval flow.');
+    }
     if (options.autoWaitCodex) validateCodexAuto(config, options, piCommand(options.args, options.fresh));
     if (options.waitCodex) {
       validateCodexWait(config, options);
@@ -248,9 +251,15 @@ async function launchOnce(store, config, options) {
         const exists = spawnSync('podman', ['container', 'exists', invocation.name], { stdio: 'ignore', timeout: 15_000 });
         containerStopped = exists.status === 1;
       }
-      if (aptRequests) await aptRequests.close();
-      if (codexAuto) await codexAuto.close();
-      if (proxy) await proxy.close();
+      try {
+        if (aptRequests) await aptRequests.close();
+        if (codexAuto) await codexAuto.close();
+        if (proxy) await proxy.close();
+      } finally {
+        if (options.webRpc && invocation && !containerStopped) {
+          throw Object.assign(new Error('Cannot confirm web sandbox shutdown. Project lock retained; inspect containers on the host, then use pis --unlock when safe.'), { code: 'PIS_CONTAINER_UNKNOWN' });
+        }
+      }
     }
     if (proposal) {
       assert(containerStopped, 'Cannot confirm sandbox shutdown; no host action was performed.');
@@ -273,7 +282,7 @@ async function launchOnce(store, config, options) {
       } else console.error('pis: package request declined; configuration unchanged.');
     }
     return status;
-  }).finally(async () => {
+  }, options.webRpc ? { retainOnError: error => error.code === 'PIS_CONTAINER_UNKNOWN' } : undefined).finally(async () => {
     if (built) schedulePrune(store);
     if (maintenanceReady) {
       const { scheduleUpdates } = await import('./updates.js');

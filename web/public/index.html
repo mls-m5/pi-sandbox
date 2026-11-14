@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="sv"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>pis · lokal kontroll</title><link rel="stylesheet" href="/style.css"><script type="module" src="/app.js"></script></head>
+<body>
+<header><h1>pis <span>lokal kontroll</span></h1><p id="mode-note">Lokala agenter · inga värdgodkännanden</p><button id="logout" hidden>Logga ut</button></header>
+<section id="login"><h2>Logga in</h2><form id="login-form"><label>Lösenord <input id="password" type="password" autocomplete="current-password" required maxlength="1024"></label><button>Logga in</button></form><p id="login-note" role="status"></p></section>
+<main id="workspace" hidden>
+<aside><h2>Agenter</h2><p id="connection" role="status">Ansluter…</p><div id="agents"></div></aside>
+<section class="chat"><div class="toolbar"><h2 id="agent-title">Välj en agent</h2><button id="refresh" disabled>Hämta historik</button></div><p id="state" role="status"></p><p id="sync-note"></p><div id="messages" aria-label="Konversation"></div><details><summary>Senaste verktygshändelser</summary><div id="tools"></div></details>
+<form id="prompt-form"><label>Meddelande<textarea id="prompt" rows="3" maxlength="64000" aria-describedby="prompt-help" placeholder="Skriv till dummy-agenten…"></textarea></label><small id="prompt-help">Enter skickar · Shift+Enter ger ny rad.</small><div class="actions"><button id="send" disabled>Skicka</button><button id="stop" type="button" disabled>Stoppa</button></div></form>
+<div class="actions"><button id="quota" disabled>Simulera kvotstopp 5 s</button><button id="refill" disabled>Fyll på dummy-kvot</button></div><p id="command-note" role="status"></p>
+</section></main>
+<footer>Lokal testversion. Innehåll från agenter är opålitlig text. Ingen publik serverkonfiguration stöds ännu. Riktiga Pi-projekt kan använda modellkvot; bara dummyn är tokenfri.</footer>
+</body></html>
