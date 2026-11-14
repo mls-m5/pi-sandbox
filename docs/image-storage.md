@@ -1,0 +1,62 @@
+# Cache-friendly images and storage verification
+
+The image-storage optimization is implemented for **future builds**, not applied in place to existing images/containers. The host exhaustion diagnosis and historical measurements remain in [image-storage-plan.md](image-storage-plan.md). No host images/cache/state or lockfiles were deleted while implementing this change. **No before/after physical saving has been measured here: Podman is unavailable in this sandbox.**
+
+## Build order and sharing
+
+Both ordinary and managed builds now use an explicit `podman build --layers` and this order:
+
+1. Pinned Node base and fixed common apt baseline: `bash`, `ca-certificates`, `git`, `ripgrep`.
+2. Pi install; managed builds instead verify/install their exact top-level artifact set with the existing build-only installer.
+3. Optional official Claude install for Claude projects, and the explicitly configured image extensions. Baseline extensions are installed together in one RUN so their permissions/cache cleanup are committed with those installations.
+4. A reusable apt step for default development tools (`build-essential`, `python3`) **only when declared by that project**, then remaining project-specific apt packages, followed by existing custom instructions in their original order.
+5. Small bootstrap/probe/manifest copies, fixed launcher setup and final runtime user/entrypoint.
+
+Projects with the same Pi/agent/extension inputs but different apt lists or custom instructions have the same expensive runtime prefix. Project roots/IDs, provider overlays, probe-helper source and per-release IDs are not embedded in that prefix. Identical extension lists/version sets share their install step; empty/different arrays remain distinct. Extensions are not sorted, migrated, removed or silently re-added. Claude binaries remain opt-in to Claude images; Pi-only projects do not acquire them. Pi and Claude can share the baseline through Pi installation, not each other's differing later runtime layers.
+
+This uses existing content-addressed engine layers, **not a mutable global runtime tag or a new base-image store**. Cached prefix reuse depends on a compatible engine/cache and identical inputs; actual sharing is verified by the optional host benchmark, not guaranteed solely by tags or recipe text. Distinct project tags may still reference shared content. `--rebuild` keeps its explicit no-cache semantics; other builds may reuse the shared prefix. Changing the recipe changes image fingerprints; running containers stay untouched.
+
+The common apt baseline is not expanded to force project defaults on everyone. New-project defaults `build-essential`/`python3` remain normal declared project packages; explicit `image.packages: []` gets neither of them. Duplicate/common package names are not installed a second time, and package arguments remain shell-quoted as data. Declared unversioned default-tool sets share their own apt layer even when later extras differ; a version-qualified default stays with the final project apt solve instead of first installing its unpinned counterpart. Version-qualified overrides are preserved as distinct literal apt specifications. The project apt step enables `--allow-downgrades` only when an explicit `=VERSION` specification is present, so a deliberate pin can replace a newer common-layer version rather than failing solely because the baseline was installed first. No package list or source config file is rewritten.
+
+### Install-order compatibility contract
+
+**Project apt packages now become available after Pi/image-extension installation**, rather than before it. They remain available during `image.extraInstructions` and at runtime. This is intentional: an apt proposal should not force every project to redownload/reinstall Pi/plugins. Custom instructions still run in their declared order above all package installs and before bootstrap setup, as before, and may depend on declared apt tools and installed Pi/packages.
+
+A package that *requires* a project-specific OS tool/library while installing/importing at install time may need reviewed project-specific preparation in `image.extraInstructions` after apt. Do not silently enable npm scripts, install extra tools in every project, run package code on the host, or pretend all third-party installers are certified with the new order. Existing extension policy already requires usable published entry points with lifecycle scripts disabled. Custom commands that intentionally alter immutable package permissions must now leave the files readable/executable for the configured runtime user themselves; the final bootstrap no longer recursively changes all of `/opt/pis` behind them.
+
+## Cache cleanup and permissions
+
+- Baseline Pi, Claude and extension installs use `/tmp/pis-npm-cache` and remove it plus root's npm cache **in the same RUN**. A later `rm` would merely hide the lower layer's bytes. Cleanup is not postponed to a final image step.
+- The managed installer puts npm downloads/log/cache below its private temporary artifact directory; its `finally` removes the directory on both success and failure. Top-level SHA-512 checks, sealed unique tarball filenames, scripts-disabled install flags and exact source identity remain unchanged. Host code never executes package installs.
+- Apt lists/download archives are removed in their respective apt RUNs. We do not delete project state/toolchains, extension package contents or arbitrary user caches.
+- Image extension readability is established **in the installation RUN**, not by recursively chmodding the large tree after bootstrap changes. Late permission setup touches only the small named bootstrap/metadata files and, for managed builds, the small probe library. Global npm executable/package modes retain npm's installed permissions. User identity/mount/proxy/approval behavior is unchanged.
+
+Custom image instructions can still create their own caches/large layers; this optimization does not rewrite arbitrary RUN commands. npm transitive dependency drift, apt updates and engine ID-mapped copies can still change allocated bytes. The official Node base's existing lower layers are not retroactively shrunk by cleanup.
+
+## Managed updates and pruning
+
+Managed exact artifact locks and the verified installer are copied before the install they govern. Project apt differences and frequently changing probe source no longer sit before that install. The per-build `managed-release.json` stays late: **each managed build still gets a unique fingerprint/tag**, even with identical version sets. Active/candidate/previous leases, staged image IDs, production probe, policy authorization, state backup and rollback logic are unchanged. Old receipts whose recipe identity no longer matches fall back to the declared baseline until a new candidate is built/probed; image rollback cannot reinterpret old contents as this new recipe. This change does not certify real Podman activation/rollback beyond the existing test gates.
+
+There are no new shared named images to prune. Normal pruning still only removes eligible registered-project fingerprint tags with lease/recent/used/foreign-tag protections and `rmi --no-prune`. Cached parents remain engine-owned content, not a new permission to sweep dangling layers or Buildah workspaces. Old image/cache layers do not disappear just because future builds use this order. Never use `podman system reset`, delete graph storage or remove pis state to apply the optimization.
+
+### Stale prune-worker mutex
+
+`pis --unlock --dry-run`, then `pis --unlock`, now also consider an **existing** private host `prune.lock`, alongside existing recovery scopes. Recovery uses the same kernel-flock guard, bounded owner metadata, independently proven-dead owner and open-inode/content/owner rechecks; live/unknown/unsafe/replaced locks remain blocked. It does not create a missing prune lock, require a selected project/Podman for this host mutex, kill a worker or delete containers/data. Project/update lock recovery still separately requires the usual no-container proof. The stale lock mentioned in the earlier host diagnosis is historical, not authorization to remove a current live lock. No host recovery was executed here.
+
+## Verification and host benchmark
+
+`npm run check` exercises pure recipe/identity tests, temporary fake-npm cache cleanup on success/failure, existing managed build/probe/lease/rollback tests and conservative mutex recovery including real CLI/flock. The fast tests make no model calls, apt/npm downloads or engine requests. The new lock recovery coverage does not assume Podman is present. Existing opt-in real-Podman integration suites continue to cover packages, state, image extensions, approval/proxy and managed update workflows against fake services; **not rerun here**.
+
+For a controlled four-image legacy/new-layout comparison, run on an idle **host** with local rootless Podman and **at least 10 GiB free** (a benchmark guard, not a universal guarantee):
+
+```sh
+npm run test:storage
+# Optional capture of measurements:
+npm run test:storage > /tmp/pis-image-storage-benchmark.log 2>&1
+```
+
+This is a separate opt-in (`PIS_STORAGE_BENCHMARK=1`), not enabled by `PIS_INTEGRATION=1`. It deliberately builds two different apt lists (declared default development tools plus `curl` versus those defaults plus `jq`) for a frozen pre-change recipe and the new recipe. Each includes source-pinned Pi and the normal default image extension. A unique inert prefix marker avoids accidentally timing an entirely cached production prefix; B then deliberately reuses A's common cache, and each build is repeated for a cached timing. It downloads public apt/npm artifacts **only in Podman**, mounts no project/state/auth data and sends no model prompt. A network-disabled version check exercises actual launcher startup; new images also get explicit no-cache-directory/runtime-readable checks.
+
+The test reports uncached-prefix/shared-prefix/cached build times, launcher startup time, virtual image size, layer-reference/intersection/union counts, shared/unique serialized OCI layer-blob bytes, and best-effort `du -s -B1` **allocated graph storage bytes** before/after builds. Each image is exported temporarily as an OCI directory, blob file sizes are checked against its manifest, and the export is deleted before the next image. OCI blob bytes measure actual serialized payload sharing, not physical overlay allocation; extra export space/time is required. Unreadable graph measurements are `null`, not fabricated. It asserts more shared runtime layers for differing apt lists in the new layout. **Do not sum virtual image sizes as physical usage, or call a layer-reference count a byte saving.** The graph deltas include retained build caches, legacy trials, possible ID maps and concurrent host activity; they are not isolated reclaimable savings. The benchmark never prunes arbitrary data to make its numbers prettier.
+
+Normal completion removes only the test's temporary contexts and unique image tags with `rmi --no-prune`; downloaded base/build-cache records may remain. An interrupted benchmark can leave its `localhost/pis-storage-benchmark-*` tags/temporary contexts for explicit host inspection. Do not run it on an already nearly-full filesystem or a machine with important concurrent builds. No actual comparison numbers are claimed until this gate is run on the host. Full package-approval/rebuild/session continuation and real managed build/probe/activate/rollback still need host integration verification after this layout change.

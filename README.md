@@ -237,7 +237,7 @@ This is a partial example, not a complete replacement configuration. Keep the ge
 
 Generated configuration also contains an **inert `examples` section**. Copy examples into active fields to enable them; examples themselves never share directories or execute instructions.
 
-- New projects include `build-essential` and `python3` in `image.packages`. Existing projects keep their current package lists. Packages are Debian apt package names, optionally with versions.
+- New projects include `build-essential` and `python3` in `image.packages`. Existing projects keep their current package lists. Packages are Debian apt package names, optionally with versions. Common tools/Pi/image extensions now precede project apt additions in a cache-friendly shared prefix; custom instructions still run after project apt. Built-in npm installs remove their caches in the same RUN, not in a later whiteout layer. No mutable shared-base tag is used and running containers/old caches are untouched. Packages needing project OS tools **during extension installation** may require reviewed custom preparation after apt; see [image layout, compatibility and host benchmark](docs/image-storage.md).
 - In an interactive `pis` session, Pi can call the built-in `request_apt_packages` tool for missing apt packages. The sandbox can only propose: Pi exits, then **the host terminal** displays the exact names and asks you to type a new two-digit confirmation code. Enter rejects the request. Approval updates the project configuration atomically, builds the new image and restarts Pi with the latest saved session (`--continue`). After a successful build, Pi receives one English user message listing the approved packages and asking it to continue the previous task. This automatically triggers a new model turn and uses model tokens. The original prompt is not replayed; normal later starts do not repeat the installation message. Extra one-off Pi CLI options are not replayed either. The tool is unavailable in noninteractive/print modes, `--no-session`, `--no-extensions`, and `--exec`/`--bash`. Package suggestions cannot add arbitrary shell instructions or npm packages. The host request protocol is typed; it rejects unknown actions rather than executing arbitrary commands. The separate `request_host_git` tool can request a host-side push with an independent confirmation showing the remote URL, branch and exact commit. See [host actions and Git authentication requirements](docs/host-actions.md#host-git-commands-push-implemented).
 - Advanced customization supports single-line `RUN` instructions only, without trailing continuations or build mounts. These are trusted executable code.
 - Changes to image settings or extension install sources trigger a build on the next launch; mounts, credentials, hints, and formatting do not.
@@ -342,7 +342,7 @@ Host Pi state at `~/.pi/agent` is not mounted. Conversations are stored in the p
 
 Only one ordinary build/running container per registered project is allowed at a time. Opted-in update maintenance uses a separate private context/lock and may build/probe concurrently without touching the running session. Separate projects can run concurrently. Registry updates are also locked; conflicting edits are rejected rather than silently overwriting changes.
 
-If a process is forcibly killed or the machine crashes, recover on the **host** with `pis --unlock --dry-run`, then `pis --unlock`. It checks the global `registry.lock` and the host-only Codex auth lock, and the selected/current project's `project.lock` and existing `updates.lock` without acquiring the stale registry lock. Only proven-dead owners are recovered; live/unknown owners, unsafe files and project locks with any remaining container are kept. Registry/Codex-auth recovery needs no Podman and can succeed while an unrelated project is active. There is no force option and no container is killed/deleted. Recovery requires `/usr/bin/flock` (util-linux); its kernel guard releases automatically on process death. Normal launches never steal locks. New locks record boot/process-start identity and cleanup never removes another process's replacement lock.
+If a process is forcibly killed or the machine crashes, recover on the **host** with `pis --unlock --dry-run`, then `pis --unlock`. It checks the global `registry.lock`, any existing host-only `prune.lock` and the host-only Codex auth lock, and the selected/current project's `project.lock` and existing `updates.lock` without acquiring the stale registry lock. Only proven-dead owners are recovered; live/unknown owners, unsafe files and project locks with any remaining container are kept. Registry/prune-mutex/Codex-auth recovery needs no Podman and can succeed while an unrelated project is active. There is no force option and no container is killed/deleted. Recovery requires `/usr/bin/flock` (util-linux); its kernel guard releases automatically on process death. Normal launches never steal locks. New locks record boot/process-start identity and cleanup never removes another process's replacement lock.
 
 No project/state deletion command exists; `--prune` only handles eligible image tags. Do not edit or delete state/configuration while its project is running. Old generated image tags can accumulate when image configuration changes.
 
@@ -386,6 +386,7 @@ npm run check                  # Syntax checks + fast tests; no model calls
 npm run demo:dummy             # Offline lorem + simulated Codex exhaustion/refill/resume
 npm run test:web               # Optional local web suite, after installing web/ dependencies
 npm run test:integration       # Builds and runs real rootless Podman containers
+npm run test:storage           # Separate opt-in host legacy/new storage benchmark; >=10 GiB free
 # Optional: real installed candidate CLI, only local fake model services:
 PIS_PI_PACKAGE=/path/to/node_modules/@earendil-works/pi-coding-agent npm run test:pi-compat
 # Optional: installed compatible Pi RPC state/history/shutdown, no model or network calls:
@@ -414,6 +415,7 @@ Real-container coverage includes package/custom instruction builds, absolute wor
 - [Wait for Codex quota, then resume a saved task](docs/codex-wait.md)
 - [Claude Code mode: setup and weaker credential boundary](docs/claude-code.md)
 - [Image extension setup and remaining plans](docs/extensions-plan.md)
+- [Cache-friendly shared image layers, compatibility and storage benchmark](docs/image-storage.md)
 - [Managed Pi/npm updates, rollback and verification limits](docs/updates.md)
 - [Pi 1.5 upgrade, watchdog compatibility and remaining update design](docs/updates-plan.md)
 - [Design and configuration](docs/design.md)

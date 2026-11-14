@@ -2,7 +2,7 @@
 
 ## User request
 
-The host filesystem filled up while running/building multiple pis projects. The user wants the containerized development agent to optimize image construction so agents share a common runtime and add project-specific tools above it. This document records the host diagnosis and proposed work; **the optimization is not implemented yet**.
+The host filesystem filled up while running/building multiple pis projects. The user wants the containerized development agent to optimize image construction so agents share a common runtime and add project-specific tools above it. This document records the host diagnosis and original proposal. **The cache-friendly layout and same-step npm-cache cleanup are now implemented for future builds**; see [image-storage.md](image-storage.md) for the exact order/compatibility contract, tests and separate opt-in host benchmark. No real-Podman comparison was possible in the sandbox, so physical savings remain unmeasured. The existing private prune-worker mutex is now included in conservative `--unlock` recovery; no host lock was removed.
 
 Read `src/container.js`, `src/updates.js`, `src/prune.js`, [managed updates](updates.md), [the update plan](updates-plan.md) and [the handover](handover.md) before changing image identity/build behavior. Pi/Claude support and managed updates were added after the original simple image builder.
 
@@ -54,9 +54,9 @@ A `du -s -B1` scan over readable overlay `*/diff/...` directories found approxim
 
 These are diagnostic directory totals, **not guaranteed reclaimable bytes**. They include different versions/intermediate/possibly ID-mapped copies; the Pi path does not cover every hoisted dependency. Not everything is redundant or safe to delete. Multiple-GB savings are plausible, but no optimized comparison build has been measured.
 
-## Current construction and likely duplication
+## Pre-optimization construction and likely duplication (historical)
 
-`containerfile()` currently does roughly:
+Before the implementation, `containerfile()` did roughly:
 
 1. Pinned Node base.
 2. One apt installation combining common tools and **project-specific** packages.
@@ -68,7 +68,7 @@ Changing a project's apt list invalidates later installation cache steps. Projec
 
 Distinct project tags alone do **not** imply duplicated physical layers. Podman already reuses identical cached base layers. ID-mapped copies may still add storage depending on namespace mappings and engine behavior; a shared base does not eliminate every such copy.
 
-## Proposed implementation direction
+## Original proposed implementation direction
 
 1. Separate stable common dependencies/runtime installation from project customization.
 2. Put common apt tools (and deliberate default packages), Node/Pi and reusable runtime dependencies **before** project-specific apt packages.
@@ -114,4 +114,4 @@ Do not run `podman system reset`, remove the Podman graph directory, or delete p
 - Report measured before/after disk use, and distinguish physical layer bytes from virtual image sizes.
 - `npm run check`; use existing fake-upstream tests, not paid model calls or external pushes as smoke tests.
 
-No image-build/storage code was changed in preparing this handover.
+No image-build/storage code was changed while preparing the original diagnosis. The subsequent implementation is documented in [image-storage.md](image-storage.md): shared prefix without mutable global bases, late project apt/customization/probe code, same-step cache cleanup, unchanged managed verification/leases and explicitly scoped prune-lock recovery. Tests are offline; real-engine before/after numbers and full integration gates remain pending.

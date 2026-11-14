@@ -190,7 +190,7 @@ Configuration editing requires a registered project. `pis --new` creates the ini
 
 Use a pinned base image and pinned Pi version. The base image should provide Node, Bash, Git, ripgrep, and CA certificates. Start with a Debian-based image and an apt package list.
 
-`image.packages` installs additional OS packages during image creation. Validate package entries and handle them as data, not shell fragments.
+`image.packages` installs additional OS packages during image creation. Validate package entries and handle them as data, not shell fragments. The current cache-friendly layout installs the fixed common apt baseline and Pi/plugin runtime first, then project apt additions and custom instructions, then small bootstrap files. Same-runtime projects can reuse layers despite differing tools. npm cache cleanup happens in the installation RUN; no mutable global base tag is introduced. Project-specific OS tools are no longer available during the earlier common npm install; reviewed install-time preparation belongs in custom instructions after apt. See [implemented layout, compatibility and verification limits](image-storage.md).
 
 `image.extraInstructions` supports advanced Containerfile customization, for example:
 
