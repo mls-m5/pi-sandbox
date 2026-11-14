@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
-# Local dummy web demo only. Does not change the system Node or normal pis config.
+# Local dummy web demo by default; --project explicitly selects real Pi.
+# Does not change the system Node or normal pis configuration.
 set -euo pipefail
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
   printf '%s\n' \
-    'Usage: ./start_server.sh [--port PORT] [--agents 1..8] [--password-stdin]' \
-    'Starts the local dummy-only web demo; no real agents or model calls.' \
+    'Usage: ./start_server.sh [--project NAME (repeatable) | --agents 1..8] [--port PORT] [--password-stdin]' \
+    'Default: dummy-only demo, no model calls. --project starts real registered Pi sandboxes; prompts may cost tokens.' \
     'Uses Node >=22.19 on PATH, then a compatible bundled Node, otherwise npm-provided Node 24.' \
     'The npm fallback may download Node. It does not change your default Node.'
   exit 0
@@ -25,15 +26,15 @@ compatible_node() {
 
 cd -- "$ROOT"
 if command -v node >/dev/null 2>&1 && compatible_node node; then
-  exec node "$ROOT/web/cli.js" demo "$@"
+  exec node "$ROOT/web/cli.js" start "$@"
 fi
 BUNDLED="${HOME:-}/.local/share/pi-node/current/bin/node"
 if [[ -x "$BUNDLED" ]] && compatible_node "$BUNDLED"; then
-  exec "$BUNDLED" "$ROOT/web/cli.js" demo "$@"
+  exec "$BUNDLED" "$ROOT/web/cli.js" start "$@"
 fi
 if ! command -v npm >/dev/null 2>&1; then
   printf '%s\n' 'Node >=22.19 or a working npm (for the Node 24 fallback) is required.' >&2
   exit 1
 fi
 printf '%s\n' 'Using npm-provided Node 24 (may download on first use; system Node unchanged).' >&2
-exec npm exec --yes --package=node@24 -- node "$ROOT/web/cli.js" demo "$@"
+exec npm exec --yes --package=node@24 -- node "$ROOT/web/cli.js" start "$@"

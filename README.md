@@ -374,7 +374,7 @@ npm --prefix web ci --ignore-scripts --omit=optional --no-audit --no-fund
 
 The launcher selects a compatible local/bundled Node or uses npm-provided Node 24 (may download on first use), without changing your default Node. Options: `./start_server.sh --port 43129 --agents 3`. With a supported Node already selected, `npm run web:demo` still works.
 
-Choose a hidden temporary password of at least 20 characters, then open **http://127.0.0.1:43128**. Select either dummy agent to try streaming chat, history, tools, stop and the **Simulera kvotstopp 5 s** button. The server binds loopback only; all demo credentials/history are memory-only and reset on exit. This does not launch Pi/Podman or spend model tokens. Real Pi/container web control and Internet deployment are not implemented yet. See [start options, security and verification limits](docs/web-control.md).
+Choose a hidden temporary password of at least 20 characters, then open **http://127.0.0.1:43128**. Select either dummy agent to try streaming chat, history, tools, stop and the **Simulera kvotstopp 5 s** button. The server binds loopback only; all demo credentials/history are memory-only and reset on exit. This does not launch Pi/Podman or spend model tokens. Experimental real Pi projects can be selected explicitly with `./start_server.sh --project NAME` (use `pis --list` for existing names/IDs); their prompts can spend quota/credits. This path has fake-Podman tests but has not been validated with real containers here. Git/apt web approvals, production quota-auto in RPC and Internet deployment remain unsupported. See [start options, security and verification limits](docs/web-control.md).
 
 ## Development and tests
 
@@ -389,7 +389,7 @@ PIS_PI_PACKAGE=/path/to/node_modules/@earendil-works/pi-coding-agent npm run tes
 PIS_PI_PACKAGE=/path/to/node_modules/@earendil-works/pi-coding-agent npm run test:rpc-compat
 ```
 
-The [offline dummy backend](docs/dummy-agent.md) speaks the same local JSONL RPC/control-view path without launching Pi or using provider credentials. It accepts test prompts such as `/dummy quota 5`, `/dummy quota hold`, `/dummy refill`, `/dummy transient` and `/dummy error`. Its automatic resumption is a simulator using the real host wait protocol, not production `--auto-wait-codex` support in RPC. The optional [local web demo](docs/web-control.md) now uses this backend; real Pi/container web mode remains planned.
+The [offline dummy backend](docs/dummy-agent.md) speaks the same local JSONL RPC/control-view path without launching Pi or using provider credentials. It accepts test prompts such as `/dummy quota 5`, `/dummy quota hold`, `/dummy refill`, `/dummy transient` and `/dummy error`. Its automatic resumption is a simulator using the real host wait protocol, not production `--auto-wait-codex` support in RPC. The optional [local web demo](docs/web-control.md) now uses this backend; an experimental registered-Pi-project mode is available via explicit `--project`, with real-container verification still pending.
 
 Integration tests require the runtime prerequisites plus `script` from util-linux. They use fake credentials and a local fake OpenAI upstream, make no paid/external model API requests, remove temporary containers/project data/image tags, and may leave reusable Podman build caches/base images.
 
