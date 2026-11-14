@@ -77,7 +77,7 @@ or PIS_CLAUDE_BIN set to its absolute executable path. No host home is mounted.
 Old pis images are cleaned in the background after builds by default.
 --prune previews with --dry-run; keeps current/previous, recent and used images.
 PIS_AUTO_PRUNE=0 disables automatic cleanup; project data is never pruned.
---unlock checks registry/Codex-auth locks and current project/update locks on the host.
+--unlock checks registry/prune-worker/Codex-auth locks and current project/update locks on the host.
 Live/unknown owners and project containers are never force-stopped or unlocked.
 --updates on enables daily background Pi patch/unpinned npm image checks
 (and retains any prior 'all' pin-movement choice);

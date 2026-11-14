@@ -26,6 +26,19 @@ test('unlock options are explicit and preserve normal management/session restric
   for (const args of [['--unlock', '--force'], ['--unlock', '--fresh'], ['--unlock', '--bash'], ['--unlock', '--', 'rm'], ['--unlock', '--prune'], ['--dry-run']]) assert.throws(() => parse(args));
 });
 
+test('actual pis --unlock recovers a proven-dead prune mutex without selecting a project or requiring Podman', t => {
+  const { store, base } = fixture(t), file = path.join(store.root, 'prune.lock');
+  fs.writeFileSync(file, JSON.stringify({ pid: 2147483647 }), { mode: 0o600 });
+  const invoke = args => spawnSync(process.execPath, [cli, '--unlock', ...args], { cwd: base, env: { HOME: base, PATH: '/usr/bin:/bin', PIS_HOME: store.root }, encoding: 'utf8' });
+  const preview = invoke(['--dry-run']);
+  assert.equal(preview.status, 0, preview.stderr);
+  assert.ok(preview.stdout.includes('would-remove')); assert.ok(preview.stdout.includes('prune'));
+  assert.equal(fs.existsSync(file), true);
+  const recovered = invoke([]);
+  assert.equal(recovered.status, 0, recovered.stderr); assert.ok(recovered.stdout.includes('removed'));
+  assert.equal(fs.existsSync(file), false);
+});
+
 test('new locks record process identity and never unlink a replacement on exit', async t => {
   const { file } = fixture(t);
   const identity = processIdentity();
@@ -50,6 +63,21 @@ test('owner checks fail closed for live/unknown legacy owners and identify old b
   assert.equal(lockOwnerState({ pid: 1 }, { identity, kill: () => { throw Object.assign(new Error(), { code: 'ESRCH' }); } }), 'dead');
   assert.equal(lockOwnerState({ pid: 1, bootId: 'old' }, { identity, kill: () => assert.fail() }), 'dead');
   assert.equal(lockOwnerState({ pid: 1, bootId: 'current', startTime: '19' }, { identity, kill: () => assert.fail() }), 'dead');
+});
+
+test('prune worker lock recovery is host-only, explicit, private and refuses live or changed owners', t => {
+  const { store, base } = fixture(t), file = path.join(store.root, 'prune.lock');
+  const options = { cwd: base, containers: () => assert.fail('Prune mutex recovery must not query Podman.'), ownerState: dead };
+  fs.writeFileSync(file, JSON.stringify({ pid: 12345 }), { mode: 0o600 });
+  const entry = settings => recoverProjectLocks(store, { ...options, ...settings }).locks.find(lock => lock.scope === 'prune');
+  assert.equal(entry({ dryRun: true }).status, 'would-remove'); assert.ok(fs.existsSync(file));
+  assert.equal(entry({ ownerState: () => 'alive' }).status, 'blocked');
+  assert.equal(entry({ ownerState: () => 'unknown' }).status, 'blocked');
+  assert.equal(entry({ beforeRemove: () => { fs.unlinkSync(file); fs.writeFileSync(file, JSON.stringify({ pid: process.pid }), { mode: 0o600 }); } }).status, 'blocked');
+  assert.ok(fs.existsSync(file));
+  fs.chmodSync(file, 0o644); assert.equal(entry({}).status, 'blocked');
+  fs.chmodSync(file, 0o600); assert.equal(entry({}).status, 'removed');
+  assert.equal(entry({}), undefined, 'Absent prune locks are not created.');
 });
 
 test('legacy stale registry recovery needs no Podman and dry-run does not remove it', t => {

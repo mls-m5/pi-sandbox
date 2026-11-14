@@ -87,6 +87,12 @@ export function recoverLock(file, scope, { dryRun = false, ownerState = lockOwne
 
 export function recoverProjectLocks(store, { cwd, project, dryRun = false, ...dependencies } = {}) {
   const locks = [recoverLock(path.join(store.root, 'registry.lock'), 'registry', { dryRun, ...dependencies })];
+  // Host-only prune worker mutex; it grants no container/state mutation itself.
+  // Recover only an existing, independently proven-dead private lock using the
+  // same inode/owner rechecks and kernel-flock guard as other recoveries.
+  const prune = path.join(store.root, 'prune.lock');
+  try { fs.lstatSync(prune); locks.push(recoverLock(prune, 'prune', { dryRun, ...dependencies })); }
+  catch (error) { if (error.code !== 'ENOENT') locks.push({ scope: 'prune', status: 'blocked', reason: 'Cannot inspect prune worker lock.' }); }
   const auth = path.join(store.root, 'auth'), codex = path.join(auth, 'openai-codex.lock');
   try {
     fs.lstatSync(codex);
