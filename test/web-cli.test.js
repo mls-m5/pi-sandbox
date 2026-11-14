@@ -2,20 +2,21 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import net from 'node:net';
+import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import { randomKey } from '../web/common.js';
 
 const installed = fs.existsSync(new URL('../web/node_modules/ws/package.json', import.meta.url));
-test('web demo CLI starts two fixed dummies, keeps secrets out of output and shuts down on SIGTERM', { skip: !installed, timeout: 15_000 }, async t => {
+test('pis --server starts two fixed dummies, keeps secrets out of output and shuts down on SIGTERM', { skip: !installed, timeout: 15_000 }, async t => {
   const reservation = net.createServer();
   await new Promise(resolve => reservation.listen(0, '127.0.0.1', resolve));
   const port = reservation.address().port;
   await new Promise(resolve => reservation.close(resolve));
   const password = randomKey();
-  const child = spawn(process.execPath, [fileURLToPath(new URL('../web/cli.js', import.meta.url)), 'demo', '--password-stdin', '--port', String(port), '--agents', '2'], {
-    stdio: ['pipe', 'pipe', 'pipe'], env: { PATH: process.env.PATH, HOME: '/nonexistent-pis-web-test-home', TERM: 'dumb' },
+  const child = spawn(process.execPath, [fileURLToPath(new URL('../bin/pis.js', import.meta.url)), '--server', '--password-stdin', '--port', String(port), '--agents', '2'], {
+    stdio: ['pipe', 'pipe', 'pipe'], env: { PATH: `${path.dirname(process.execPath)}:${process.env.PATH}`, HOME: '/nonexistent-pis-web-test-home', TERM: 'dumb' },
   });
   t.after(() => { if (child.exitCode === null) child.kill('SIGKILL'); });
   let output = '';
@@ -36,7 +37,7 @@ test('web demo CLI starts two fixed dummies, keeps secrets out of output and shu
   assert.equal((await fetch(origin)).status, 200);
   assert.equal((await fetch(`${origin}/login`, { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json', 'X-Pis-Web': '1' }, body: JSON.stringify({ password }) })).status, 200);
   const closed = once(child, 'close'); child.kill('SIGTERM'); await closed;
-  assert.equal(child.exitCode, 0);
+  assert.equal(child.exitCode, 143); // Top-level launcher preserves termination status after cleanup.
   assert.equal(stdout, '');
   assert.ok(!output.includes(password));
   assert.match(output, /2 utgående dummy-anslutningar/);

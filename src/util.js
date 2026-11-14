@@ -124,8 +124,9 @@ export async function withLock(file, action, { retainOnError = () => false } = {
 }
 
 export function run(program, args, options = {}) {
+  const { shutdownTimeoutMs = 5_000, ...spawnOptions } = options;
   return new Promise((resolve, reject) => {
-    const child = spawn(program, args, { stdio: 'inherit', ...options });
+    const child = spawn(program, args, { stdio: 'inherit', ...spawnOptions });
     const signals = ['SIGINT', 'SIGTERM', 'SIGHUP'];
     let shutdownTimer;
     let terminationSignal;
@@ -136,7 +137,7 @@ export function run(program, args, options = {}) {
         // eventually return control so the caller can clean up its container.
         if (signal !== 'SIGINT' && !shutdownTimer) {
           terminationSignal = signal;
-          shutdownTimer = setTimeout(() => child.kill('SIGKILL'), 5_000);
+          shutdownTimer = setTimeout(() => child.kill('SIGKILL'), shutdownTimeoutMs);
           shutdownTimer.unref();
         }
       };

@@ -9,8 +9,12 @@ Run in a **host terminal in this checkout**, using Node >=22.19. If the browser 
 ```sh
 # One-time optional web dependency installation; no model calls/install scripts:
 npm --prefix web ci --ignore-scripts --omit=optional --no-audit --no-fund
+pis --server
+# Equivalent when running directly from this checkout:
 ./start_server.sh
 ```
+
+`--server` must be the first `pis` argument. Examples: `pis --server --project my-app`, `pis --server --port 43129 --agents 3`, `pis --server --help`. This alias delegates to the same first-party Bash launcher before the normal CLI's Node-version gate, so its supported-Node/npm-Node-24 selection also works when the `pis` launcher initially selects Node 18/20. It does not import web dependencies or create a project registry to show server help. Other normal `pis` commands retain their Node requirement.
 
 The executable Bash launcher works from any current directory, forwards demo options and uses Node >=22.19 from PATH, then a compatible bundled Node at `~/.local/share/pi-node/current/bin/node`. If neither qualifies (including a bundled Node 20), it uses `npm exec --yes --package=node@24 -- node ...`; this may download Node into npm's cache on first use, without changing system/bundled Node or shell configuration. A working npm is required for that fallback. It never installs web dependencies automatically or overrides npm engine policy. `./start_server.sh --help` needs no dependency/download/password. If a supported Node is already selected, `npm run web:demo` remains equivalent.
 
@@ -46,7 +50,7 @@ Stop any terminal session already using the intended project first: one project 
 
 ```sh
 pis --list
-./start_server.sh --project my-app
+pis --server --project my-app
 # Multiple independent registered projects:
 ./start_server.sh --project my-app --project other-app --port 43129
 # With a supported Node selected, equivalent:
@@ -71,6 +75,12 @@ Verification is deliberately limited: seven new offline tests use fake Podman an
 - `web/cli.js`: temporary local setup, memory-only random distinct connector keys and a hidden password prompt. It starts two outbound dummy connections by default, or explicitly selected local Pi projects in `start --project` mode.
 
 The core CLI remains dependency-free. The **optional `web/` package** pins maintained `ws@8.23.0` with a committed SHA-512 npm lock entry; it does not implement WebSocket framing itself. Only `ws` is installed, with scripts/optional native peers omitted in the documented install command. Normal `pis` and container images do not import this package or install its dependencies. Registry/version and API were checked against [npm metadata](https://registry.npmjs.org/ws/8.23.0) and [ws API documentation](https://github.com/websockets/ws/blob/master/doc/ws.md) during implementation. This is not a promise that the version will remain current or vulnerability-free; review updates before future Internet deployment.
+
+## Isolation boundary and pending hardening
+
+The **web server runs as your host user, not in a container/sandbox**. Loopback binding/authentication limits access but is not process isolation: do not describe the server as sandboxed. Dummy processes and host connectors are also ordinary host Node processes; real Pi tools still run inside existing rootless Podman project containers. The server and connector are separate modules/process roles but the convenience CLI currently loads server/connector code in one host process, so their credential separation is not an OS security boundary.
+
+**Pending:** split and sandbox the server as a separate least-privilege process/container without host project/auth/Podman access, and define protected local enrollment/IPC to host connectors. Review required mounts, credential stores, lifecycle and TLS before implementing this; do not mount host home, OAuth files, agents or engine sockets as a shortcut. This remains future hardening and is not silently enabled by `pis --server`.
 
 ## Authentication and bounds
 

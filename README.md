@@ -369,8 +369,11 @@ Run in a **host terminal in this checkout**, with Node >=22.19 (not inside a san
 
 ```sh
 npm --prefix web ci --ignore-scripts --omit=optional --no-audit --no-fund
-./start_server.sh
+pis --server
+# Or directly from the checkout: ./start_server.sh
 ```
+
+`pis --server` must put `--server` first and supports the same options, for example `pis --server --project NAME`. The web server itself runs on the host, **not in a sandbox**; real Pi agents retain their Podman sandbox. Separate least-privilege server isolation is tracked as future hardening in docs/web-control.md.
 
 The launcher selects a compatible local/bundled Node or uses npm-provided Node 24 (may download on first use), without changing your default Node. Options: `./start_server.sh --port 43129 --agents 3`. With a supported Node already selected, `npm run web:demo` still works.
 

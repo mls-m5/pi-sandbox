@@ -16,6 +16,9 @@ import { assert, directory, readJson, run, splitCommand, within, writeJson } fro
 export const HELP = `pis — project-scoped Pi sandbox (Linux / rootless Podman)
 
 Usage:
+  pis --server [--port PORT] [--agents 1..8] # local dummy web UI by default
+  pis --server --project NAME [--project OTHER] # experimental real Pi projects
+  pis --server --help                # server startup options
   pis [--project ID_OR_NAME] [--agent pi|claude] [--fresh] [-- AGENT_ARGS...]
   pis [--project ID_OR_NAME] --wait-codex # wait for quota, resume saved Pi task
   pis [--project ID_OR_NAME] [--fresh] --auto-wait-codex [-- PI_ARGS...]
@@ -45,6 +48,14 @@ Usage:
   pis --login openai|berget|mistral|custom
   pis --logout openai|berget|mistral|custom
   pis --login-status
+
+--server must be the first argument. It starts the host loopback web server;
+the server itself is NOT sandboxed. Real Pi agents retain their Podman sandbox.
+Without --project it starts only token-free dummies; real Pi prompts can spend
+model quota/API credits. Install optional web dependencies first (from checkout):
+  npm --prefix web ci --ignore-scripts --omit=optional --no-audit --no-fund
+The launcher selects supported Node or uses npm-provided Node 24 (may download).
+No public listening, remote host approvals or production quota-auto in web/RPC.
 
 By default runs pi --tui-mode regular --continue; --fresh starts without continuation (but keeps regular TUI mode). Explicit Pi TUI/session options override defaults.
 --wait-codex polls host usage before starting Pi, then sends a continuation
