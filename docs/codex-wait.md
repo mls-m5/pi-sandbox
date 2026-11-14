@@ -84,6 +84,10 @@ An authentication, network or usage-parsing error stops the wait without startin
 
 `--wait-codex` cannot be combined with management commands, Claude, `--fresh`, `--bash`, `--exec`, trailing Pi arguments or custom stdio. This prevents accidentally replaying an initial task or injecting a continuation into print/JSON/RPC output. It has no effect on normal launches unless explicitly supplied.
 
+## Token-free manual simulator
+
+Run `npm run demo:dummy` for a standalone lorem/429/wait/refill/continuation demonstration. The [offline JSONL dummy backend](dummy-agent.md) also accepts `/dummy quota 5`, `/dummy quota hold`, `/dummy refill`, cancellation and transient/non-quota error controls. It reuses the real host wait service with synthetic usage and accelerated dummy-only polling, but has its own lifecycle simulator. It does not launch Pi, authenticate to Codex, spend model tokens or enable production automatic wait in RPC. Use it when building/testing the planned web connector/UI, not as proof of real TUI/subscription recovery.
+
 ## Verification
 
 Fast offline tests cover both windows, denial flags, expired reset times, poll timing, cancellation during fetch/sleep, private-data filtering, missing/unsafe sessions, option conflicts, project locking, edits during waiting and the exact continuation arguments. The launch test uses fake Podman commands and fake OAuth credentials and makes no model calls. Automatic-mode tests additionally cover real local Unix sockets with fake quota data, host confirmation/cooldown/cancellation, image/socket wiring, mocked Pi lifecycle events, interrupted overflow recovery, same-session continuation, stale/cancelled responses, repeated quota episodes and malformed protocol replies. These are not a full real-Pi TUI lifecycle test. Full interactive quota exhaustion/refill/resume with a real subscription and real Podman remains unverified here; no live model requests were made.
