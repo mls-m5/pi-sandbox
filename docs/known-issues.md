@@ -1,5 +1,9 @@
 # Known issues to investigate
 
+## Disk exhaustion while creating an ID-mapped layer
+
+Host startup reported `storage-chown-by-maps ... root/.npm/_cacache ... no space left on device`. Diagnosis confirmed ~134MB user-available on the same ext4 partition holding HOME and Podman; inodes were only 34% used. After the user's ordinary Podman prune, available space rose to ~7.8GB; image storage still occupied ~37GB. A stale `prune.lock` also blocked wrapper pruning and was not covered by existing unlock inspection. No sessions/state or lockfiles were removed during investigation. See the detailed [image storage diagnosis and next implementation task](image-storage-plan.md), including shared-layer measurements and managed-update constraints.
+
 ## Podman CNI warning on container startup
 
 Reported after restarting with the automatic post-install prompt changes:

@@ -2,6 +2,10 @@
 
 This file summarizes the recent design decisions and operational context. Start here, then use the linked feature documents and code as the source of truth. Instructions below distinguish repository features from host-local setup; the latter is not available merely because this repository is mounted in a container.
 
+## Latest host diagnosis / next requested task: image storage
+
+The user wants the containerized agent to reduce image duplication and share the common runtime below project-specific tools. Read **[image-storage-plan.md](image-storage-plan.md)** first. Host startup failed while making an ID-mapped layer copy because the shared ext4 filesystem had only ~134MB user-available (inodes were fine). The user's ordinary Podman prune freed ~7–8GB; images/layers still occupied ~37GB, versus ~8GB persistent pis state. Existing images already share base layers, but project apt differences precede Pi/plugin installation and can invalidate those expensive layers; image npm caches totaled ~3.57GiB across readable layers. The plan records measurements, proposed build-order/cache cleanup, managed-update/rollback and pruning constraints, and host-only verification requirements. **Not implemented yet.** A stale prune-worker lock was also confirmed; current unlock recovery did not include it. Do not delete lockfiles, Buildah workspaces or project state blindly. The earlier web tasks below remain available context, not a substitute for this newer requested optimization.
+
 ## Next task: outbound-connected agents and web control
 
 Read **[web-control-plan.md](web-control-plan.md)** before continuing. The user requested this handover after an interruption. Requirements are settled enough to begin: one admin, multiple agents connecting outward to a server initially on the laptop and later online; a separate web-controlled mode; live chat/tool/status streaming; history fetched from clients with an optional server cache left open; remote Git approval can wait; a separate supervisory pis agent comes later. WebSockets around native Pi JSONL RPC are recommended over WebRTC for this server-mediated topology.
