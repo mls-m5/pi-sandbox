@@ -186,7 +186,7 @@ export async function prepareUpdates(store, id, { force = false, metadata, now =
       for (const [name, contents] of Object.entries(plan.files)) {
         const file = path.join(context, name); privateDir(path.dirname(file)); atomicWrite(file, contents);
       }
-      await runPodman(['build', '--http-proxy=false', '--tag', staging, '--file', path.join(context, 'Containerfile'), context], { timeout: 1200000 });
+      await runPodman(['build', '--layers', '--http-proxy=false', '--tag', staging, '--file', path.join(context, 'Containerfile'), context], { timeout: 1200000 });
       const imageId = await exists(runPodman, staging); assert(imageId, 'Candidate image missing.');
       phase = 'probe';
       const provider = config.credentials.proxy?.provider;

@@ -15,7 +15,7 @@ export function installRelease({ root = '/opt/pis', runNpm = (args, options) => 
   const { packages } = JSON.parse(fs.readFileSync(path.join(root, 'update-lock.json'), 'utf8'));
   if (!Array.isArray(packages) || packages.length < 1 || packages.length > 100 || packages[0].name !== '@earendil-works/pi-coding-agent') throw new Error('Invalid release lock.');
   const temp = fs.mkdtempSync('/tmp/pis-release-');
-  const env = { ...process.env, npm_config_ignore_scripts: 'true', npm_config_userconfig: '/dev/null', npm_config_registry: 'https://registry.npmjs.org' };
+  const env = { ...process.env, npm_config_ignore_scripts: 'true', npm_config_userconfig: '/dev/null', npm_config_registry: 'https://registry.npmjs.org', npm_config_cache: path.join(temp, 'npm-cache') };
   const npm = args => runNpm(args, { cwd: temp, env, maxBuffer: 2 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] });
   try {
     const files = packages.map((pkg, index) => {

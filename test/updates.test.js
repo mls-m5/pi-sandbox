@@ -110,7 +110,7 @@ test('candidate installation uses verified top-level tarballs, immutable version
   assert.deepEqual(another.lock, release.lock);
   assert.notEqual(another.image, release.image, 'A new build cannot overwrite a retained image tag even with identical top-level pins.');
   assert.match(plan.content, /COPY update-lock.json verified-install.mjs/);
-  assert.match(plan.content, /RUN node \/opt\/pis\/verified-install.mjs/);
+  assert.match(plan.content, /RUN mkdir -p \/opt\/pis\/agent && node \/opt\/pis\/verified-install.mjs/);
   assert.ok(!plan.content.includes('@latest'));
   assert.equal(JSON.parse(plan.files['probe-policy.json']).piVersion, '1.5.1');
   assert.ok(plan.files['verified-install.mjs'].includes('--ignore-scripts'));
@@ -142,6 +142,7 @@ test('background preparation cannot activate a release; a later locked launch ac
   const { store, config } = await fixture(t, true), engine = fakeEngine(config);
   const result = await store.projectLock(config.id, () => prepareUpdates(store, config.id, setup(engine)));
   assert.equal(result.prepared, true);
+  assert.ok(engine.calls.find(args => args[0] === 'build').includes('--layers'));
   let state = readUpdateState(store, config.id);
   assert.equal(state.active.baseline, true);
   assert.equal(state.candidate.piVersion, '1.5.1');

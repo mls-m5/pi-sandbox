@@ -13,6 +13,7 @@
     "web:demo": "node web/cli.js demo",
     "web:start": "node web/cli.js start",
     "test:web": "npm --prefix web test",
+    "test:storage": "PIS_STORAGE_BENCHMARK=1 node --test test/image-storage-integration.test.js",
     "test:integration": "PIS_INTEGRATION=1 node --test test/*integration.test.js",
     "test:rpc-compat": "node --input-type=module -e \"if (!process.env.PIS_PI_PACKAGE) { console.error('Set PIS_PI_PACKAGE to an installed candidate Pi package directory.'); process.exit(1); }\" && node --test test/pi-rpc-compatibility.test.js",
     "test:pi-compat": "node --input-type=module -e \"if (!process.env.PIS_PI_PACKAGE) { console.error('Set PIS_PI_PACKAGE to an installed candidate Pi package directory.'); process.exit(1); }\" && node --test test/pi-compatibility.test.js test/updates.test.js",
