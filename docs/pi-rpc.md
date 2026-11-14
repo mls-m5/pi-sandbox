@@ -1,0 +1,70 @@
+# Local Pi RPC foundation (implemented, not a web mode)
+
+`src/pi-rpc.js` adds a dependency-free local pipe adapter and a small control-command dispatcher. It is not wired into the CLI/container launcher. These core modules themselves provide no network listener or authentication. A separate [optional local dummy web demo](web-control.md) now supplies an authenticated server, outward connectors and browser UI; it is not real Pi/container web mode. Normal terminal launches and host approval gates are unchanged.
+
+## Local API and ownership
+
+- `PiRpc(child, options)` attaches to an already-created child with piped stdin/stdout/stderr. The trusted caller chooses the executable, project and environment and owns project locks, signals and final process cleanup. No remote executable/path selection is provided.
+- `request()` admits only `get_state`, `get_messages`, `prompt`, `clear_queue`, `abort`. It resolves the correlated native response, including `success: false`; this is acceptance/command handling, not task completion. This low-level API is for trusted local callers only.
+- `event` emits parsed **untrusted native records**, synchronously, without retaining a transcript. A future network layer must project/filter these records, bound its own queues and never block local consumption while disconnected. Native responses/events can contain sensitive code, paths, images and secrets; they are not network-safe DTOs.
+- `status` is `unknown` initially, then `idle`/`working` based on a current state snapshot and lifecycle events; only `agent_settled`, not `agent_end`, signals idle after automatic work. `offline` requires process failure/close, not merely stdout EOF. Idle does not mean the goal is complete.
+- Blocking extension `select`/`confirm`/`input`/`editor` requests are automatically cancelled and reported through `dialog_cancelled` with only the method. Other UI records remain untrusted events. This is not host approval; no Git/apt action is added.
+- stderr is drained and discarded, never logged, buffered or forwarded. Error codes do not include raw diagnostics or invalid records.
+- `shutdown()` is an explicit **local owner** operation: closes stdin, sends SIGTERM after 5 seconds and SIGKILL after another 2 seconds by default. If process close remains unconfirmed for another second it rejects; the caller must not claim cleanup or release lifecycle protection on that basis. This is not a substitute for the wrapper's stopped-container verification. Network disconnect must never call shutdown.
+
+Defaults: 4 MiB per native JSONL record (one lazily allocated reusable byte buffer), 16 outstanding requests, 256 KiB queued/in-flight stdin bytes, 30-second request deadline. LF-only framing accepts CRLF and split UTF-8, but rejects malformed UTF-8/JSON, blank/nonobject records and incomplete final lines. Writes are serialized through Writable callbacks. On protocol/pipe faults, pending requests reject and new commands are refused, while stdout continues draining; the owner must decide how to close the failed runtime safely.
+
+A timeout is an **ambiguous outcome**, not an instruction to retry. Timed-out writes still waiting in our queue are removed; a command already written may have executed. Status becomes unknown; a subsequent state request can resynchronize if the adapter otherwise remains healthy. No automatic prompt replay or process restart occurs.
+
+## Control commands (internal draft v1)
+
+`PiControl` wraps an adapter with strict objects:
+
+```json
+{"v":1,"generation":"HOST_CREATED_RUNTIME_UUID","id":"unique-command-id","action":"prompt","message":"Review the tests"}
+```
+
+Allowed actions:
+
+- `state`: native `get_state`.
+- `history`: native `get_messages`.
+- `prompt`: nonblank text, maximum 64 KiB UTF-8; no images, queue/steering option or extra fields. Requires known idle state; busy submissions are rejected rather than queued. A mutation reservation prevents concurrent double submission before acceptance. Prompt text may still invoke installed extension commands: this is sandbox control, not an extension security boundary.
+- `stop`: waits for successful `clear_queue`, then sends `abort`. No claim of idle merely because abort was submitted.
+
+IDs are 1–64 ASCII letters/digits/underscore/hyphen. The trusted owner supplies the generation to an authenticated controller in a future transport; generation/command IDs **are not authentication**. Old generations are refused. Each ID is bound to a SHA-256 command fingerprint for this runtime. Identical repeats return `{duplicate:true}` without re-execution or cached transcript/result; changed payloads are refused. The original outcome may be unknown: resynchronize, don't invent a new ID to retry ambiguously accepted work. Tombstones survive reconnects because the same control instance stays alive. After 4096 distinct IDs the instance refuses new IDs rather than evicting replay protection. There is no persisted cross-process deduplication; a restarted runtime has a new generation.
+
+## Bounded text views (implemented)
+
+`src/pi-view.js` adds pure `projectState`, `projectHistory`, `projectMessage`, `projectEvent` functions and `PiView`, an in-memory projection boundary around the existing RPC/control instance. These are transport-independent DTOs, not authentication, a web endpoint or a secret scanner. Conversation/tool text is still sensitive, can contain credentials/code and remains untrusted. A future browser must render it with `textContent`, never HTML/Markdown or terminal escape interpretation.
+
+- Only known fields are copied. State omits session file paths and raw model URLs/headers/credentials; model ID/name/provider remain display labels.
+- Message content admits text, visible thinking and tool-call labels. Images/unknown content/redacted thinking are explicit omissions. System/unknown-role/hidden custom message bodies are omitted. Signatures, provider metadata, tool arguments, arbitrary tool details and nested calls are not copied. Errors are fixed codes, not raw Pi/exception diagnostics. This does **not** redact sensitive data that appears in otherwise permitted text or labels.
+- Text fields are capped at 8192 **serialized JSON bytes**, including escape expansion; valid surrogate pairs are not split. Labels are shortened to 258 JSON bytes and are for display/correlation only, never authorization. Messages are bounded to 16 KiB/32 blocks, event envelopes to 24 KiB and history response envelopes to 256 KiB. History keeps at most the newest 100 messages as a contiguous suffix with original snapshot-local indices, total/omitted counts and truncation flags. Messages/blocks also report truncation/omissions; tool arguments have an explicit omission flag.
+- Live projection preserves text/thinking deltas and block endings, authoritative message endings, tool lifecycle/text results and run/compaction/retry markers. The [offline dummy backend](dummy-agent.md) also emits fixed `dummy_status` states; these are projected with `simulated: true`, never as real host usage/approval authority. Tool argument deltas, unknown events and generic extension UI payloads are dropped. Cancelled dialogs are reported separately by method only, never as host approvals. Queue events carry counts, not queued prompt text.
+- `PiView.execute(command)` returns a bounded projected result envelope, not the native RPC response. It preserves generation/validated command ID/action, a duplicate marker or fixed error code. Accepted prompts report disposition, not completion. The low-level `PiControl.execute`/`PiRpc.request` APIs still return native responses and must **not** be exposed directly to a network.
+
+### Reconnect and snapshot contract
+
+`PiView` emits synchronous `frame` events shaped as `{v:1,generation,seq,event}`. `seq` increases for projected live/status/dialog/fault frames even with **no listeners**. It retains no transcript, outgoing queue or replay buffer. The future connector must keep this same view/control/RPC instance alive across network disconnects, keep draining stdout, and drop or bound unsent transport data rather than block the child. Reconnection must not create a new runtime, replace the view or reset its sequence. `detach()` is a terminal disposal of view listeners/commands, not a network-disconnect action; it does not stop Pi or clear deduplication tombstones.
+
+Every command result carries `startSeq`, `endSeq` and `stable`. Subscribe before requesting state/history. If projected activity happened while a snapshot request was outstanding, `stable` is false: it is **not** an atomic snapshot and must not be blindly merged with overlapping deltas. A transport/UI can request fresh read-only snapshots with new command IDs and mark the display unsynchronized if activity keeps racing. Compare generation and sequence across both state and history results when combining them; neither alone promises an atomic pair. Source message indices are not durable message IDs. On disconnect/gaps/generation changes discard partial streamed reconstruction and resynchronize rather than replaying prompts. This is a tested data contract, not an implemented reconnect transport/UI.
+
+### Deliberate remaining limits
+
+The native `get_messages` record still has the adapter's 4 MiB limit. A larger native record produces explicit `rpc_record_too_large` and leaves the adapter faulted/draining; projection cannot rescue a record that was never parsed. Successfully parsed histories can now yield bounded/truncated views. A future larger-history reader needs separate bounded parsing, not removal of the native record cap. No optional server cache interface or durable transcript storage exists yet.
+
+The [local dummy web demo](web-control.md) now consumes these APIs, including reconnect/snapshot handling. Still pending: production wrapper/RPC stdio and project-lock integration, persistent enrollment, multi-computer deployment, real graphical browser verification/hardening, remote approvals and supervisory control. Local subprocess shutdown tests do not validate Podman cleanup or descendant termination.
+
+## Verification
+
+`node --test test/pi-rpc*.test.js test/pi-view.test.js` exercises 33 ordinary offline tests (19 adapter/control + 14 projection/view), plus one opt-in installed-Pi test skipped by default. They cover byte framing/Unicode, bounds/escaping, malicious/omitted fields, correlation, stale snapshots, lifecycle, cancellation, backpressure, timeouts, replay prevention, schema validation, process failures/shutdown, snapshot/live races and disconnected consumers. Real Node subprocesses (`test/fixtures/pi-rpc-child.mjs`) emit synthetic message/tool events and exit on EOF. Ordinary tests make no Pi/model/provider request and use no personal credential, Podman or external service. `npm run check` includes these tests and both modules' syntax checks.
+
+Opt-in no-model compatibility probe:
+
+```sh
+PIS_PI_PACKAGE=/absolute/path/to/installed/pi-package npm run test:rpc-compat
+```
+
+It accepts only stable patches in the image baseline's major/minor line (currently 1.5.x), reports the tested version and changes no image pin. It starts the installed CLI with fresh temporary HOME/config/cwd, an allowlisted environment, offline mode and disabled extensions/MCP/tools/resources/context discovery. It sends only state/history commands (including projected views and duplicate reads) then EOF shutdown; no prompt is submitted. A Node preload blocks/records socket/fetch attempts and the test fails even if an attempted call was caught internally. That guard is defense in depth for trusted installed Pi, **not an OS sandbox for arbitrary candidate code**. No model auth or real account is provided.
+
+This probe passed against installed **Pi 1.5.2** during this continuation, with no network attempts. It did not test the exact image baseline **1.5.0**, live turns, extensions, Podman or the wrapper's RPC stdio/locks. Earlier real-Pi 1.5.0 proxy compatibility results are separate and do not establish this RPC test.
