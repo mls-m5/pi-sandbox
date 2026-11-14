@@ -72,6 +72,36 @@ test('help does not initialize storage and registration/show/list/check work', t
   assert.ok(!status.stdout.includes(env.OPENAI_API_KEY));
 });
 
+test('help contains copyable extra Codex login/pool/resume examples and their safety distinctions', t => {
+  const { env, invoke } = fixture(t);
+  const help = invoke(['--help']);
+  assert.equal(help.status, 0, help.stderr);
+  for (const command of [
+    'pis --login-codex --codex-account extra',
+    'pis --codex-accounts',
+    'pis --codex-use extra',
+    'pis --codex-use default',
+    'pis --codex-auto-switch off',
+    'pis --codex-auto-switch default,extra',
+    'pis --auto-wait-codex',
+  ]) {
+    assert.ok(help.stdout.includes(`  ${command}\n`), command);
+    assert.doesNotThrow(() => parse(command.split(' ').slice(1)));
+  }
+  assert.match(help.stdout, /HOST terminal, not inside Pi/);
+  assert.match(help.stdout, /private browser window/);
+  assert.match(help.stdout, /Replace default/);
+  assert.match(help.stdout, /Automatic switching is OFF by default/);
+  assert.match(help.stdout, /confirmed exhausted quota AND verified available quota/);
+  assert.match(help.stdout, /global for Codex projects/);
+  assert.match(help.stdout, /in-flight request keeps its original account/);
+  assert.match(help.stdout, /Selecting outside the automatic pool stays/);
+  assert.match(help.stdout, /Account switching is NOT automatic resumption/);
+  assert.match(help.stdout, /Web\/RPC mode does NOT support --auto-wait-codex/);
+  assert.ok(!help.stdout.includes(env.OPENAI_API_KEY));
+  assert.equal(fs.existsSync(env.PIS_HOME), false, 'Reading help must not log in or initialize storage.');
+});
+
 test('editor saves valid changes and retains invalid drafts without damaging config', t => {
   const { base, env, invoke } = fixture(t);
   assert.equal(invoke(['--new']).status, 0);

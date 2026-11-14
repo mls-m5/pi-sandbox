@@ -86,6 +86,40 @@ Auto-switch on snapshots currently saved profiles; newly added accounts are NOT
 joined automatically. Prefer an explicit ordered NAME,NAME pool. Only enroll
 accounts authorized to receive the same project/history. No API-key fallback,
 no blind upstream replay, and no switching on auth/network/ordinary 429 errors.
+
+Codex examples — run in a HOST terminal, not inside Pi or pis --bash:
+  # Add a DIFFERENT Codex account under the local alias extra:
+  pis --login-codex --codex-account extra
+  # List saved aliases, the selected account and the automatic pool:
+  pis --codex-accounts
+  # Switch manually (subsequent requests in live Codex proxies):
+  pis --codex-use extra
+  # Switch back to the original account:
+  pis --codex-use default
+  # Explicitly enable automatic switching between these accounts:
+  pis --codex-auto-switch default,extra
+
+Use a private browser window/session if login otherwise selects your first account.
+Replace default above if your original account has another alias. An alias alone
+creates no extra quota. Automatic switching is OFF by default; merely adding a
+login does not enable it or add that account to an existing pool.
+Manual selection affects subsequent requests across Codex projects in this
+PIS_HOME; an in-flight request keeps its original account. It does not require
+automatic switching to be enabled. Selecting outside the automatic pool stays
+manual until you select a pool member again; a selected pool member can still
+switch automatically when its quota is exhausted. Disable that policy with:
+  pis --codex-auto-switch off
+Automatic switching requires confirmed exhausted quota AND verified available quota on
+another enrolled account. The selection/pool is global for Codex projects in the
+same PIS_HOME; both accounts must be authorized for the same prompts/history/tools.
+
+Account switching is NOT automatic resumption of an already stopped chat.
+For automatic continuation in terminal Pi, opt in separately when starting it:
+  pis --auto-wait-codex
+This requires saved sessions/extensions and host-confirmed exhaustion/availability.
+It sends one continuation prompt (uses model quota), not a replay of the original
+prompt/tools. Web/RPC mode does NOT support --auto-wait-codex.
+
 Berget: set credentials.proxy.provider=berget, and use BERGET_API_KEY on the host,
 or run --login berget and set credentials.proxy.profile=berget (remove keyEnv).
 Mistral: --login-mistral stores an API key; set provider=mistral, profile=mistral.

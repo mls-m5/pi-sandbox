@@ -78,6 +78,8 @@ pis --codex-usage --codex-account spare       # quota for one profile; does not 
 pis --logout-codex --codex-account spare      # remove only this local login
 ```
 
+`pis --help` also includes a copyable walkthrough using the alias `extra`: add the login, list accounts, switch manually with `pis --codex-use extra` / `pis --codex-use default`, opt into `pis --codex-auto-switch default,extra`, or turn automatic routing off. It distinguishes global next-request account selection from separately opting into terminal continuation with `pis --auto-wait-codex`; web/RPC quota continuation is unsupported.
+
 Use another browser session/private window if the device page otherwise chooses your first account again. A duplicate real identity under another alias is rejected; aliases do not create additional quota. Identity binds workspace/account ID and the JWT user subject when available, so distinct users sharing a workspace are not mistaken for the same login. These fields/fingerprints are not shown in status output. Fresh installations can name their first login with `--login-codex --codex-account primary`; the first saved profile is selected automatically. Later additions do not change the selection.
 
 Without `--codex-account`, login/import/logout/usage address the **selected profile**. Import also accepts the selector. Reauthentication updates only that alias. To rename an existing login without copying a rotating refresh token or signing in again:
