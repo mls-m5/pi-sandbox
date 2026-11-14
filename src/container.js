@@ -185,6 +185,7 @@ const RESTART = Symbol('restart-after-approved-packages');
 
 async function launchOnce(store, config, options) {
   let built = false, maintenanceReady = false;
+  options.startupProgress?.('project_lock');
   return store.projectLock(config.id, async () => {
     // Re-read and validate after acquiring exclusivity (configuration may have changed).
     config = store.load(config.id);
@@ -210,12 +211,15 @@ async function launchOnce(store, config, options) {
     const showProgress = !options.stdio && process.stderr.isTTY;
     const progress = message => { if (showProgress) console.error(`pis: [${((Date.now() - startupStarted) / 1000).toFixed(1)}s] ${message}`); };
     progress('Checking Podman and sandbox image…');
+    options.startupProgress?.('checking_engine');
     const info = inspectPodman();
     const { selectUpdateImage, scheduleUpdates } = await import('./updates.js');
     const managed = options.rebuild ? undefined : await selectUpdateImage(store, config);
+    options.startupProgress?.('preparing_image');
     const plan = managed || await ensureImage(store, config, options);
     built = Boolean(plan.built);
     progress('Image ready.');
+    options.startupProgress?.('image_ready');
     maintenanceReady = true;
     scheduleUpdates(store, config);
     if (options.installedPackages?.length) {
@@ -234,6 +238,7 @@ async function launchOnce(store, config, options) {
       // carry a host approval; the user is prompted only after Podman exits.
       if (!isClaude && config.credentials.proxy) {
         progress(`Preparing ${config.credentials.proxy.provider} credential proxy…`);
+        options.startupProgress?.('preparing_proxy');
         proxy = await prepareProxy(store, config, { upstream: options.proxyUpstream, codexAuthFetch: options.codexAuthFetch });
       }
       if (options.autoWaitCodex) codexAuto = await startCodexAutoServer(store);
@@ -241,6 +246,7 @@ async function launchOnce(store, config, options) {
       if (!isClaude && options.mode === 'pi' && !piOptions.includes('--no-session') && interactiveOutput(command) && !options.stdio && process.stdin.isTTY && process.stdout.isTTY && process.stderr.isTTY) aptRequests = await startAptRequestServer(config, store);
       invocation = launchArgs(store, config, command, { cwd: options.cwd, image: plan.image, proxy, aptRequests, codexAuto, startupStarted: showProgress ? startupStarted : undefined, network: options.network, selinux: info.host.security.selinuxEnabled });
       progress('Starting container (first start after a build can take longer)…');
+      options.startupProgress?.('starting_container');
       status = await run('podman', invocation.args, { env: podmanEnvironment(config), stdio: options.stdio || 'inherit' });
       proposal = aptRequests?.proposal;
     } finally {

@@ -117,6 +117,22 @@ webTest('loopback HTTP enforces canonical Host/Origin, security headers and stat
   assert.equal((await request(f.origin, '/login', { method: 'POST', headers: { Origin: f.origin }, value: { password, approved: true } })).status, 401);
 });
 
+webTest('host startup stages reach authenticated GUI roster before Pi connects; browser cannot set them', async t => {
+  const f = await fixture(t);
+  f.server.setStartup('dummy-1', 'preparing_image');
+  const client = await browser(t, f.origin, await login(f.origin));
+  const roster = await client.wait(value => value.type === 'roster');
+  assert.equal(roster.agents[0].startup.phase, 'preparing_image');
+  assert.equal(roster.agents[0].online, false);
+  assert.ok(Number.isFinite(roster.agents[0].startup.startedAt));
+  f.server.setStartup('dummy-1', 'starting_container');
+  const updated = await client.wait(value => value.type === 'roster' && value.agents[0].startup.phase === 'starting_container');
+  assert.equal(updated.agents[0].startup.startedAt, roster.agents[0].startup.startedAt);
+  assert.throws(() => f.server.setStartup('dummy-1', 'raw secret diagnostic'), /Invalid host/);
+  const closed = once(client.ws, 'close');
+  client.send({ v: 1, type: 'startup', agentId: 'dummy-1', phase: 'connected' }); await closed;
+});
+
 webTest('login is bounded, generic on failure and globally throttled', async t => {
   const f = await fixture(t);
   for (let i = 0; i < 10; i++) assert.equal((await request(f.origin, '/login', { method: 'POST', headers: { Origin: f.origin }, value: { password: 'wrong' } })).status, 401);

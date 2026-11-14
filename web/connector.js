@@ -36,6 +36,9 @@ export function connectView({ view, origin, token }) {
       try {
         if (binary || !receiveBudget() || pending >= 16) throw new Error('Protocol.');
         const message = JSON.parse(data.toString());
+        if (exact(message, ['v', 'type', 'generation']) && message.v === 1 && message.type === 'registered' && message.generation === view.control.generation) {
+          events.emit('registered'); return;
+        }
         if (!exact(message, ['v', 'type', 'routeId', 'command']) || message.v !== 1 || message.type !== 'command' || typeof message.routeId !== 'string' || !/^[a-f0-9-]{36}$/.test(message.routeId)) throw new Error('Protocol.');
         const command = validateControlCommand(message.command);
         pending++;

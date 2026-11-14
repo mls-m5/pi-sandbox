@@ -1,6 +1,7 @@
 import { ChatModel } from './view-model.js';
 import { renderChat, renderTools } from './render.js';
 import { handlePromptKey } from './keybindings.js';
+import { startupText } from './startup.js';
 
 const byId = id => document.getElementById(id);
 const model = new ChatModel(), pending = new Map();
@@ -18,15 +19,16 @@ function draw() {
     byId('mode-note').textContent = agents.some(agent => agent.kind === 'pi') ? 'Riktiga Pi-projekt · modell-anrop kan kosta · inga värdgodkännanden' : 'Bara dummy · inga modelltokens · inga värdgodkännanden';
     byId('prompt').placeholder = selectedAgent?.kind === 'pi' ? 'Skriv till Pi i sandboxen…' : 'Skriv till dummy-agenten…';
     for (const id of ['quota', 'refill']) byId(id).hidden = selectedAgent?.kind !== 'dummy';
-    byId('state').textContent = `${model.status}${model.quota ? ` · dummy-kvot: ${model.quota}` : ''}`;
-    byId('sync-note').textContent = model.note;
+    const starting = !selectedAgent?.online ? startupText(selectedAgent?.startup) : '';
+    byId('state').textContent = starting || `${model.status}${model.quota ? ` · dummy-kvot: ${model.quota}` : ''}`;
+    byId('sync-note').textContent = starting ? 'Webbservern är igång. Agenten kan inte ta emot meddelanden förrän Pi och anslutningen är klara.' : model.note;
     const ready = online() && model.status === 'idle' && model.synced && !mutation;
     for (const id of ['send', 'quota', 'refill']) byId(id).disabled = !ready;
     byId('stop').disabled = !online() || mutation;
     byId('refresh').disabled = !online() || syncing;
     const buttons = agents.map(agent => {
       const button = document.createElement('button'); button.type = 'button'; button.className = `agent-button${agent.id === selected ? ' selected' : ''}`;
-      button.textContent = `${agent.label}\n${agent.online ? agent.status : 'offline'} · ${agent.kind}`;
+      button.textContent = `${agent.label}\n${agent.online ? agent.status : startupText(agent.startup) || 'offline'} · ${agent.kind}`;
       button.addEventListener('click', () => choose(agent.id)); return button;
     });
     byId('agents').replaceChildren(...buttons);
@@ -180,7 +182,9 @@ byId('stop').addEventListener('click', async () => {
   mutation = false; byId('command-note').textContent = result.data?.success ? 'Stoppbegäran hanterad. Kontrollerar tillståndet.' : 'Stoppets utfall är okänt. Kontrollera agenten; inget spelas upp igen.';
   syncAttempts = 0; void synchronize(); draw();
 });
+const startupTick = setInterval(() => { if (connected && agents.some(agent => !agent.online && agent.startup)) draw(); }, 1000);
 globalThis.addEventListener('pagehide', () => {
+  clearInterval(startupTick);
   wantConnection = false; selection++; clearTimeout(reconnectTimer); clearTimeout(syncTimer); socket?.close(); failPending();
 });
 fetch('/session', { cache: 'no-store' }).then(response => { if (response.ok) showWorkspace(); }).catch(() => {});

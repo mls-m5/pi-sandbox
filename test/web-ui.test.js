@@ -4,6 +4,16 @@ import fs from 'node:fs';
 import { ChatModel, cleanMessage } from '../web/public/view-model.js';
 import { renderChat, renderTools } from '../web/public/render.js';
 import { handlePromptKey } from '../web/public/keybindings.js';
+import { startupText } from '../web/public/startup.js';
+
+test('startup display describes the current step and elapsed wait without estimating completion or trusting raw errors', () => {
+  const startup = { phase: 'preparing_image', startedAt: 1000, updatedAt: 10000 };
+  assert.match(startupText(startup, 40000), /Förbereder sandbox-image.*39 s totalt.*30 s/);
+  assert.match(startupText(startup, 40000), /inte en bekräftad låsning/);
+  assert.equal(startupText({ phase: 'raw error with secret' }), '');
+  assert.match(startupText({ ...startup, phase: 'project_busy' }, 40000), /Projektet används redan/);
+  assert.match(startupText({ ...startup, phase: 'connected' }, 40000), /frånkopplad/);
+});
 
 test('plain Enter submits once; Shift+Enter/modifiers/IME keep default behavior and held repeats do not send', () => {
   let submitted = 0, prevented = 0;

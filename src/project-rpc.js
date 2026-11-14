@@ -18,11 +18,11 @@ export function resolveWebProjects(selectors, store = new Store()) {
   return selected;
 }
 
-export async function runProjectRpc(store, id) {
+export async function runProjectRpc(store, id, { startupProgress } = {}) {
   assert(typeof id === 'string' && ID_PATTERN.test(id), 'Expected one registered project ID.');
   const config = store.load(id);
   assert(config.agent === 'pi', 'Web RPC does not override a project configured for Claude.');
   // launch() re-reads under the existing exclusive project lock and enforces
   // webRpc again, preventing a preflight-to-launch agent/configuration race.
-  return launch(store, config, { cwd: config.root, mode: 'pi', args: ['--mode', 'rpc'], webRpc: true });
+  return launch(store, config, { cwd: config.root, mode: 'pi', args: ['--mode', 'rpc'], webRpc: true, startupProgress });
 }

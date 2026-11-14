@@ -119,6 +119,7 @@ test('web CLI starts an explicitly selected registered project and shuts down wi
   for (let i = 0; i < 500 && !output.includes('connection(s) ready') && child.exitCode === null; i++) await new Promise(resolve => setTimeout(resolve, 10));
   assert.ok(output.includes('connection(s) ready'), output);
   assert.match(output, /EXPERIMENTAL/); assert.ok(!output.includes('temporary-project-cli-password'));
+  for (const step of ['Kontrollerar projektlåset', 'Kontrollerar rootless Podman', 'Förbereder sandbox-image', 'Startar container', 'Pi har svarat', 'Agentanslutningen bekräftad', 'Terminalen ska nu stå kvar']) assert.ok(output.includes(step), step);
   assert.ok(fs.existsSync(f.lock));
   assert.equal((await fetch(`http://127.0.0.1:${port}/`)).status, 200);
   const closed = once(child, 'close'); child.kill('SIGTERM'); await closed;
@@ -136,7 +137,10 @@ test('project connector keeps wrapper and lock alive across network reconnect, t
   const saved = { ...process.env };
   for (const key of ['PATH', 'PIS_AUTO_UPDATE', 'PIS_AUTO_PRUNE']) process.env[key] = f.env[key];
   t.after(() => { for (const key of ['PATH', 'PIS_AUTO_UPDATE', 'PIS_AUTO_PRUNE']) { if (saved[key] === undefined) delete process.env[key]; else process.env[key] = saved[key]; } });
-  const connector = await startProjectConnector({ project: resolveWebProjects(['web-test'], f.store)[0], origin: server.origin, token, startupTimeoutMs: 3000 });
+  const steps = [];
+  const connector = await startProjectConnector({ project: resolveWebProjects(['web-test'], f.store)[0], origin: server.origin, token, startupTimeoutMs: 3000, onProgress: phase => steps.push(phase) });
+  assert.deepEqual(steps, ['starting_wrapper', 'project_lock', 'checking_engine', 'preparing_image', 'image_ready', 'starting_container', 'rpc_ready', 'connected']);
+  assert.equal(server.roster()[0].online, true, 'Ready requires server registration acknowledgement, not just an open local RPC pipe.');
   t.after(() => connector.close());
   const waitOnline = async () => {
     for (let i = 0; i < 300; i++) { if (server.roster()[0].online) return; await new Promise(resolve => setTimeout(resolve, 10)); }

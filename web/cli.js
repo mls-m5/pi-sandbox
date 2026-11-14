@@ -3,6 +3,7 @@ import { hashPassword, randomKey, digest } from './common.js';
 import { startWebServer } from './server.js';
 import { startDummyConnector } from './connector.js';
 import { startProjectConnector } from './project-connector.js';
+import { STARTUP_LABELS } from './public/startup.js';
 import { resolveWebProjects } from '../src/project-rpc.js';
 
 async function readPassword(piped) {
@@ -81,17 +82,28 @@ try {
   const agents = projects.length ? projects.map(project => ({ id: `pi-${project.id}`, label: project.label, kind: 'pi', project, token: randomKey() }))
     : Array.from({ length: options.agents }, (_, index) => ({ id: `dummy-${index + 1}`, label: `Dummy ${index + 1}`, kind: 'dummy', token: randomKey() }));
   server = await startWebServer({ passwordHash, port: options.port, agents: agents.map(agent => ({ id: agent.id, label: agent.label, kind: agent.kind, tokenHash: digest(agent.token) })) });
-  if (projects.length) console.error(`Lokal Pi-webb: ${server.origin}\nWaiting for sandbox startup (image builds may take several minutes). No prompt is sent by the connector.`);
+  for (const agent of agents) if (agent.project) server.setStartup(agent.id, 'queued');
+  if (projects.length) console.error(`Lokal Pi-webb: ${server.origin}\nWebbservern är igång. Öppna adressen och logga in redan nu för att följa agentstarten i GUI:t.\nSandbox-start kan ta flera minuter; inget startprompt skickas av anslutningen.`);
   for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(signal, () => { void stop(); });
   for (const agent of agents) {
     if (stopping) break;
-    startup = agent.project ? startProjectConnector({ origin: server.origin, token: agent.token, project: agent.project, signal: startupController.signal })
+    let phase = 'queued';
+    const startedAt = Date.now();
+    const onProgress = next => {
+      phase = next; server.setStartup(agent.id, next);
+      console.error(`pis web: [${((Date.now() - startedAt) / 1000).toFixed(1)}s] ${agent.id}: ${STARTUP_LABELS[next]}`);
+    };
+    const heartbeat = agent.project ? setInterval(() => {
+      console.error(`pis web: [${Math.floor((Date.now() - startedAt) / 1000)}s] ${agent.id}: väntar fortfarande · ${STARTUP_LABELS[phase]} (ingen uppskattning av återstående tid).`);
+    }, 10_000) : undefined;
+    startup = agent.project ? startProjectConnector({ origin: server.origin, token: agent.token, project: agent.project, signal: startupController.signal, onProgress })
       : startDummyConnector({ origin: server.origin, token: agent.token });
-    const connector = await startup;
+    let connector;
+    try { connector = await startup; } finally { clearInterval(heartbeat); }
     if (stopping) { await connector.close(); break; }
     connectors.push(connector); startup = undefined;
   }
-  if (!stopping && projects.length) console.error(`${projects.length} Pi project connection(s) ready. Ctrl-C closes them; host container cleanup can take about a minute. Unconfirmed cleanup retains the project lock for host inspection.`);
+  if (!stopping && projects.length) console.error(`${projects.length} Pi project connection(s) ready. Server och agentanslutningar är igång. Öppna ${server.origin}, logga in och välj projektet i listan.\nTerminalen ska nu stå kvar utan ny prompt: den håller servern igång, det är inte en väntande start.\nCtrl-C stänger server/agenter; containerstopp kan ta omkring en minut. Ej bekräftat stopp behåller projektlåset för kontroll på värden.`);
   if (!stopping && !projects.length) console.error(`Lokal dummy-webb: ${server.origin}\nLogga in med lösenordet du nyss valde. ${options.agents} utgående dummy-anslutningar; inga modell-anrop.\nEndast loopback. Ctrl-C stänger server och dummies. Ingen konfiguration eller historik sparas.`);
 } catch (error) {
   console.error(['EADDRINUSE', 'EACCES'].includes(error.code) ? 'Could not bind the local demo port.' : error.message?.startsWith('Usage:') ? error.message : 'Local web demo could not start. Check dependency installation, options and password length.');

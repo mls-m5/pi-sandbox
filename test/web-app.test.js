@@ -24,7 +24,8 @@ test('actual browser app module logs in, selects, chats, recovers dummy quota an
   const { default: WS } = await import('../web/node_modules/ws/wrapper.mjs');
   const password = 'browser-app-test-password-only', token = randomKey();
   const server = await startWebServer({ port: 0, passwordHash: await hashPassword(password), agents: [{ id: 'dummy-1', label: 'Dummy 1', tokenHash: digest(token) }] });
-  const connector = await startDummyConnector({ origin: server.origin, token });
+  server.setStartup('dummy-1', 'preparing_image');
+  let connector;
   const elements = new Map(), pageEvents = new Map();
   const element = id => { if (!elements.has(id)) elements.set(id, new Element()); return elements.get(id); };
   element('workspace').hidden = true;
@@ -34,7 +35,7 @@ test('actual browser app module logs in, selects, chats, recovers dummy quota an
   let cookie = '';
   t.after(async () => {
     pageEvents.get('pagehide')?.();
-    await connector.close(); await server.close(); await delay(100);
+    await connector?.close(); await server.close(); await delay(100);
     for (const key of keys) { const descriptor = descriptors.get(key); if (descriptor) Object.defineProperty(globalThis, key, descriptor); else delete globalThis[key]; }
   });
   globalThis.document = { getElementById: element, createElement: () => new Element() };
@@ -56,6 +57,11 @@ test('actual browser app module logs in, selects, chats, recovers dummy quota an
   element('password').value = password; await element('login-form').dispatch('submit');
   await until(() => element('agents').children.length === 1);
   await element('agents').children[0].dispatch('click');
+  await until(() => content(element('state')).includes('Förbereder sandbox-image'));
+  assert.equal(element('send').disabled, true);
+  server.setStartup('dummy-1', 'starting_container');
+  await until(() => content(element('state')).includes('Startar container'));
+  connector = await startDummyConnector({ origin: server.origin, token });
   await until(() => !element('send').disabled);
   const hostile = '<img src=x onerror=alert(1)>';
   element('prompt').value = hostile;

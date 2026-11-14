@@ -3,11 +3,13 @@ import fs from 'node:fs/promises';
 import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { WebSocketServer } from 'ws';
 import { validateControlCommand } from '../src/pi-rpc.js';
+import { startupPhase } from './public/startup.js';
 import { budget, digest, exact, generationValid, idValid, object, randomKey, send, verifyPassword, wsOptions } from './common.js';
 
 const assets = new Map([
   ['/', ['index.html', 'text/html; charset=utf-8']], ['/app.js', ['app.js', 'text/javascript; charset=utf-8']],
   ['/view-model.js', ['view-model.js', 'text/javascript; charset=utf-8']], ['/render.js', ['render.js', 'text/javascript; charset=utf-8']],
+  ['/startup.js', ['startup.js', 'text/javascript; charset=utf-8']],
   ['/keybindings.js', ['keybindings.js', 'text/javascript; charset=utf-8']],
   ['/style.css', ['style.css', 'text/css; charset=utf-8']],
 ]);
@@ -91,7 +93,7 @@ export async function startWebServer({ passwordHash, agents = [], port = 43128, 
   }
   const roster = () => [...registrations.values()].map(agent => {
     const peer = connected.get(agent.id);
-    return { id: agent.id, label: agent.label, kind: agent.kind, online: Boolean(peer?.generation), status: peer?.status || 'offline', generation: peer?.generation || null, seq: peer?.seq || 0 };
+    return { id: agent.id, label: agent.label, kind: agent.kind, online: Boolean(peer?.generation), status: peer?.status || 'offline', generation: peer?.generation || null, seq: peer?.seq || 0, ...(agent.startup ? { startup: agent.startup } : {}) };
   });
   const broadcastRoster = () => { for (const ws of browsers) send(ws, { v: 1, type: 'roster', agents: roster() }); };
   const errorResult = (ws, agentId, command, error) => send(ws, { v: 1, type: 'result', agentId, result: { id: command.id, action: command.action, generation: command.generation, data: { success: false, error } } });
@@ -126,7 +128,11 @@ export async function startWebServer({ passwordHash, agents = [], port = 43128, 
     if (!ws.generation) {
       if (!exact(value, ['v', 'type', 'generation', 'seq', 'status']) || value.type !== 'hello' || !generationValid(value.generation) || !Number.isSafeInteger(value.seq) || value.seq < 0 || !states.has(value.status)) throw new Error('Protocol.');
       ws.generation = value.generation; ws.seq = value.seq; ws.status = value.status;
-      clearTimeout(ws.helloTimer); broadcastRoster(); return;
+      const registration = registrations.get(ws.agentId);
+      if (registration.startup) registration.startup = { ...registration.startup, phase: 'connected', updatedAt: Date.now() };
+      clearTimeout(ws.helloTimer);
+      send(ws, { v: 1, type: 'registered', generation: ws.generation });
+      broadcastRoster(); return;
     }
     if (exact(value, ['v', 'type', 'frame']) && value.type === 'frame') {
       const frame = value.frame;
@@ -204,6 +210,12 @@ export async function startWebServer({ passwordHash, agents = [], port = 43128, 
   return {
     origin,
     roster,
+    setStartup(id, phase) {
+      if (!startupPhase(phase) || !registrations.has(id)) throw new Error('Invalid host startup phase.');
+      const agent = registrations.get(id), now = Date.now();
+      agent.startup = { phase, startedAt: agent.startup?.startedAt || now, updatedAt: now };
+      broadcastRoster();
+    },
     revokeAgent(id) { registrations.delete(id); connected.get(id)?.terminate(); broadcastRoster(); },
     close() {
       return closing ||= (async () => {
