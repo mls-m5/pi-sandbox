@@ -25,7 +25,7 @@ The web UI now defaults to **state plus live events**, with history read only th
 
 The user reports the updated web flow now works. This is useful host feedback, not exhaustive verification of every giant-history edge case or production container lifecycle. No need to reset auth, delete transcripts, recreate a project or increase record caps without bounds.
 
-Assistant reply text now has a bounded, textContent-only Markdown subset (headings/emphasis/code); user/thinking/tool content stays literal. Raw HTML, active links/images, remote highlighting and arbitrary attributes remain disabled. The implementation/security contract is in docs/web-control.md; formatting tests run without model calls.
+Assistant reply text has bounded fixed-DOM Markdown (headings/emphasis/code, lists, disabled task checkboxes, pipe tables and explicit HTTP(S) links); user/thinking/tool content stays literal. Content text uses textContent; links alone get separately validated href/new-tab/no-opener/no-referrer properties and require a user click. Raw HTML, images, unsafe URL schemes, remote highlighting and arbitrary attributes stay disabled. Checkboxes cannot mutate agent work. The implementation/security contract is in docs/web-control.md; formatting tests run without model calls.
 
 ## Development checks
 
@@ -37,8 +37,9 @@ npm run test:integration  # explicitly opt-in real rootless Podman/fake services
 npm run test:storage      # separate, disk-heavy legacy/new image benchmark
 ```
 
+- During extended-Markdown verification, one full parallel run failed the pre-existing dummy-quota assertion in `test/web-app.test.js` (`resumes` was 2 instead of 1, before the new Markdown event/assertions). The isolated app test and a complete rerun passed; no quota/resume behavior was changed or assertion relaxed. Treat this as an intermittent test/runtime issue to investigate if it recurs, not proof that quota resumption is universally race-free.
 - Ordinary checks use fakes/local sockets/subprocesses, with **no live/paid model calls**. Without optional `web/node_modules/ws`, web transport/CLI tests explicitly skip; pure helpers and core checks remain available.
-- Latest ordinary result after basic Markdown: **281 tests, 270 passed, 11 skipped** with the optional web dependency installed. Keep this number current only when reporting a fresh check, not as a permanent coverage guarantee.
+- Latest ordinary result after extended Markdown: **286 tests, 275 passed, 11 skipped** with the optional web dependency installed. Keep this number current only when reporting a fresh check, not as a permanent coverage guarantee.
 - The isolated no-model RPC state/history/EOF probe passed against installed **Pi 1.5.0** after this parser change, with no network attempts. Earlier probes ran 1.5.2; source image pin is still 1.5.0. The probe does not exercise giant real session records or container lifecycle.
 - Full rootless Podman image/storage/update/project RPC tests were **not run in the development sandbox**. The new storage layout has unit/fake-engine tests and an opt-in host benchmark, **no measured physical saving** yet. Read its free-space guard/cleanup limits before running it.
 - App tests run the actual browser module through real local HTTP/WebSockets in a DOM shim, not a graphical browser. Host reports confirm some real browser/agent flows; full CSP/cookies/layout/accessibility/mobile and crash/long-running lifecycle still need verification.

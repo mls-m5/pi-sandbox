@@ -6,12 +6,13 @@ import { hashPassword, randomKey, digest } from '../web/common.js';
 
 const installed = fs.existsSync(new URL('../web/node_modules/ws/package.json', import.meta.url));
 class Element {
-  constructor() { this.children = []; this.textContent = ''; this.hidden = false; this.disabled = true; this.value = ''; this.scrollTop = 0; this.scrollHeight = 100; this.clientHeight = 100; this.listeners = new Map(); }
+  constructor(tag) { this.tag = tag; this.children = []; this.textContent = ''; this.hidden = false; this.disabled = true; this.value = ''; this.scrollTop = 0; this.scrollHeight = 100; this.clientHeight = 100; this.listeners = new Map(); }
   addEventListener(type, fn) { this.listeners.set(type, fn); }
   append(...nodes) { this.children.push(...nodes); }
   replaceChildren(...nodes) { this.children = nodes; }
   async dispatch(type, extra = {}) { await this.listeners.get(type)?.({ preventDefault() {}, ...extra }); }
 }
+const nodes = element => [element, ...element.children.flatMap(nodes)];
 const content = element => element.textContent + element.children.map(content).join('');
 async function until(check) {
   for (let i = 0; i < 600; i++) { if (check()) return; await delay(10); }
@@ -38,7 +39,7 @@ test('actual browser app module logs in, selects, chats, recovers dummy quota an
     await connector?.close(); await server.close(); await delay(100);
     for (const key of keys) { const descriptor = descriptors.get(key); if (descriptor) Object.defineProperty(globalThis, key, descriptor); else delete globalThis[key]; }
   });
-  globalThis.document = { getElementById: element, createElement: () => new Element() };
+  globalThis.document = { getElementById: element, createElement: tag => new Element(tag) };
   globalThis.location = { origin: server.origin };
   globalThis.requestAnimationFrame = callback => setImmediate(callback);
   globalThis.addEventListener = (name, fn) => pageEvents.set(name, fn);
@@ -112,6 +113,12 @@ test('actual browser app module logs in, selects, chats, recovers dummy quota an
   await until(() => !element('send').disabled);
   assert.equal((await connector.rpc.request('get_state')).data.resumes, 1);
   assert.equal(reads.filter(type => type === 'get_messages').length, historyReadsBefore, 'Settlement/quota continuation must not auto-fetch old history.');
+  connector.rpc.emit('event', { type: 'message_end', message: { role: 'assistant', content: [{ type: 'text', text: '## Checklist\n- [x] Done\n- [ ] Pending\n\n| A | B |\n| --- | --- |\n| one | [Docs](https://example.org/) |' }] } });
+  await until(() => nodes(element('messages')).some(node => node.tag === 'table'));
+  const checkbox = nodes(element('messages')).find(node => node.tag === 'input' && node.type === 'checkbox');
+  assert.equal(checkbox.checked, true); assert.equal(checkbox.disabled, true);
+  const link = nodes(element('messages')).find(node => node.tag === 'a');
+  assert.equal(link.href, 'https://example.org/'); assert.equal(link.rel, 'noopener noreferrer');
   await element('logout').dispatch('click');
   await until(() => element('workspace').hidden);
   assert.equal(element('login').hidden, false);
