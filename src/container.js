@@ -250,7 +250,8 @@ async function launchOnce(store, config, options) {
       if (!isClaude && config.credentials.proxy) {
         progress(`Preparing ${config.credentials.proxy.provider} credential proxy…`);
         options.startupProgress?.('preparing_proxy');
-        proxy = await prepareProxy(store, config, { upstream: options.proxyUpstream, codexAuthFetch: options.codexAuthFetch });
+        proxy = await prepareProxy(store, config, { upstream: options.proxyUpstream, codexAuthFetch: options.codexAuthFetch, bergetCatalogFetch: options.bergetCatalogFetch });
+        if (proxy.catalog) progress(`Berget catalogue: ${proxy.catalog.source}, ${proxy.catalog.count} chat models${proxy.catalog.defaultsUsed ? ' (local token budgets; verify provider limits or set modelOverrides)' : ''}.`);
       }
       if (options.autoWaitCodex) codexAuto = await startCodexAutoServer(store);
       const piOptions = command.slice(1, command.indexOf('--') === -1 ? command.length : command.indexOf('--'));

@@ -2,6 +2,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { assert, directory, within, overlap } from './util.js';
 import { DEFAULT_PROXY } from './proxy.js';
+import { validateBergetModelSettings } from './berget-models.js';
 import { DEFAULT_EXTENSIONS, extensionManifest } from './extensions.js';
 import { HINTS, SCHEMA_REFERENCE } from './config-schema.js';
 
@@ -59,7 +60,7 @@ export function validate(config, { storage, home = os.homedir(), identity, paths
   assert(config.credentials.env.length === 0, 'Direct credential forwarding is no longer supported. Set credentials.env to [] and configure credentials.proxy (for OpenAI: provider=openai with keyEnv=OPENAI_API_KEY, or profile=openai after pis --login openai). Real keys must stay on the host.');
   if (config.credentials.proxy !== undefined) {
     const proxy = config.credentials.proxy;
-    object(proxy, ['provider', 'keyEnv', 'profile', 'models', 'maxRequests', 'maxConcurrent'], 'credentials.proxy');
+    object(proxy, ['provider', 'keyEnv', 'profile', 'models', 'maxRequests', 'maxConcurrent', 'discoverModels', 'modelOverrides'], 'credentials.proxy');
     assert(['openai', 'openai-codex', 'berget', 'mistral', 'custom'].includes(proxy.provider), 'Proxy provider must be openai, berget, mistral, custom or openai-codex.');
     assert(proxy.profile === undefined || (proxy.provider !== 'openai-codex' && proxy.profile === proxy.provider), 'Profile must match the API-key provider (openai, berget, mistral or custom).');
     assert(proxy.provider !== 'custom' || proxy.profile === 'custom', 'Custom provider requires credentials.proxy.profile=custom; use pis --login custom to configure a trusted host profile.');
@@ -67,6 +68,7 @@ export function validate(config, { storage, home = os.homedir(), identity, paths
     assert(proxy.provider !== 'openai-codex' || proxy.keyEnv === undefined, 'Codex uses host OAuth credentials; remove keyEnv and use pis --login-codex or --import-codex.');
     assert(proxy.keyEnv === undefined || (typeof proxy.keyEnv === 'string' && /^[A-Z_][A-Z0-9_]*$/.test(proxy.keyEnv) && !RESERVED_ENV.includes(proxy.keyEnv)), 'Invalid proxy keyEnv variable name.');
     assert(config.credentials.env.length === 0, 'Proxy mode requires credentials.env to be empty; never forward real credentials alongside the proxy.');
+    validateBergetModelSettings(proxy);
     if (proxy.models !== undefined) strings(proxy.models, 'credentials.proxy.models');
     if (proxy.maxRequests !== undefined) assert(Number.isInteger(proxy.maxRequests) && proxy.maxRequests >= 1 && proxy.maxRequests <= 100_000, 'proxy.maxRequests must be an integer between 1 and 100000.');
     if (proxy.maxConcurrent !== undefined) assert(Number.isInteger(proxy.maxConcurrent) && proxy.maxConcurrent >= 1 && proxy.maxConcurrent <= 64, 'proxy.maxConcurrent must be an integer between 1 and 64.');

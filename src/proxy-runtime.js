@@ -5,6 +5,7 @@ import { DEFAULT_PROXY, startOpenAIProxy } from './proxy.js';
 import { readCodexCredential } from './codex-auth.js';
 import { createCodexAccountRouter } from './codex-accounts.js';
 import { publicHostLookup, readApiProfile } from './api-auth.js';
+import { loadBergetModels } from './berget-models.js';
 
 export const PROXY_BASE_URL = 'http://127.0.0.1:43127/v1';
 export const CODEX_PROXY_BASE_URL = 'http://127.0.0.1:43127/backend-api';
@@ -35,7 +36,7 @@ function stateRecord(file) {
   } finally { fs.closeSync(fd); }
 }
 
-export async function prepareProxy(store, config, { upstream, codexAuthFetch } = {}) {
+export async function prepareProxy(store, config, { upstream, codexAuthFetch, bergetCatalogFetch } = {}) {
   const settings = { ...DEFAULT_PROXY, ...config.credentials.proxy };
   const isCodex = settings.provider === 'openai-codex';
   const credential = isCodex ? readCodexCredential(store) : undefined;
@@ -64,9 +65,9 @@ export async function prepareProxy(store, config, { upstream, codexAuthFetch } =
     // the selected provider/auth entry so old endpoints/headers cannot win.
     // A full Codex Responses URL also works with pi-web-access's provider-URL reuse.
     const modelBaseUrl = isCodex ? `${baseUrl}/codex/responses` : baseUrl;
-    const providerModels = settings.provider === 'berget' ? { api: 'openai-completions', models: [
-      { id: 'google/gemma-4-31B-it', name: 'Gemma 4 31B (Berget)', reasoning: false, input: ['text', 'image'], contextWindow: 262144, maxTokens: 8192 },
-    ] } : settings.provider === 'custom' ? { api: apiProfile.api, models: apiProfile.models } : {};
+    // Injected fake upstreams must never trigger incidental public discovery.
+    const catalog = settings.provider === 'berget' ? await loadBergetModels({ ...settings, ...(upstream && !bergetCatalogFetch ? { discoverModels: false } : {}) }, { fetchImpl: bergetCatalogFetch }) : undefined;
+    const providerModels = catalog ? { api: 'openai-completions', models: catalog.models } : settings.provider === 'custom' ? { api: apiProfile.api, models: apiProfile.models } : {};
     const modelSnapshot = { ...models, providers: { ...models.providers, [settings.provider]: { baseUrl: modelBaseUrl, apiKey: proxy.token, ...providerModels } } };
     // Usage extensions read access/accountId directly; keep the api_key type so
     // Pi never tries to refresh this synthetic credential inside the container.
@@ -82,6 +83,7 @@ export async function prepareProxy(store, config, { upstream, codexAuthFetch } =
       token: proxy.token,
       baseUrl,
       provider: settings.provider,
+      ...(catalog ? { catalog: { source: catalog.source, count: catalog.models.length, defaultsUsed: catalog.defaultsUsed } } : {}),
       async close() {
         try { await proxy.close(); }
         finally { fs.rmSync(runtimeDir, { recursive: true, force: true }); }

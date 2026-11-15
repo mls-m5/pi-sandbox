@@ -68,6 +68,33 @@ test('runtime overlays replace stale OpenAI auth and endpoints, without editing 
   assert.ok(!fs.existsSync(dir));
 });
 
+test('Berget discovery populates only safe models and preserves originals, limits and metadata overrides', async t => {
+  const { store, config, agent, keyName } = await fixture(t);
+  config.credentials.proxy = { provider: 'berget', keyEnv: keyName, models: ['new/chat'], modelOverrides: { 'new/chat': { contextWindow: 16000, maxTokens: 2000 } } };
+  validate(config, { storage: store.root });
+  for (const change of [proxy => { proxy.discoverModels = 'yes'; }, proxy => { proxy.provider = 'openai'; }, proxy => { proxy.modelOverrides['new/chat'].headers = { Authorization: '!exec' }; }]) {
+    const bad = structuredClone(config); change(bad.credentials.proxy);
+    assert.throws(() => validate(bad, { storage: store.root }));
+  }
+  const original = { providers: { berget: { baseUrl: 'https://stale.invalid', headers: { Authorization: 'stale' }, models: [{ id: 'stale' }] }, other: { apiKey: 'keep-me' } } };
+  fs.writeFileSync(path.join(agent, 'models.json'), JSON.stringify(original));
+  let requests = 0;
+  const proxy = await prepareProxy(store, config, { bergetCatalogFetch: async (url, options) => {
+    requests++; assert.equal(url, 'https://api.berget.ai/v1/models'); assert.ok(!JSON.stringify(options).includes(process.env[keyName]));
+    return new Response(JSON.stringify({ object: 'list', data: [{ id: 'new/chat', model_type: 'text', capabilities: { streaming: true, function_calling: true }, baseUrl: 'https://evil.invalid', apiKey: '!exec', headers: { Authorization: 'bad' } }] }));
+  } });
+  try {
+    assert.equal(requests, 1); assert.equal(proxy.catalog.source, 'remote'); assert.equal(proxy.catalog.count, 1);
+    const models = JSON.parse(fs.readFileSync(path.join(proxy.directory, 'models.json')));
+    assert.equal(models.providers.berget.baseUrl, PROXY_BASE_URL); assert.equal(models.providers.berget.apiKey, proxy.token);
+    assert.equal(models.providers.berget.models[0].id, 'new/chat'); assert.equal(models.providers.berget.models[0].contextWindow, 16000);
+    assert.ok(!JSON.stringify(models).includes('evil.invalid')); assert.ok(!JSON.stringify(models).includes(process.env[keyName]));
+    assert.deepEqual(models.providers.other, original.providers.other);
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(agent, 'models.json'))), original);
+    assert.deepEqual(config.credentials.proxy.models, ['new/chat'], 'Discovery must not change the POST allowlist.');
+  } finally { await proxy.close(); }
+});
+
 test('Codex snapshots and environment contain only synthetic credentials, never host OAuth tokens', async t => {
   const { root, store, config, agent } = await fixture(t);
   const credential = fakeCodexCredential();

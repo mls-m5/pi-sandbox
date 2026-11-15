@@ -1,6 +1,6 @@
 # Plan: Berget AI and host-side API-key login
 
-Status: implementation in progress on `feat/berget-api`. Core Berget proxying, host API-key profiles, custom trusted-endpoint profiles, and fake-service tests are implemented. Live-provider compatibility and real-container Berget/custom streamed tool round trips remain unverified.
+Status: core Berget proxying, host API-key profiles and custom trusted-endpoint profiles are implemented. Berget now has bounded automatic public catalogue discovery at launch and a four-chat-model offline fallback; see [the current catalogue/metadata/security contract](proxy.md#berget-model-catalogue). Live-provider compatibility and real-container Berget/custom streamed tool round trips remain unverified. The checklist below also records the original implementation constraints.
 
 ## Goals
 
@@ -13,7 +13,7 @@ Status: implementation in progress on `feat/berget-api`. Core Berget proxying, h
 
 - Codex retains host-side login/import/logout support.
 - `pis --login openai|berget|custom`, `--logout`, and `--login-status` manage private host API-key profiles. OpenAI/Berget can also use an explicitly selected host environment variable.
-- Berget is fixed to `https://api.berget.ai/v1` and initially permits only Chat Completions. It does not assume Responses or `/v1/models` support.
+- Berget is fixed to `https://api.berget.ai/v1` and initially permits only Chat Completions. Responses and sandbox `/v1/models` remain disabled. Host-only public `/v1/models` discovery is now implemented separately without API credentials.
 - Custom API profiles are host-only, HTTPS/public-DNS constrained, DNS-pinned per run, path-prefix aware, and limited to Chat Completions. Custom model metadata is entered by the user and stored with the host profile.
 - Selected-provider Pi auth/model entries remain read-only per-run overlays. Real keys stay out of the sandbox, build context, and project JSON.
 
@@ -69,7 +69,8 @@ Also provide a login-status command that reports profile/provider and credential
 ### 4. Pi model overlays
 
 - [x] Generate a Berget provider overlay with loopback base URL, dummy key, `api: "openai-completions"`, and an explicit initial model definition.
-- [x] Begin with the documented tool-capable `google/gemma-4-31B-it` model. Berget capability docs list tool use and multimodal input; see remaining metadata caveat below.
+- [x] Initial Gemma-only overlay extended to automatic public catalogue discovery and a four-model fallback (Gemma, GLM, Kimi, Mistral). Explicit chat/tool/streaming filtering excludes Decision/embedding/rerank/speech. No auth or new sandbox route is supplied.
+- [x] Berget-only `discoverModels` opt-out and bounded `modelOverrides` support verified user metadata without accepting arbitrary Pi config/endpoints.
 - [ ] Verify context/output limits, input capabilities, pricing, and compatibility settings against the pinned Pi version and current Berget documentation; do not guess.
 - [x] Keep model catalogs separate from `credentials.proxy.models`, which remains an exact request allowlist.
 - [x] Preserve original state files and existing file/symlink safety checks; replace stale selected-provider endpoints/headers.
@@ -94,7 +95,7 @@ Also provide a login-status command that reports profile/provider and credential
 
 ## Remaining verification
 
-- Berget's output-token limit in the Pi overlay is provisional and has not been independently verified; confirm it before treating the model metadata as authoritative.
+- Berget's public catalogue lacks context/output limits in the observed response. The overlay uses documented local budgets when numeric limits are absent, not verified service ceilings. Supply verified values via modelOverrides. EUR catalogue prices are not misrepresented as Pi USD pricing.
 - Add real-container Berget/custom tests using fake upstreams for streamed tool calls and tool-result round trips.
 - Live-provider compatibility remains unverified; run a small live smoke test only with explicit user approval.
 

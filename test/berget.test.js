@@ -54,7 +54,7 @@ test('Berget config, profile permissions, precedence, missing profile and logout
   assert.equal(fs.statSync(path.dirname(file)).mode & 0o777, 0o700);
   assert.equal(readApiProfile(store, 'berget').key, key);
   assert.deepEqual(apiProfileStatus(store).find(p => p.provider === 'berget'), { provider: 'berget', profilePresent: true, environmentVariable: 'BERGET_API_KEY', environmentPresent: true, credentialPresent: true });
-  const proxy = await prepareProxy(store, config);
+  const proxy = await prepareProxy(store, config, { bergetCatalogFetch: async () => { throw new Error('offline fixture'); } });
   try {
     const models = JSON.parse(fs.readFileSync(path.join(proxy.directory, 'models.json')));
     assert.equal(models.providers.berget.api, 'openai-completions');

@@ -62,6 +62,35 @@ To select a stored Berget profile in a project, set `credentials.env` to `[]` an
 
 Custom destinations must use HTTPS on port 443, with no URL credentials, query, or fragment, and a safe path prefix ending in `/v1`. IP literals, local hostnames, and DNS results in private/special-use ranges are rejected. DNS answers are resolved and pinned when the host proxy starts; requests use only `/v1/chat/completions` with the configured base path prefix and never follow redirects. Loopback HTTP remains available only to the internal fake-service test seam. This does not constrain container egress generally.
 
+## Berget model catalogue
+
+At each normal Berget-proxy startup the host makes **one public, credential-free GET** to `https://api.berget.ai/v1/models`. This is metadata discovery, not a completion/model request. It sends only an Accept header, omits cookies/authentication, rejects redirects, times out after five seconds (including body reads), and bounds the decoded response to 512 KiB, 256 catalogue entries and 100 accepted chat models. No remote URLs, headers, credentials, commands, compatibility objects or price fields enter the generated Pi overlay. The sandbox still cannot call a model-list route; the existing Chat Completions POST allowlist and limits are unchanged.
+
+Only text/chat entries explicitly advertising streaming and function calling are included; embeddings, rerank, speech, System One/decision and retired entries are excluded. Active, preview and deprecated-but-not-retired chat entries can appear; catalogue inclusion is not a compatibility/production endorsement. Canonical IDs are used, not aliases. Images are enabled only when the catalogue explicitly advertises vision. Reasoning controls remain off by default because protocol compatibility has not been verified. EUR prices are **not** inserted into Pi's USD cost fields: Pi's displayed cost is not an accurate Berget invoice estimate.
+
+When discovery fails (including unavailable/invalid/oversized/empty compatible catalogue), launch uses the bundled four-model snapshot: Gemma 4 31B, GLM 5.3 Flash, Kimi K3.1 Pro and Mistral Small 3.2 24B. There is no persistent cache, background refresh, retry loop or model call. Restart pis to refresh; no rebuild or fresh session is required. `credentials.proxy.discoverModels: false` disables the network read and selects that bundled snapshot. Startup progress reports only fixed source (`remote`, `fallback`, `bundled`), accepted count and a local-budget warning; never raw errors/responses. Fake injected upstreams default to bundled models so offline tests do not accidentally call Berget.
+
+The public catalogue observed during implementation omitted context/output limits. Valid `context_length` / `max_output_tokens` integers are used if supplied; otherwise definitions use **local token budgets, not verified service ceilings**: the previous Gemma budget of 262144 context / 8192 output is retained; other models default to 32768 context / 8192 output, clipped to context if needed. They may underuse a model's capacity and are not a guarantee that a provider accepts a given request. Supply verified limits explicitly when needed:
+
+```json
+"proxy": {
+  "provider": "berget",
+  "profile": "berget",
+  "models": [],
+  "discoverModels": true,
+  "modelOverrides": {
+    "moonshotai/Kimi-K3.1-Pro": {
+      "contextWindow": 32768,
+      "maxTokens": 8192
+    }
+  }
+}
+```
+
+The numbers above illustrate the local budget, **not published Kimi limits**. Overrides require both positive integer limits (output no greater than context) and optionally `input: ["text", "image"]` / `reasoning`; no endpoint/headers/arbitrary config is accepted. They apply only to a matching discovered/bundled model and never add models or override the request allowlist. `models: []` still means unrestricted POST model IDs, not discovery. Explicit project configuration and stored sandbox auth/models files remain unchanged; the selected provider's per-run read-only overlay is rebuilt as before.
+
+Sources: [public catalogue](https://api.berget.ai/v1/models), [console](https://console.berget.ai/models), [capabilities](https://docs.berget.ai/models/capabilities). The public catalogue was read without credentials; tests use fake catalogues/local HTTP and no live/paid inference. Real-provider streaming/reasoning/tool round trips and actual model ceilings remain unverified.
+
 ## Architecture
 
 ```text

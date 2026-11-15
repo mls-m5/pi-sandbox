@@ -29,6 +29,8 @@ Assistant reply text has bounded fixed-DOM Markdown (headings/emphasis/code, lis
 
 Agent activity now has a text-labelled work/wait spinner (CSS respects reduced motion); idle is explicitly not task success. Tool call IDs/results are retained in the bounded client projection and merged into one chat card: dashed running, blue completed, red reported error, neutral unknown if completion was missed/interrupted. Result text stays literal, arguments omitted. Agent-end alone does not stop the activity indicator; settlement does. See docs/web-control.md for history/live limits and verification gaps.
 
+Berget model overlays now use `src/berget-models.js`: one bounded unauthenticated public GET per launch, fixed endpoint/no redirects, five-second deadline, compatible streaming/tool chat filtering and a four-chat-model bundled fallback. `discoverModels: false` opts out; Berget-only `modelOverrides` supply explicit verified metadata. The public response omitted context/output limits, so local default budgets are not certified provider limits; EUR prices are not copied as USD. Read docs/proxy.md before changing this boundary. Fake upstreams disable public discovery unless a catalogue-fetch fake is injected.
+
 ## Development checks
 
 ```sh
@@ -41,7 +43,7 @@ npm run test:storage      # separate, disk-heavy legacy/new image benchmark
 
 - During extended-Markdown verification, one full parallel run failed the pre-existing dummy-quota assertion in `test/web-app.test.js` (`resumes` was 2 instead of 1, before the new Markdown event/assertions). The isolated app test and a complete rerun passed; no quota/resume behavior was changed or assertion relaxed. Treat this as an intermittent test/runtime issue to investigate if it recurs, not proof that quota resumption is universally race-free.
 - Ordinary checks use fakes/local sockets/subprocesses, with **no live/paid model calls**. Without optional `web/node_modules/ws`, web transport/CLI tests explicitly skip; pure helpers and core checks remain available.
-- Latest ordinary result after activity/tool cards: **289 tests, 278 passed, 11 skipped** with the optional web dependency installed. Keep this number current only when reporting a fresh check, not as a permanent coverage guarantee.
+- Latest ordinary result after Berget catalogue discovery: **297 tests, 286 passed, 11 skipped** with the optional web dependency installed. Keep this number current only when reporting a fresh check, not as a permanent coverage guarantee.
 - The isolated no-model RPC state/history/EOF probe passed against installed **Pi 1.5.0** after this parser change, with no network attempts. Earlier probes ran 1.5.2; source image pin is still 1.5.0. The probe does not exercise giant real session records or container lifecycle.
 - Full rootless Podman image/storage/update/project RPC tests were **not run in the development sandbox**. The new storage layout has unit/fake-engine tests and an opt-in host benchmark, **no measured physical saving** yet. Read its free-space guard/cleanup limits before running it.
 - App tests run the actual browser module through real local HTTP/WebSockets in a DOM shim, not a graphical browser. Host reports confirm some real browser/agent flows; full CSP/cookies/layout/accessibility/mobile and crash/long-running lifecycle still need verification.
@@ -64,4 +66,4 @@ npm run test:storage      # separate, disk-heavy legacy/new image benchmark
 - GNOME deliberately calls `~/.local/bin/pis` because Shell may not inherit terminal PATH. Its extension is an installed copy: use its installer and reload appropriately (Xorg shell restart versus Wayland logout/login). No host launcher/session state is automatically present in a sandbox.
 - Host home, SSH agents, Podman control and provider credentials are not available in a normal development sandbox. Claude's project-specific copied tokens are the documented exception, not permission to mount host originals.
 - The old CNI dnsname warning was a host-local retired test network issue, not an auth/proxy problem; recovery details are in [known issues](known-issues.md).
-- Substantial changes were committed locally; recent push proposals were rejected/invalid and did not execute. Do not infer push success from a proposal or stale tracking ref. Follow `AGENTS.md` and fresh host confirmations.
+- Host confirmed commit 130fc2bca1880f8584d7b454df594ec01401e8f9 pushed to main. Earlier proposal validation failures were not user rejections: the tool's `reason` is limited to 500 characters. Keep future reasons short, verify exact HEAD and require fresh host approval for later commits; never repeat a confirmed push.
