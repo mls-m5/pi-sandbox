@@ -9,7 +9,7 @@ import net from 'node:net';
 import { once } from 'node:events';
 import { Store } from '../src/store.js';
 import { defaults } from '../src/config.js';
-import { resolveWebProjects } from '../src/project-rpc.js';
+import { resolveWebProjects, resolveConnectProject } from '../src/project-rpc.js';
 import { PiRpc } from '../src/pi-rpc.js';
 import { withLock } from '../src/util.js';
 import { launch } from '../src/container.js';
@@ -61,6 +61,18 @@ test('project selection requires existing distinct configured Pi projects, prese
   assert.throws(() => resolveWebProjects(['unknown'], f.store), /Unknown project/);
   f.config.agent = 'claude'; f.store.write(f.config);
   assert.throws(() => resolveWebProjects(['web-test'], f.store), /not Claude/);
+});
+
+test('connect project lookup accepts IDs/names/unique folder basenames and rejects ambiguity without changing projects', async t => {
+  const f = await fixture(t);
+  assert.equal(resolveConnectProject(f.config.id, f.store).id, f.config.id);
+  assert.equal(resolveConnectProject('web-test', f.store).id, f.config.id);
+  assert.equal(resolveConnectProject(path.basename(f.root), f.store).id, f.config.id);
+  const parent = path.join(f.base, 'other'); fs.mkdirSync(parent);
+  const root = path.join(parent, path.basename(f.root)); fs.mkdirSync(root); await f.store.register(root, 'other-project');
+  assert.throws(() => resolveConnectProject(path.basename(root), f.store), error => error.code === 'CONNECT_PROJECT_AMBIGUOUS');
+  assert.equal(resolveConnectProject('web-test', f.store).id, f.config.id, 'Exact registered name wins over folder fallback.');
+  assert.throws(() => resolveConnectProject('missing', f.store), /No registered project/);
 });
 
 test('fixed project wrapper preserves clean RPC, exclusive lock and sandbox flags; EOF verifies cleanup', { skip: process.getuid() === 0 }, async t => {
@@ -196,6 +208,22 @@ test('independent registered agent CLI keeps Pi inside existing project boundary
   await new Promise(resolve => setTimeout(resolve, 600)); assert.equal(runner.exitCode, null); assert.ok(fs.existsSync(f.lock), 'Revocation must not tear down local Pi.');
   const closed = once(runner, 'close'); runner.kill('SIGTERM'); await closed;
   assert.equal(runner.exitCode, 0); assert.equal(fs.existsSync(f.lock), false); assert.ok(!output.includes(registration.token));
+  const shortcutRoot = path.join(f.base, 'folder-app'); fs.mkdirSync(shortcutRoot);
+  const shortcutConfig = await f.store.register(shortcutRoot, 'another-registered-name');
+  shortcutConfig.credentials = { env: [] }; shortcutConfig.extensions = []; shortcutConfig.image.packages = []; f.store.write(shortcutConfig);
+  const ticketResponse = await fetch(`${server.origin}/enrollment-keys`, { method: 'POST', headers: { ...headers, Cookie: cookie, 'X-CSRF-Token': csrf }, body: '{}' });
+  assert.equal(ticketResponse.status, 201); const ticket = await ticketResponse.json();
+  const shortcut = spawn(process.execPath, [cli, 'folder-app', '--server', server.origin, '--key-stdin'], { cwd: f.root, env: f.env, stdio: ['pipe', 'pipe', 'pipe'] });
+  t.after(() => { if (shortcut.exitCode === null) shortcut.kill('SIGKILL'); }); shortcut.stdout.resume(); shortcut.stderr.on('data', data => { output += data; }); shortcut.stdin.end(`${ticket.token}\n`);
+  for (let index = 0; index < 700 && !server.roster().some(agent => agent.label === 'folder-app' && agent.online) && shortcut.exitCode === null; index++) await new Promise(resolve => setTimeout(resolve, 10));
+  assert.ok(server.roster().some(agent => agent.label === 'folder-app' && agent.online), 'One command must resolve the unique folder and start Pi without run.');
+  const shortcutProfile = path.join(f.store.root, 'web-agents', 'folder-app.json'), saved = fs.readFileSync(shortcutProfile, 'utf8');
+  assert.equal(JSON.parse(saved).projectId, shortcutConfig.id);
+  const busy = spawn(process.execPath, [cli, 'folder-app', '--server', server.origin, '--key-stdin'], { cwd: f.root, env: f.env, stdio: ['pipe', 'pipe', 'pipe'] });
+  let busyOutput = ''; busy.stderr.on('data', data => { busyOutput += data; }); busy.stdout.resume(); busy.stdin.end(`${randomKey()}\n`);
+  await once(busy, 'close'); assert.equal(busy.exitCode, 1); assert.match(busyOutput, /projektet körs redan/); assert.equal(shortcut.exitCode, null); assert.equal(fs.readFileSync(shortcutProfile, 'utf8'), saved);
+  const shortcutClosed = once(shortcut, 'close'); shortcut.kill('SIGTERM'); await shortcutClosed; assert.equal(shortcut.exitCode, 0);
+  const trace = fs.readFileSync(f.trace, 'utf8'); assert.ok(!trace.includes(ticket.token)); assert.ok(!trace.includes(JSON.parse(saved).token)); assert.ok(!output.includes(ticket.token));
 });
 
 test('project connector keeps wrapper and lock alive across network reconnect, then cleans up locally', { skip: process.getuid() === 0 || !fs.existsSync(new URL('../web/node_modules/ws/package.json', import.meta.url)), timeout: 15000 }, async t => {

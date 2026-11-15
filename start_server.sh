@@ -12,12 +12,15 @@ if [[ "${1:-}" == "--connect" ]]; then
   MODE=()
   if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
     printf '%s\n' \
-      'Usage: pis --connect register NAME --server http://127.0.0.1:43128 (--project PROJECT | --dummy) [--replace] [--key-stdin]' \
+      'Usage: pis --connect NAME --server http://127.0.0.1:43128 [--project PROJECT | --dummy] [--key-stdin] [--diagnostics]' \
+      '       pis --connect register NAME --server http://127.0.0.1:43128 (--project PROJECT | --dummy) [--replace] [--key-stdin]' \
       '       pis --connect run NAME [--diagnostics]' \
       '       pis --connect forget NAME' \
-      'Create a matching registration in the web panel. Paste its key at the hidden prompt, never in command arguments.' \
+      'Default connect: create a one-use GUI key, paste it at the hidden prompt; profile is replaced and agent starts automatically.' \
+      'NAME selects registered ID/name or unique final folder component unless --project is supplied. Existing work is never killed.' \
+      'Legacy register/run commands remain available for direct agent keys. Never put keys in command arguments.' \
       'Host-private profiles under PIS_HOME/web-agents; keys never mounted into the sandbox. Loopback only, no TLS/LAN yet.' \
-      'Server restart requires a new registration and register --replace. run starts an agent; Ctrl-C stops it, not the server.'
+      'After server restart create a fresh GUI key and repeat short connect. Ctrl-C stops the local agent, not the server.'
     exit 0
   fi
 fi

@@ -2,7 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { NAME_PATTERN, ID_PATTERN } from '../src/config.js';
 import { assert, atomicWrite, withLock } from '../src/util.js';
-import { exact, idValid } from './common.js';
+import { validateEnrollment, labelValid } from './enrollment.js';
+import { exact, idValid, generationValid } from './common.js';
 
 export function localServerOrigin(value) {
   assert(typeof value === 'string' && value.length <= 256, 'Invalid local server origin.');
@@ -11,7 +12,8 @@ export function localServerOrigin(value) {
   return url.origin;
 }
 export function validateAgentProfile(record) {
-  assert(exact(record, ['version', 'origin', 'token', 'agentId', 'kind', 'projectId']) && record.version === 1, 'Invalid agent profile.');
+  assert(exact(record, ['version', 'origin', 'token', 'agentId', 'kind', 'projectId', ...(Object.hasOwn(record || {}, 'clientId') ? ['clientId'] : [])]) && record.version === 1, 'Invalid agent profile.');
+  assert(record.clientId === undefined || generationValid(record.clientId), 'Invalid client identity.');
   assert(record.origin === localServerOrigin(record.origin) && typeof record.token === 'string' && record.token.length === 43 && /^[A-Za-z0-9_-]{43}$/.test(record.token) && idValid(record.agentId), 'Invalid agent profile.');
   assert(record.kind === 'dummy' ? record.projectId === null : record.kind === 'pi' && ID_PATTERN.test(record.projectId), 'Invalid local agent project.');
   return record;
@@ -49,19 +51,30 @@ export async function forgetAgentProfile(root, name) {
   const file = profilePath(root, name);
   await withLock(`${file}.lock`, () => { readFile(file); fs.rmSync(file, { force: true }); });
 }
+export async function enrollAgent(origin, token, enrollment, { fetchImpl = globalThis.fetch } = {}) {
+  validateEnrollment(enrollment);
+  const value = await agentRequest(origin, token, '/agent/enroll', { fetchImpl, enrollment });
+  assert(exact(value, ['id', 'token', 'kind', 'label']) && idValid(value.id) && value.kind === enrollment.kind && labelValid(value.label) && typeof value.token === 'string' && value.token.length === 43 && /^[A-Za-z0-9_-]{43}$/.test(value.token), 'Invalid enrollment result.');
+  return value;
+}
 export async function identifyAgent(origin, token, { fetchImpl = globalThis.fetch } = {}) {
+  const value = await agentRequest(origin, token, '/agent/identity', { fetchImpl });
+  assert(exact(value, ['id', 'kind']) && idValid(value.id) && ['dummy', 'pi'].includes(value.kind), 'Agent identity not accepted.');
+  return value;
+}
+async function agentRequest(origin, token, route, { fetchImpl, enrollment } = {}) {
   origin = localServerOrigin(origin);
   assert(typeof token === 'string' && token.length === 43 && /^[A-Za-z0-9_-]{43}$/.test(token), 'Invalid agent key.');
   let reader;
   try {
-    const response = await fetchImpl(`${origin}/agent/identity`, { method: 'GET', redirect: 'error', credentials: 'omit', headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(5000) });
+    const response = await fetchImpl(`${origin}${route}`, { method: enrollment ? 'POST' : 'GET', redirect: 'error', credentials: 'omit', headers: { Authorization: `Bearer ${token}`, ...(enrollment ? { 'Content-Type': 'application/json', 'X-Pis-Web': '1' } : {}) }, ...(enrollment ? { body: JSON.stringify(enrollment) } : {}), signal: AbortSignal.timeout(5000) });
     reader = response.body?.getReader();
+    if (response.status === 409) throw Object.assign(new Error('Registration conflict.'), { code: 'ENROLLMENT_CONFLICT' });
     assert(response.ok && !response.redirected && reader, 'Registration not accepted.');
     const chunks = []; let bytes = 0;
     while (true) { const { done, value } = await reader.read(); if (done) break; bytes += value.byteLength; assert(bytes <= 1024, 'Invalid identity response.'); chunks.push(value); }
     const value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks, bytes)));
-    assert(exact(value, ['id', 'kind']) && idValid(value.id) && ['dummy', 'pi'].includes(value.kind), 'Invalid identity response.');
     return value;
-  } catch { throw new Error('Server unavailable or agent key not accepted. Check the server and create a new registration after a server restart.'); }
+  } catch (error) { if (error.code === 'ENROLLMENT_CONFLICT') throw error; throw new Error('Server unavailable or agent key not accepted. Check the server and create a new registration after a server restart.'); }
   finally { if (reader) { try { await reader.cancel(); } finally { reader.releaseLock(); } } }
 }

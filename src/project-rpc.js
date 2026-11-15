@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { Store } from './store.js';
 import { ID_PATTERN } from './config.js';
 import { assert } from './util.js';
@@ -16,6 +17,16 @@ export function resolveWebProjects(selectors, store = new Store()) {
   });
   assert(new Set(selected.map(project => project.id)).size === selected.length, 'The same project was selected more than once.');
   return selected;
+}
+
+export function resolveConnectProject(selector, store = new Store()) {
+  assert(typeof selector === 'string' && selector.length > 0 && selector.length <= 128, 'Invalid project selector.');
+  const projects = store.all();
+  const exact = projects.find(project => project.id === selector || project.name === selector);
+  const matches = exact ? [exact] : projects.filter(project => path.basename(project.root) === selector);
+  assert(matches.length > 0, 'No registered project matches. Use pis --list or explicit --project ID.');
+  if (matches.length !== 1) throw Object.assign(new Error('Multiple registered projects have this folder name. Use --project with a unique ID or registered name.'), { code: 'CONNECT_PROJECT_AMBIGUOUS' });
+  return resolveWebProjects([matches[0].id], store)[0];
 }
 
 export async function runProjectRpc(store, id, { startupProgress } = {}) {

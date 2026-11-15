@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { WebSocketServer } from 'ws';
 import { validateControlCommand } from '../src/pi-rpc.js';
+import { ENROLLMENT_MS, validateEnrollment, uniqueAgentLabel, labelValid } from './enrollment.js';
 import { startupPhase } from './public/startup.js';
 import { resultCode, safeTrace } from './public/diagnostics.js';
 import { budget, digest, exact, generationValid, idValid, object, randomKey, send, verifyPassword, wsOptions } from './common.js';
@@ -18,14 +19,15 @@ const assets = new Map([
 ]);
 const states = new Set(['unknown', 'idle', 'working', 'offline']);
 
-export async function startWebServer({ passwordHash, agents = [], port = 43128, sessionMs = 8 * 60 * 60 * 1000, heartbeatMs = 10_000, commandTimeoutMs = 35_000, diagnostic = () => {} } = {}) {
+export async function startWebServer({ passwordHash, agents = [], port = 43128, sessionMs = 8 * 60 * 60 * 1000, heartbeatMs = 10_000, commandTimeoutMs = 35_000, enrollmentMs = ENROLLMENT_MS, diagnostic = () => {} } = {}) {
   if (!/^[a-f0-9]{64}$/.test(passwordHash?.salt) || !/^[a-f0-9]{128}$/.test(passwordHash?.hash)) throw new Error('Invalid admin password hash.');
-  if (!Number.isInteger(port) || port < 0 || port > 65535 || agents.length > 32) throw new Error('Invalid local server configuration.');
+  if (!Number.isInteger(port) || port < 0 || port > 65535 || agents.length > 32 || !Number.isSafeInteger(enrollmentMs) || enrollmentMs < 1 || enrollmentMs > ENROLLMENT_MS) throw new Error('Invalid local server configuration.');
   const registrations = new Map();
   for (const agent of agents) {
     if (!idValid(agent.id) || typeof agent.label !== 'string' || agent.label.length > 80 || !/^[a-f0-9]{64}$/.test(agent.tokenHash) || (agent.kind !== undefined && !['dummy', 'pi'].includes(agent.kind)) || registrations.has(agent.id) || [...registrations.values()].some(value => value.tokenHash === agent.tokenHash)) throw new Error('Invalid agent registration.');
     registrations.set(agent.id, { ...agent, kind: agent.kind || 'dummy' });
   }
+  const tickets = new Map();
   const sessions = new Map(), browsers = new Set(), connected = new Map(), pending = new Map();
   const loginBudget = budget(10, 60_000), upgradeBudget = budget(60, 60_000);
   let origin, hashing = 0, closing;
@@ -68,7 +70,13 @@ export async function startWebServer({ passwordHash, agents = [], port = 43128, 
     for (const [route, entry] of pending) if (entry.agentId === id) removePending(route, 'outcome_unknown');
     peer?.terminate(); broadcastRoster();
   }
+  function clearTicket(hash) {
+    const ticket = tickets.get(hash); if (!ticket) return;
+    tickets.delete(hash);
+    for (const ws of browsers) send(ws, { v: 1, type: 'enrollment_cleared', id: ticket.id });
+  }
   function logout(key) {
+    for (const [hash, ticket] of tickets) if (ticket.owner === key) clearTicket(hash);
     sessions.delete(key);
     for (const ws of browsers) if (ws.sessionKey === key) ws.terminate();
   }
@@ -101,20 +109,48 @@ export async function startWebServer({ passwordHash, agents = [], port = 43128, 
       await body(req);
       logout(session.key); res.setHeader('Set-Cookie', 'pis_web=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0'); json(res, 200, { ok: true }); return;
     }
+    if (req.method === 'POST' && req.url === '/agent/enroll') {
+      const bearer = !req.headers.origin && !req.headers.cookie ? /^Bearer ([A-Za-z0-9_-]{43})$/.exec(req.headers.authorization || '') : null;
+      const hash = bearer ? digest(bearer[1]) : null;
+      const validTicket = () => tickets.has(hash) && tickets.get(hash).expires > Date.now() && (sessions.get(tickets.get(hash).owner)?.expires || 0) > Date.now();
+      if (!validTicket()) { json(res, 403, { error: 'enrollment_invalid' }); return; }
+      const value = await body(req);
+      if (!validTicket()) { json(res, 403, { error: 'enrollment_invalid' }); return; }
+      try { validateEnrollment(value); } catch { json(res, 400, { error: 'invalid_enrollment' }); return; }
+      const proof = value.previousToken ? digest(value.previousToken) : null;
+      const proofMatches = agent => proof && timingSafeEqual(Buffer.from(agent.tokenHash, 'hex'), Buffer.from(proof, 'hex'));
+      let existing = [...registrations.values()].find(agent => agent.clientId === value.clientId);
+      if (!existing && proof) existing = [...registrations.values()].find(agent => !agent.clientId && proofMatches(agent));
+      if (existing && ((!proofMatches(existing)) || existing.kind !== value.kind || connected.has(existing.id))) { json(res, 409, { error: 'enrollment_conflict' }); return; }
+      if (!existing && registrations.size >= 32) { json(res, 429, { error: 'agent_limit' }); return; }
+      const id = existing?.id || randomUUID(), token = randomKey();
+      const label = uniqueAgentLabel(registrations, value.label, id);
+      registrations.set(id, { id, label, kind: value.kind, clientId: value.clientId, tokenHash: digest(token) });
+      clearTicket(hash); // Consumed atomically, no async work between validation and commit.
+      json(res, 201, { id, token, kind: value.kind, label }); broadcastRoster(); return;
+    }
     if (req.method === 'GET' && req.url === '/agent/identity') {
       const registration = authenticateAgent(req);
       json(res, registration ? 200 : 403, registration ? { id: registration.id, kind: registration.kind } : { error: 'agent_unauthorized' }); return;
     }
-    if (req.method === 'POST' && ['/agents', '/agents/revoke'].includes(req.url)) {
+    if (req.method === 'POST' && ['/agents', '/agents/revoke', '/enrollment-keys'].includes(req.url)) {
       const session = sessionFor(req);
       if (!session || req.headers.origin !== origin || req.headers['x-csrf-token'] !== session.csrf || req.headers.authorization) { json(res, 403, { error: 'invalid_session' }); return; }
       const value = await body(req);
+      if (req.url === '/enrollment-keys') {
+        if (!exact(value, [])) { json(res, 400, { error: 'invalid_enrollment' }); return; }
+        for (const [hash, ticket] of tickets) if (ticket.expires <= Date.now() || ticket.owner === session.key) clearTicket(hash);
+        if (tickets.size >= 32) { json(res, 429, { error: 'enrollment_limit' }); return; }
+        const token = randomKey(), id = randomUUID(), expiresAt = Date.now() + enrollmentMs;
+        tickets.set(digest(token), { id, owner: session.key, expires: expiresAt });
+        json(res, 201, { id, token, expiresAt }); return;
+      }
       if (req.url === '/agents/revoke') {
         if (!exact(value, ['id']) || !idValid(value.id)) { json(res, 400, { error: 'invalid_registration' }); return; }
         if (!registrations.has(value.id)) { json(res, 404, { error: 'agent_not_found' }); return; }
         revokeAgent(value.id); json(res, 200, { ok: true }); return;
       }
-      if (!exact(value, ['label', 'kind']) || typeof value.label !== 'string' || !value.label.trim() || value.label.length > 80 || /[\x00-\x1f\x7f-\x9f\u2028\u2029\u202a-\u202e\u2066-\u2069]/.test(value.label) || !['dummy', 'pi'].includes(value.kind)) { json(res, 400, { error: 'invalid_registration' }); return; }
+      if (!exact(value, ['label', 'kind']) || !labelValid(value.label) || !['dummy', 'pi'].includes(value.kind)) { json(res, 400, { error: 'invalid_registration' }); return; }
       if (registrations.size >= 32) { json(res, 429, { error: 'agent_limit' }); return; }
       const id = randomUUID(), token = randomKey();
       registrations.set(id, { id, label: value.label.trim(), kind: value.kind, tokenHash: digest(token) });
@@ -246,6 +282,7 @@ export async function startWebServer({ passwordHash, agents = [], port = 43128, 
   origin = `http://127.0.0.1:${server.address().port}`;
   const heartbeat = setInterval(() => {
     for (const [key, session] of sessions) if (session.expires <= Date.now()) logout(key);
+    for (const [hash, ticket] of tickets) if (ticket.expires <= Date.now()) clearTicket(hash);
     for (const ws of wss.clients) {
       if (!ws.alive) ws.terminate();
       else { ws.alive = false; ws.ping(); }
@@ -268,7 +305,7 @@ export async function startWebServer({ passwordHash, agents = [], port = 43128, 
         for (const ws of wss.clients) ws.terminate();
         await new Promise(resolve => wss.close(resolve));
         server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
-        sessions.clear(); registrations.clear(); connected.clear();
+        sessions.clear(); registrations.clear(); connected.clear(); tickets.clear();
       })();
     },
   };

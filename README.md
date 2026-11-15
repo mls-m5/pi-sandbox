@@ -385,15 +385,18 @@ Choose a hidden temporary password of at least 20 characters, or press Enter to 
 pis --server --standalone
 ```
 
-Log in at **http://127.0.0.1:43128**, expand **Registrera agent**, choose Pi or Dummy and create a key. It is displayed **once**. In another host terminal, register a local profile (paste the key at the hidden prompt), then run it:
+Log in at **http://127.0.0.1:43128**, expand **Anslut ny agent** and click **Skapa anslutningsnyckel**. No name/type is needed. In another host terminal:
 
 ```sh
-pis --connect register laptop-app --server http://127.0.0.1:43128 --project my-app
-pis --connect run laptop-app
-# Token-free alternative: create a Dummy registration and use --dummy instead of --project my-app.
+pis --connect my-app --server http://127.0.0.1:43128
+# Paste the one-use key at the hidden prompt. Saves/replaces its profile and starts automatically.
+# Token-free alternative, with a fresh GUI key:
+pis --connect demo-agent --server http://127.0.0.1:43128 --dummy
+# Explicit project selection / separate profile alias:
+pis --connect laptop-app --server http://127.0.0.1:43128 --project PROJECT_ID
 ```
 
-Repeat with distinct keys/profile names for more agents. The standalone server starts no local agents and keeps its registrations/login state **only in memory**. History is fetched from connected clients, not saved in a server database. Client keys are 0600 host-only files under `$PIS_HOME/web-agents`, outside the sandbox. After server restart, create new keys and re-register with `--replace`; normal network loss can reconnect without replaying prompts. Revoke in the GUI to invalidate a key; `pis --connect forget NAME` removes only its local copy. A server stop/revocation does not stop independent local work; Ctrl-C in each run terminal does. **Loopback only: LAN/TLS and a separate Podman server are not implemented in this step.** See [complete instructions, credential/security contracts and verification limits](docs/web-agents.md).
+Repeat with fresh one-use keys/profile names for more agents. Project lookup accepts registered IDs/names or a unique last folder component; ambiguous folder names require explicit `--project`. The GUI shows the folder name (suffix `-2`, etc. for another agent with that name); re-enrolling the same offline profile proves ownership and reuses its agent ID. Unused keys do not create agent placeholders and disappear from the GUI when consumed; tickets expire after ten minutes. The standalone server starts no local agents and keeps its registrations/login state **only in memory**. History is fetched from connected clients, not saved in a server database. Client keys are 0600 host-only files under `$PIS_HOME/web-agents`, outside the sandbox. After server restart, create new GUI keys and repeat the short connect command; successful enrollment replaces the local profile automatically. It never kills an existing connector/project. Normal network loss reconnects using the separate saved connection key without replaying prompts. Revoke in the GUI to invalidate a key; `pis --connect forget NAME` removes only its local copy. A server stop/revocation does not stop independent local work; Ctrl-C in each run terminal does. **Loopback only: LAN/TLS and a separate Podman server are not implemented in this step.** See [complete instructions, credential/security contracts and verification limits](docs/web-agents.md).
 
 The agent has a spinning work indicator and explicit idle/error/unknown labels. Each correlated tool call and its literal result share one card: dashed while running, blue when completed, red on reported failure; interrupted/missing results stay unknown. Idle is not a guarantee that the task succeeded.
 

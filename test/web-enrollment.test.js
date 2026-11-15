@@ -118,8 +118,77 @@ webTest('separate registered dummy processes share one standalone server; histor
   const resumed = child(t, ['run', 'agent-0'], root); await until(() => server.roster()[0]?.online);
   for (const runner of [...runners, resumed]) assert.ok(!registrations.some(registration => runner.output().includes(registration.token)));
 });
-webTest('agent CLI accepts only explicit local registration/run/forget shapes, never keys on argv', () => {
+async function ticket(server, credentials) {
+  const result = await api(server, '/enrollment-keys', { ...credentials, value: {} }); assert.equal(result.status, 201); return result.json();
+}
+async function redeem(server, key, value) {
+  return fetch(`${server.origin}/agent/enroll`, { method: 'POST', headers: { Connection: 'close', Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', 'X-Pis-Web': '1' }, body: JSON.stringify(value), redirect: 'error' });
+}
+webTest('one-use tickets create no placeholders, cannot authenticate as agents, bind IDs and names safely', async t => {
+  const server = await startWebServer({ port: 0, passwordHash }); t.after(() => server.close());
+  const credentials = await login(server), first = await ticket(server, credentials);
+  assert.equal(server.roster().length, 0);
+  const denied = await api(server, '/agent/identity', { token: first.token }); assert.equal(denied.status, 403); await denied.text();
+  const body = { clientId: randomUUID(), label: 'same-name', kind: 'dummy', previousToken: null };
+  const invalid = await redeem(server, first.token, { ...body, agentId: 'chosen-id' }); assert.equal(invalid.status, 400); await invalid.text();
+  const result = await redeem(server, first.token, body); assert.equal(result.status, 201); const registered = await result.json();
+  assert.notEqual(registered.token, first.token); assert.equal(registered.label, 'same-name'); assert.equal(server.roster().length, 1);
+  const reused = await redeem(server, first.token, body); assert.equal(reused.status, 403); await reused.text();
+  const second = await ticket(server, credentials);
+  const another = await redeem(server, second.token, { ...body, clientId: randomUUID() }); assert.equal(another.status, 201); assert.equal((await another.json()).label, 'same-name-2');
+  const rotation = await ticket(server, credentials);
+  const takeover = await redeem(server, rotation.token, body); assert.equal(takeover.status, 409); await takeover.text();
+  const wrongProof = await redeem(server, rotation.token, { ...body, previousToken: randomKey() }); assert.equal(wrongProof.status, 409); await wrongProof.text();
+  const changed = await redeem(server, rotation.token, { ...body, previousToken: registered.token }); assert.equal(changed.status, 201);
+  const current = await changed.json(); assert.equal(current.id, registered.id); assert.equal(current.label, 'same-name'); assert.equal(server.roster().length, 2);
+  assert.notEqual(current.token, registered.token);
+  const old = await api(server, '/agent/identity', { token: registered.token }); assert.equal(old.status, 403); await old.text();
+  const raceKey = await ticket(server, credentials), raceBody = { ...body, clientId: randomUUID() };
+  const race = await Promise.all([redeem(server, raceKey.token, raceBody), redeem(server, raceKey.token, raceBody)]);
+  assert.deepEqual(race.map(response => response.status).sort(), [201, 403]); await Promise.all(race.map(response => response.text()));
+  const legacy = await create(server, credentials, 'legacy-client'), before = server.roster().length;
+  const adoptionTicket = await ticket(server, credentials);
+  const adoption = await redeem(server, adoptionTicket.token, { ...body, clientId: randomUUID(), previousToken: legacy.token });
+  assert.equal(adoption.status, 201); assert.equal((await adoption.json()).id, legacy.id); assert.equal(server.roster().length, before, 'Existing direct-key clients can migrate without a duplicate post.');
+});
+webTest('ticket replacement/expiry/logout and browser roles prevent unauthorized redemption', async t => {
+  const server = await startWebServer({ port: 0, passwordHash, enrollmentMs: 150 }); t.after(() => server.close());
+  const credentials = await login(server), first = await ticket(server, credentials), second = await ticket(server, credentials);
+  const body = { clientId: randomUUID(), label: 'name', kind: 'pi', previousToken: null };
+  const old = await redeem(server, first.token, body); assert.equal(old.status, 403); await old.text();
+  const browserAttempt = await api(server, '/agent/enroll', { value: body, ...credentials, token: second.token }); assert.equal(browserAttempt.status, 403); await browserAttempt.text();
+  const forgedAdmin = await api(server, '/enrollment-keys', { value: {}, token: second.token }); assert.equal(forgedAdmin.status, 403); await forgedAdmin.text();
+  await delay(160); const expired = await redeem(server, second.token, body); assert.equal(expired.status, 403); await expired.text();
+  const next = await ticket(server, credentials);
+  await (await api(server, '/logout', { ...credentials, value: {} })).text();
+  const loggedOut = await redeem(server, next.token, body); assert.equal(loggedOut.status, 403); await loggedOut.text();
+  assert.equal(server.roster().length, 0);
+});
+webTest('shortcut consumes ticket, replaces profile safely, starts immediately and reuses its own offline agent', async t => {
+  const server = await startWebServer({ port: 0, passwordHash }); t.after(() => server.close());
+  const root = fs.mkdtempSync('/tmp/pis-shortcut-'); t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const credentials = await login(server), first = await ticket(server, credentials);
+  const start = key => child(t, ['my-agent', '--server', server.origin, '--dummy', '--key-stdin'], root, `${key}\n`);
+  const runner = start(first.token); await until(() => server.roster()[0]?.online);
+  const file = path.join(root, 'web-agents', 'my-agent.json'), saved = JSON.parse(fs.readFileSync(file));
+  assert.notEqual(saved.token, first.token); assert.ok(saved.clientId); assert.equal(server.roster()[0].label, 'my-agent');
+  const whileRunningKey = await ticket(server, credentials), blocked = start(whileRunningKey.token);
+  assert.equal(await blocked.exited, 1); assert.equal(fs.readFileSync(file, 'utf8'), JSON.stringify(saved) + '\n');
+  assert.equal(runner.process.exitCode, null); assert.equal(server.roster().length, 1);
+  runner.process.kill('SIGTERM'); assert.equal(await runner.exited, 143); await until(() => !server.roster()[0]?.online);
+  const failed = start(randomKey()); assert.equal(await failed.exited, 1); assert.deepEqual(JSON.parse(fs.readFileSync(file)), saved);
+  const second = await ticket(server, credentials), replacement = start(second.token);
+  await until(() => server.roster()[0]?.online); const replaced = JSON.parse(fs.readFileSync(file));
+  assert.equal(replaced.clientId, saved.clientId); assert.equal(replaced.agentId, saved.agentId); assert.notEqual(replaced.token, saved.token);
+  assert.equal(server.roster().length, 1);
+  for (const value of [runner, blocked, failed, replacement]) assert.ok(![first.token, second.token, saved.token, replaced.token].some(secret => value.output().includes(secret)));
+});
+
+webTest('agent CLI supports one-command connect and advanced commands, never keys on argv', () => {
   assert.equal(parseAgentOptions(['register', 'test', '--server', 'http://127.0.0.1:43128', '--dummy']).dummy, true);
   assert.equal(parseAgentOptions(['run', 'test', '--diagnostics']).diagnostics, true);
+  assert.deepEqual(parseAgentOptions(['my-project', '--server', 'http://127.0.0.1:43128']), { action: 'connect', name: 'my-project', server: 'http://127.0.0.1:43128', project: 'my-project', replace: true });
+  assert.equal(parseAgentOptions(['alias', '--server', 'http://127.0.0.1:43128', '--project', 'real']).project, 'real');
+  assert.equal(parseAgentOptions(['dummy', '--server', 'http://127.0.0.1:43128', '--dummy']).replace, true);
   for (const args of [[], ['run', '../path'], ['run', 'test', '--key', randomKey()], ['register', 'test', '--server', 'http://10.0.0.1', '--dummy'], ['register', 'test', '--server', 'http://127.0.0.1:43128', '--dummy', '--project', 'app'], ['forget', 'test', '--replace']]) assert.throws(() => parseAgentOptions(args));
 });
