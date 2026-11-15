@@ -54,6 +54,8 @@ the server itself is NOT sandboxed. Real Pi agents retain their Podman sandbox.
 Without --project it starts only token-free dummies; real Pi prompts can spend
 model quota/API credits. Install optional web dependencies first (from checkout):
   npm --prefix web ci --ignore-scripts --omit=optional --no-audit --no-fund
+At the server password prompt, Enter generates a random password displayed once
+in the terminal (can enter terminal/log captures); a supplied password stays hidden.
 The launcher selects supported Node or uses npm-provided Node 24 (may download).
 No public listening, remote host approvals or production quota-auto in web/RPC.
 

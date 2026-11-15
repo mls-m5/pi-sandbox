@@ -16,7 +16,7 @@ async function readPassword(piped) {
     return text;
   }
   if (!input.isTTY || !output.isTTY) throw new Error('Use a terminal or explicit --password-stdin.');
-  output.write('Välj ett tillfälligt adminlösenord (minst 20 tecken, dolt): ');
+  output.write('Adminlösenord (minst 20 tecken, dolt; Enter genererar och visar ett tillfälligt lösenord): ');
   return new Promise((resolve, reject) => {
     let text = '';
     const wasRaw = input.isRaw;
@@ -81,11 +81,16 @@ try {
     catch { throw Object.assign(new Error('Cannot select local Pi projects.'), { code: 'WEB_PROJECT_SELECTION' }); }
   }
   if (projects.length) console.error('EXPERIMENTAL: Starting real registered Pi sandboxes. Saved sessions/configured extensions and browser prompts may use model quota or incur API costs. Git/apt host approvals and quota-auto are unavailable.');
-  let password = await readPassword(options.piped);
+  let password = await readPassword(options.piped), generatedPassword;
+  if (password === '') { password = randomKey(); generatedPassword = password; }
   const passwordHash = await hashPassword(password); password = undefined;
   const agents = projects.length ? projects.map(project => ({ id: `pi-${project.id}`, label: project.label, kind: 'pi', project, token: randomKey() }))
     : Array.from({ length: options.agents }, (_, index) => ({ id: `dummy-${index + 1}`, label: `Dummy ${index + 1}`, kind: 'dummy', token: randomKey() }));
   server = await startWebServer({ passwordHash, port: options.port, agents: agents.map(agent => ({ id: agent.id, label: agent.label, kind: agent.kind, tokenHash: digest(agent.token) })) });
+  if (generatedPassword !== undefined) {
+    console.error(`Genererat tillfälligt adminlösenord (visas en gång):\n${generatedPassword}\nVarning: lösenordet syns i terminalen och kan hamna i terminalhistorik, inspelningar eller omdirigerad stderr. Det sparas inte av pis; nästa start får ett nytt om du lämnar tomt.`);
+    generatedPassword = undefined;
+  }
   for (const agent of agents) if (agent.project) server.setStartup(agent.id, 'queued');
   if (projects.length) console.error(`Lokal Pi-webb: ${server.origin}\nWebbservern är igång. Öppna adressen och logga in redan nu för att följa agentstarten i GUI:t.\nSandbox-start kan ta flera minuter; inget startprompt skickas av anslutningen.`);
   for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(signal, () => { void stop(); });

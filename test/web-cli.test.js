@@ -9,6 +9,32 @@ import { fileURLToPath } from 'node:url';
 import { randomKey } from '../web/common.js';
 
 const installed = fs.existsSync(new URL('../web/node_modules/ws/package.json', import.meta.url));
+test('empty password input generates a fresh one-time displayed password that actually authenticates', { skip: !installed, timeout: 15000 }, async t => {
+  const passwords = [];
+  for (let run = 0; run < 2; run++) {
+    const reservation = net.createServer(); await new Promise(resolve => reservation.listen(0, '127.0.0.1', resolve));
+    const port = reservation.address().port; await new Promise(resolve => reservation.close(resolve));
+    const child = spawn(process.execPath, [fileURLToPath(new URL('../web/cli.js', import.meta.url)), 'demo', '--password-stdin', '--port', String(port), '--agents', '1'], {
+      stdio: ['pipe', 'pipe', 'pipe'], env: { PATH: `${path.dirname(process.execPath)}:${process.env.PATH}`, HOME: '/nonexistent-pis-web-test-home', TERM: 'dumb' },
+    });
+    t.after(() => { if (child.exitCode === null) child.kill('SIGKILL'); });
+    let stderr = '', stdout = ''; child.stderr.on('data', chunk => { stderr += chunk; }); child.stdout.on('data', chunk => { stdout += chunk; });
+    child.stdin.end(run === 0 ? '\n' : ''); // Explicit empty line or EOF with explicit --password-stdin.
+    for (let i = 0; i < 500 && !stderr.includes('Lokal dummy-webb:') && child.exitCode === null; i++) await new Promise(resolve => setTimeout(resolve, 10));
+    const match = /Genererat tillfälligt adminlösenord \(visas en gång\):\n([A-Za-z0-9_-]{43})\n/.exec(stderr);
+    assert.ok(match, 'A 256-bit base64url password must be printed once for empty input.');
+    const password = match[1]; passwords.push(password);
+    assert.equal(stderr.split(password).length - 1, 1); assert.ok(stderr.includes('omdirigerad stderr')); assert.equal(stdout, '');
+    const origin = `http://127.0.0.1:${port}`;
+    const response = await fetch(`${origin}/login`, { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json', 'X-Pis-Web': '1' }, body: JSON.stringify({ password }) });
+    assert.equal(response.status, 200);
+    const empty = await fetch(`${origin}/login`, { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json', 'X-Pis-Web': '1' }, body: JSON.stringify({ password: '' }) });
+    assert.equal(empty.status, 401, 'Empty browser login must never bypass authentication.');
+    const closed = once(child, 'close'); child.kill('SIGTERM'); await closed; assert.equal(child.exitCode, 0);
+  }
+  assert.ok(passwords[0] !== passwords[1], 'Restarting with empty input must rotate the generated password.');
+});
+
 test('pis --server starts two fixed dummies, keeps secrets out of output and shuts down on SIGTERM', { skip: !installed, timeout: 15_000 }, async t => {
   const reservation = net.createServer();
   await new Promise(resolve => reservation.listen(0, '127.0.0.1', resolve));
