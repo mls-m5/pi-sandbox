@@ -301,7 +301,7 @@ Direct host credential forwarding is disabled. `credentials.env` must be empty; 
 
 ### User-approved host actions
 
-Image-owned tools can propose apt package additions or an exact-commit Git push. The container cannot approve them. The host stops the sandbox, checks that it is gone, presents a colored two-digit confirmation dialog, then applies only the validated action. Successful actions restart Pi with one English user message asking it to continue; this consumes model tokens. Host Git runs from a fresh verified bare snapshot with controlled configuration, not the shared repository. See [host actions](host-actions.md) and [the development handover](handover.md) for detailed contracts and verification limits.
+Image-owned tools can propose apt package additions or an exact-commit Git push. The container cannot approve them. The host stops the sandbox, checks that it is gone, presents a colored two-digit confirmation dialog, then applies only the validated action. Successful actions restart Pi with one English user message asking it to continue; this consumes model tokens. Host Git runs from a fresh verified bare snapshot with controlled configuration, not the shared repository. See [host actions](host-actions.md) and [the development map](development.md) for detailed contracts and verification limits.
 
 ## 8. Open implementation decisions
 

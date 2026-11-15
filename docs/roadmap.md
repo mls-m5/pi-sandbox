@@ -1,6 +1,6 @@
 # Implementation roadmap
 
-The core program is implemented. Continue development in small, tested commits. For recent decisions, host-local context, test limitations and pending user requests, start with [the container handover](handover.md).
+The core program is implemented. Continue development in small, tested commits. For the implementation map, verification boundaries and pending work, start with [development.md](development.md) and the linked feature contracts.
 
 ## Current progress
 

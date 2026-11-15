@@ -4,7 +4,7 @@
 
 The host filesystem filled up while running/building multiple pis projects. The user wants the containerized development agent to optimize image construction so agents share a common runtime and add project-specific tools above it. This document records the host diagnosis and original proposal. **The cache-friendly layout and same-step npm-cache cleanup are now implemented for future builds**; see [image-storage.md](image-storage.md) for the exact order/compatibility contract, tests and separate opt-in host benchmark. No real-Podman comparison was possible in the sandbox, so physical savings remain unmeasured. The existing private prune-worker mutex is now included in conservative `--unlock` recovery; no host lock was removed.
 
-Read `src/container.js`, `src/updates.js`, `src/prune.js`, [managed updates](updates.md), [the update plan](updates-plan.md) and [the handover](handover.md) before changing image identity/build behavior. Pi/Claude support and managed updates were added after the original simple image builder.
+Read `src/container.js`, `src/updates.js`, `src/prune.js`, [managed updates](updates.md), [the update plan](updates-plan.md) and [the development map](development.md) before changing image identity/build behavior. Pi/Claude support and managed updates were added after the original simple image builder.
 
 ## Confirmed host diagnosis
 

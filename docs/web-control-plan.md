@@ -6,9 +6,9 @@ The user asked to hand this work to another agent after an error/interruption. A
 
 Repository HEAD: `740e48505174c963ba167c544a77a4d93f9e8794` (`Add named Codex accounts and quota-aware proxy failover`). Its host-approved push to `origin/main` was confirmed successful. Do not repeat that push. Previous commit `9198303` implemented staged Pi/npm updates. Working tree was clean immediately before writing this handover.
 
-Before this new task, `npm run check` passed: **164 tests, 156 passed, 8 optional tests skipped**. The separately invoked real-installed-Pi compatibility suites passed **16/16**, using fake services only. Those historical results do not validate the new local dummy web implementation; its separate current checks are recorded in docs/web-control.md and docs/handover.md.
+Before this new task, `npm run check` passed: **164 tests, 156 passed, 8 optional tests skipped**. The separately invoked real-installed-Pi compatibility suites passed **16/16**, using fake services only. Those historical results do not validate the new local dummy web implementation; its separate current checks are recorded in docs/web-control.md and docs/development.md.
 
-Start with `AGENTS.md` and `docs/handover.md`, then this document. Follow the host/container boundary in `docs/host-actions.md`.
+Start with `AGENTS.md` and `docs/development.md`, then this document. Follow the host/container boundary in `docs/host-actions.md`.
 
 ## What the user wants
 
@@ -56,11 +56,11 @@ Keep these components independent:
 ### Suggested first-version behavior
 
 - List connected agents and distinguish offline from idle/error; track work using lifecycle events.
-- Selecting an agent requests its current state and bounded session history from its connector.
+- Selecting an agent requests its current state from the connector and follows live events. The user explicitly accepts limited/on-demand history; **Hämta senaste historik** requests a bounded recent view without gating state/live control.
 - Stream subsequent message deltas, completed messages and tool lifecycle events.
 - Send a prompt and offer cancellation. Define whether busy-time messages queue or are rejected; avoid accidental double submission.
 - Closing a browser or losing the server connection must not kill/restart an ongoing Pi task. Keep draining local stdout to avoid pipe backpressure stalling Pi.
-- On reconnection, resynchronize state/history. Do **not** automatically replay prompts or host actions after an ambiguous disconnect.
+- On reconnection, resynchronize state and live sequence, discarding ambiguous partial display reconstruction. Fetch history only when explicitly requested; do **not** automatically replay prompts or host actions after an ambiguous disconnect.
 - Use versioned network envelopes, unique command IDs, acknowledgements/results, bounded duplicate tracking, heartbeats, payload limits and bounded buffers. A successfully accepted prompt is not proof the task completed.
 - Keep server conversation storage behind an interface. Initially no durable transcript persistence; bounded in-memory transport buffers are still sensitive data and must be described honestly.
 - Agent roster labels/IDs should be bound to authenticated connector registrations, not trusted from arbitrary RPC output. A connector must not impersonate another agent.
@@ -150,7 +150,7 @@ A later flow should bind human approval to a host-created opaque request ID, exa
 
 ## Suggested implementation order / immediate next task
 
-1. **Local foundation/views implemented:** bounded JSONL adapter, strict draft v1 control schemas and bounded allowlisted text state/history/event DTOs with omission/truncation markers, byte accounting and snapshot sequence ranges. The 33 ordinary tests cover framing, limits, correlation, backpressure, lifecycle, duplicate/ambiguous commands, process exit, projection and snapshot/live races. See [pi-rpc.md](pi-rpc.md). Native histories above 4 MiB still fault before projection; permitted text remains sensitive/untrusted. These APIs are not authentication or a web endpoint. The standalone [dummy backend](dummy-agent.md) can be used as a fixed, explicitly selected local runtime when adding the connector; no arbitrary remote executable/path selection.
+1. **Local foundation/views implemented:** bounded JSONL adapter, strict draft v1 control schemas and bounded allowlisted text state/history/event DTOs with omission/truncation markers, byte accounting and snapshot sequence ranges. The 33 ordinary tests cover framing, limits, correlation, backpressure, lifecycle, duplicate/ambiguous commands, process exit, projection and snapshot/live races. See [pi-rpc.md](pi-rpc.md). Requested native history now has a bounded streaming recent-tail reader; history resource limits omit only that read. The UI defaults to state/live with history on demand. Ordinary record framing/size limits still fault closed; permitted text remains sensitive/untrusted. These APIs are not authentication or a web endpoint. The standalone [dummy backend](dummy-agent.md) can be used as a fixed, explicitly selected local runtime when adding the connector; no arbitrary remote executable/path selection.
 2. **Opt-in probe implemented and passed:** `PIS_PI_PACKAGE=... npm run test:rpc-compat` runs state/history/projected views/EOF shutdown with isolated HOME/config/cwd and blocked/audited network attempts. Tested installed Pi **1.5.2**, not the image baseline **1.5.0**. No real account or model prompt. Production Pi quota-auto in RPC is still unsupported; the dummy's separate resumption simulator must not be confused with enabling it.
 3. **Startup convenience implemented:** `pis --server` (first argument) delegates to the existing local launcher with Node fallback; `pis --server --project NAME` explicitly selects registered Pi projects. **Pending isolation hardening:** current server/controller/connectors execute on the host, not in an OS sandbox. Separate the server into a least-privilege process/container without host project/auth/engine access and design protected enrollment/IPC before claiming server isolation. Real Pi tool containers are already isolated independently.
 
@@ -160,4 +160,4 @@ A later flow should bind human approval to a host-created opaque request ID, exa
 6. Add remote approvals only after the host-action binding design is reviewed.
 7. Add the supervisory agent later, with explicit task definitions, bounded continuation/model budgets, allowed target agents and no approval power. Coordinate with quota-resume/watchdog behavior; never interpret idle as proof of goal completion.
 
-Update this file and `docs/handover.md` as implementation lands. Distinguish implemented/tested pieces from planned functionality. Do not repeat account-updater work or the already-successful push as a substitute for starting this feature.
+Update this feature plan and its implementation contract in `docs/web-control.md` as functionality lands; use `docs/development.md` only for a concise cross-feature map. Distinguish implemented/tested pieces from planned functionality. Do not repeat account-updater work or the already-successful push as a substitute for starting this feature.
