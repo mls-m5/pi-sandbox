@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { projectMessage } from '../src/pi-view.js';
 import { ChatModel, cleanMessage } from '../web/public/view-model.js';
 import { renderChat, renderTools, renderActivity } from '../web/public/render.js';
 import { handlePromptKey } from '../web/public/keybindings.js';
@@ -107,6 +108,15 @@ test('browser-side models are bounded even with hostile DTOs, endless deltas and
   const clipped = new Element('div'); renderTools(document, clipped, model.tools);
   assert.ok(allText(clipped).includes('Resultatet är förkortat'));
   assert.equal(cleanMessage({ role: 'evil-role', content: [{ type: 'image', data: 'private-base64' }] }).role, 'unknown');
+});
+
+test('reply token usage projects only bounded numeric counts and renders without claiming remaining quota', () => {
+  const projected = projectMessage({ ...message('assistant', 'reply'), usage: { input: 12, output: 34, cacheRead: 8, cacheWrite: 0, totalTokens: 54, cost: { total: 'secret' }, invalid: 'secret' } });
+  const cleaned = cleanMessage(projected), root = new Element('div');
+  renderChat(document, root, { messages: [cleaned], partial: null });
+  assert.match(allText(root), /in 12.*ut 34.*totalt 54/); assert.match(allText(root), /inte återstående kvot/);
+  assert.ok(!JSON.stringify(projected).includes('secret'));
+  assert.equal(cleanMessage(projectMessage({ ...message('assistant', ''), usage: { input: -1, output: Infinity, totalTokens: 'bad' } })).usage, undefined);
 });
 
 test('activity has a spinner only during work/wait, text labels and reduced-motion styling', () => {

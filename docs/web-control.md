@@ -104,6 +104,10 @@ A normal read follows `server:command_routed` â†’ `connector:command_received` â
 
 401 on `/session` **before login** is expected (`login_required`); after login it becomes `authenticated`. Refused HTTP connection means server unreachability, not an agent Codex-auth error. If the dummy also fails, diagnose this common path before touching real Codex accounts/projects. Passing automated tests is not a diagnosis of the reported host issue; actual host browser behavior remains unconfirmed until these codes are collected.
 
+## Reply token usage
+
+Completed assistant replies show the numeric input/output/cache/total token counts reported by Pi, in live final events and fetched history. Missing counts stay unknown/absent; no extra provider call is made. These are **per-reply usage, not remaining subscription quota**. Prices and arbitrary provider metadata are not included. No remaining Codex/Berget/Mistral percentage is implemented by this display.
+
 ## Work indicators and tool results
 
 The agent status has a rotating CSS indicator and a text label while working (or waiting for synthetic dummy quota). It stops on `agent_settled`, **not** merely `agent_end`. Idle means no current runtime work, not that the task succeeded; reported errors, abortion, offline and unknown state are labelled separately. Reduced-motion preferences disable rotation without hiding the text status.
@@ -168,7 +172,7 @@ npm run test:web
 npm run check
 ```
 
-**55 web tests pass** with the optional dependency installed. They use real loopback HTTP/WebSockets and fixed dummy subprocesses, covering authentication/rate limits, Host/Origin/CSRF/cookie/logout/expiry, payload bounds, cross-agent routing/forgery rejection, stale generations, ambiguous deadlines, key revocation, streaming, stop, browser/connector disconnect and same-runtime quota resumption. Pure UI tests cover authoritative final reconciliation, snapshot races, memory bounds and hostile text rendering. One integration test runs the **actual app module in a DOM shim**, exercises login/select/chat/quota/logout through real transports; another starts and shuts down the actual demo CLI, checking that secrets do not appear in output.
+**56 web tests pass** with the optional dependency installed. They use real loopback HTTP/WebSockets and fixed dummy subprocesses, covering authentication/rate limits, Host/Origin/CSRF/cookie/logout/expiry, payload bounds, cross-agent routing/forgery rejection, stale generations, ambiguous deadlines, key revocation, streaming, stop, browser/connector disconnect and same-runtime quota resumption. Pure UI tests cover authoritative final reconciliation, snapshot races, memory bounds and hostile text rendering. One integration test runs the **actual app module in a DOM shim**, exercises login/select/chat/quota/logout through real transports; another starts and shuts down the actual demo CLI, checking that secrets do not appear in output.
 
 Five additional offline launcher tests use fake Node/npm executables to cover compatible PATH/bundled selection, the Node 24 fallback, missing tools/dependencies, paths with spaces, option forwarding and help without downloads. The fallback's exact invocation is tested without making npm downloads in fast checks.
 

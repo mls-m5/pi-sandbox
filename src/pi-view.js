@@ -29,6 +29,11 @@ export function projectMessage(source) {
   const result = { role, content: [], truncated: false, omittedBlocks: 0 };
   if (Number.isSafeInteger(message.timestamp) && message.timestamp >= 0) result.timestamp = message.timestamp;
   if (stopReasons.has(message.stopReason)) result.stopReason = message.stopReason;
+  if (role === 'assistant' && object(message.usage)) {
+    const usage = {};
+    for (const key of ['input', 'output', 'cacheRead', 'cacheWrite', 'totalTokens']) if (Number.isSafeInteger(message.usage[key]) && message.usage[key] >= 0) usage[key] = message.usage[key];
+    if (Object.keys(usage).length) result.usage = usage;
+  }
   if (role === 'toolResult') {
     result.toolCallId = label(message.toolCallId);
     result.toolName = label(message.toolName);

@@ -10,7 +10,9 @@ export function cleanMessage(source = {}) {
     } else if (block?.type === 'tool_call') content.push({ type: 'tool_call', id: text(block.id, 256), name: text(block.name, 256) });
     else content.push({ type: 'omitted', kind: text(block?.kind, 32) });
   }
-  return { toolCallId: text(source?.toolCallId, 256), toolName: text(source?.toolName, 256), isError: source?.isError === true, role: roles.includes(source?.role) ? source.role : 'unknown', content, stopReason: text(source?.stopReason, 32), truncated: source?.truncated === true };
+  const usage = {};
+  if (source?.role === 'assistant') for (const key of ['input', 'output', 'cacheRead', 'cacheWrite', 'totalTokens']) if (Number.isSafeInteger(source?.usage?.[key]) && source.usage[key] >= 0) usage[key] = source.usage[key];
+  return { ...(Object.keys(usage).length ? { usage } : {}), toolCallId: text(source?.toolCallId, 256), toolName: text(source?.toolName, 256), isError: source?.isError === true, role: roles.includes(source?.role) ? source.role : 'unknown', content, stopReason: text(source?.stopReason, 32), truncated: source?.truncated === true };
 }
 export class ChatModel {
   constructor() { this.reset(null, 0); }

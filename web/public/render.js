@@ -26,6 +26,12 @@ function toolCard(document, tool) {
   if (tool.truncated) { const note = document.createElement('small'); note.textContent = '[Resultatet är förkortat eller innehåll har utelämnats]'; card.append(note); }
   return card;
 }
+function usageNote(document, message) {
+  if (!message.usage) return;
+  const note = document.createElement('small');
+  note.textContent = `Tokens för svaret: in ${message.usage.input ?? '?'} · ut ${message.usage.output ?? '?'} · cache läst ${message.usage.cacheRead ?? '?'} · cache skrivet ${message.usage.cacheWrite ?? '?'}${message.usage.totalTokens !== undefined ? ` · totalt ${message.usage.totalTokens}` : ''} (inte återstående kvot)`;
+  return note;
+}
 export function renderChat(document, root, model) {
   const nodes = [], seen = new Set(), results = new Map(), calls = new Set();
   const messages = [...model.messages, ...(model.partial ? [model.partial] : [])];
@@ -54,6 +60,7 @@ export function renderChat(document, root, model) {
         if (block.id) seen.add(block.id);
         nodes.push(cardFor(block.id, block.name, results.get(block.id)));
       }
+      const usage = usageNote(document, message); if (usage) nodes.push(usage);
       continue;
     }
     const article = document.createElement('article'); article.className = `message ${message.role === 'user' ? 'user' : 'agent'}`;
@@ -79,6 +86,7 @@ export function renderChat(document, root, model) {
     if (message.stopReason === 'error' || message.stopReason === 'aborted' || message.truncated) {
       const note = document.createElement('small'); note.textContent = message.stopReason === 'error' ? 'Agenten rapporterade ett fel.' : message.stopReason === 'aborted' ? 'Avbrutet.' : 'Innehållet är förkortat.'; article.append(note);
     }
+    const usage = usageNote(document, message); if (usage) article.append(usage);
     nodes.push(article);
   }
   for (const tool of model.tools || []) if (tool.id && !seen.has(tool.id)) { nodes.push(cardFor(tool.id, tool.name)); seen.add(tool.id); }
