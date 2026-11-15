@@ -79,6 +79,25 @@ test('redirects and slow/stalled catalogues fall back using local fake HTTP only
   assert.equal(destinationHits, 0);
 });
 
+test('GLM gets reasoning headroom in bundled/discovered/fallback models without overriding published or explicit limits', async () => {
+  const id = 'zai-org/GLM-5.3-Flash';
+  const remote = async () => response(list(entry(id)));
+  for (const [settings, fetchImpl] of [[{ discoverModels: false }, remote], [{}, remote], [{}, async () => { throw new Error('offline'); }]]) {
+    const result = await loadBergetModels({ provider: 'berget', ...settings }, { fetchImpl });
+    const glm = result.models.find(model => model.id === id);
+    assert.equal(glm.contextWindow, 320000); assert.equal(glm.maxTokens, 65536);
+    assert.equal(glm.reasoning, false, 'Metadata must not invent an unverified Berget effort-control protocol.');
+    assert.ok(!Object.hasOwn(glm, 'compat'));
+  }
+  const published = projectBergetCatalog(list(entry(id, { context_length: 200000, max_output_tokens: 24000 })));
+  assert.equal(published.models[0].contextWindow, 200000); assert.equal(published.models[0].maxTokens, 24000);
+  const clipped = projectBergetCatalog(list(entry(id, { context_length: 16000 })));
+  assert.equal(clipped.models[0].maxTokens, 16000);
+  const custom = await loadBergetModels({ provider: 'berget', modelOverrides: { [id]: { contextWindow: 120000, maxTokens: 16000 } } }, { fetchImpl: remote });
+  assert.equal(custom.models[0].contextWindow, 120000); assert.equal(custom.models[0].maxTokens, 16000);
+  for (const model of bundledBergetModels().filter(model => model.id !== id)) assert.equal(model.maxTokens, 8192, 'Other model budgets must not be silently raised.');
+});
+
 test('override validation rejects executable/unbounded metadata and non-Berget settings', () => {
   for (const settings of [
     { provider: 'openai', discoverModels: true }, { provider: 'berget', discoverModels: 'yes' },

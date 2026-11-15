@@ -6,11 +6,13 @@ const ID = /^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,127}$/;
 const CONTROLS = /[\x00-\x1f\x7f-\x9f\u2028\u2029\u202a-\u202e\u2066-\u2069]/;
 const tokens = value => Number.isSafeInteger(value) && value >= 1 && value <= 10_000_000;
 // Offline snapshot of the four chat models in Berget's public catalogue. These
-// are local budgeting defaults, NOT verified provider context/output ceilings.
-// Keep Gemma's previous budget; use a smaller budget for newly added models.
+// are local budgeting defaults, NOT verified provider output ceilings.
+// GLM context: Berget's GA announcement publishes 320000 tokens. Its 65536
+// output budget leaves more room for thinking + answer than the old 8192 cap;
+// this is a tuning choice, not a verified Berget output limit or effort setting.
 const BUNDLED = [
   ['google/gemma-4-31B-it', 'Gemma 4 31B', true, 262144],
-  ['zai-org/GLM-5.3-Flash', 'GLM 5.3 Flash', true, 32768],
+  ['zai-org/GLM-5.3-Flash', 'GLM 5.3 Flash', true, 320000, 65536],
   ['moonshotai/Kimi-K3.1-Pro', 'Kimi K3.1 Pro', true, 32768],
   ['mistralai/Mistral-Small-3.2-24B-Instruct-2506', 'Mistral Small 3.2 24B', false, 32768],
 ];
@@ -18,7 +20,7 @@ function modelDefinition(id, name, images, contextWindow = 32768, maxTokens = 81
   return { id, name: `${name} (Berget)`, reasoning: false, input: images ? ['text', 'image'] : ['text'], contextWindow, maxTokens: Math.min(maxTokens, contextWindow) };
 }
 export function bundledBergetModels() {
-  return BUNDLED.map(([id, name, images, context]) => modelDefinition(id, name, images, context));
+  return BUNDLED.map(([id, name, images, context, output]) => modelDefinition(id, name, images, context, output));
 }
 export function validateBergetModelSettings(settings) {
   if (settings.discoverModels !== undefined || settings.modelOverrides !== undefined) assert(settings.provider === 'berget', 'Model discovery/overrides are currently supported only for Berget.');
@@ -57,7 +59,7 @@ export function projectBergetCatalog(source) {
     // Optional numeric limits are projected, never provider URLs, credentials,
     // headers, commands, compat objects or EUR prices disguised as USD costs.
     const context = tokens(item.context_length) ? item.context_length : baseline?.contextWindow || 32768;
-    const output = tokens(item.max_output_tokens) && item.max_output_tokens <= context ? item.max_output_tokens : Math.min(8192, context);
+    const output = tokens(item.max_output_tokens) && item.max_output_tokens <= context ? item.max_output_tokens : Math.min(baseline?.maxTokens || 8192, context);
     defaultsUsed ||= !tokens(item.context_length) || !tokens(item.max_output_tokens) || item.max_output_tokens > context;
     models.push(modelDefinition(item.id, name, item.capabilities.vision === true, context, output));
     assert(models.length <= BERGET_CATALOG_LIMITS.models, 'Too many Berget chat models.');
