@@ -53,6 +53,8 @@ npm run test:storage      # separate, disk-heavy legacy/new image benchmark
 
 ## Remaining requested work / priorities
 
+**Deferred at the user's request until their tokens refill:** [shared program image with separate agent containers](shared-base-image-plan.md). Manage common installed packages through an explicit host edit workflow (suggested `pis --edit-base`, not implemented), retain separate project state/mounts/containers, and review migration/global approval scope before changes. Record only for now; wait for the user to resume rather than starting builds or automatic work.
+
 1. Host verification of bounded automatic history on opening agent views and experimental real-project web lifecycle. Preserve fixed safe diagnostics; never request auth/state folders or HARs to debug routine failures.
 2. Separate least-privilege **server isolation** and protected enrollment/IPC. Current web server/controller/connectors are host Node code, not an OS sandbox. Same-host independent registration/CLI now works with ephemeral server state and private client profiles; TLS/LAN, multi-computer deployment, persistent server registration and server credential maintenance are not implemented.
 3. A bounded supervisor/continuation policy is desired later. Current web control is observation/manual prompting/stop, not an unattended supervisor; `idle` is not goal completion. Production `--auto-wait-codex` remains terminal-only; the dummy has a separate simulator.
