@@ -2,9 +2,10 @@ import { ChatModel } from './view-model.js';
 import { renderChat, renderTools } from './render.js';
 import { handlePromptKey } from './keybindings.js';
 import { startupText, startupFailure } from './startup.js';
+import { diagnosticLine, requestFailure, resultCode, safeTrace } from './diagnostics.js';
 
 const byId = id => document.getElementById(id);
-const model = new ChatModel(), pending = new Map();
+const model = new ChatModel(), pending = new Map(), diagnosticLines = [];
 let socket, csrf, agents = [], selected, selectToken, selection = 0, connected = false, wantConnection = false;
 let reconnectTimer, retry = 0, syncTimer, syncing = false, syncAttempts = 0, mutation = false, drawing = false;
 const online = () => connected && agents.some(agent => agent.id === selected && agent.online && agent.generation === model.generation);
@@ -13,6 +14,7 @@ function draw() {
   drawing = true;
   requestAnimationFrame(() => {
     drawing = false;
+    byId('diagnostics').textContent = diagnosticLines.join('\n') || 'Inga läsbegäranden ännu. Diagnostiken innehåller bara kommando, felkod och referens.';
     byId('connection').textContent = connected ? 'Ansluten till lokal server' : 'Frånkopplad · inget skickas automatiskt';
     const selectedAgent = agents.find(agent => agent.id === selected);
     byId('agent-title').textContent = selectedAgent?.label || 'Välj en agent';
@@ -40,20 +42,29 @@ function draw() {
   });
 }
 function command(action, extra = {}) {
-  if (!online() || pending.size >= 8 || socket.bufferedAmount > 128 * 1024) return Promise.resolve({ data: { success: false, error: 'not_connected_or_busy' } });
   const id = crypto.randomUUID(), agentId = selected;
+  const finish = result => {
+    const annotated = { ...result, diagnosticTrace: safeTrace(result?.diagnosticTrace || id) };
+    diagnosticLines.push(diagnosticLine(action, annotated));
+    if (diagnosticLines.length > 20) diagnosticLines.shift();
+    draw(); return annotated;
+  };
+  if (!online() || pending.size >= 8 || socket.bufferedAmount > 128 * 1024) return Promise.resolve(finish({ data: { success: false, error: 'not_connected_or_busy' } }));
   const message = { v: 1, type: 'command', agentId, command: { v: 1, generation: model.generation, id, action, ...extra } };
   const payload = JSON.stringify(message);
-  if (new TextEncoder().encode(payload).length > 256 * 1024) return Promise.resolve({ data: { success: false, error: 'message_too_large' } });
+  if (new TextEncoder().encode(payload).length > 256 * 1024) return Promise.resolve(finish({ data: { success: false, error: 'message_too_large' } }));
   return new Promise(resolve => {
-    const timer = setTimeout(() => { pending.delete(id); resolve({ data: { success: false, error: 'outcome_unknown' } }); }, 40_000);
+    const timer = setTimeout(() => {
+      const trace = pending.get(id)?.diagnosticTrace; pending.delete(id);
+      resolve({ diagnosticTrace: trace, data: { success: false, error: 'outcome_unknown' } });
+    }, 40_000);
     pending.set(id, { agentId, resolve, timer });
     try { socket.send(payload); }
     catch { clearTimeout(timer); pending.delete(id); resolve({ data: { success: false, error: 'outcome_unknown' } }); }
-  });
+  }).then(finish);
 }
 function failPending() {
-  for (const entry of pending.values()) { clearTimeout(entry.timer); entry.resolve({ data: { success: false, error: 'outcome_unknown' } }); }
+  for (const entry of pending.values()) { clearTimeout(entry.timer); entry.resolve({ diagnosticTrace: entry.diagnosticTrace, data: { success: false, error: 'outcome_unknown' } }); }
   pending.clear();
 }
 function scheduleSync() {
@@ -67,11 +78,18 @@ async function synchronize() {
   try {
     const state = await command('state');
     if (version !== selection) return;
-    if (state.data?.success !== true) { model.note = 'Kunde inte hämta agentens tillstånd.'; return; }
+    if (state.data?.success !== true) { model.synced = false; model.status = 'unknown'; model.note = requestFailure('state', state); return; }
+    const value = state.data.state;
+    if (typeof value?.isStreaming !== 'boolean' || typeof value?.isCompacting !== 'boolean' || !Number.isSafeInteger(value?.pendingMessageCount) || value.pendingMessageCount < 0) {
+      model.synced = false; model.status = 'unknown';
+      const invalid = { ...state, data: { success: false, error: 'invalid_state_reply' } };
+      diagnosticLines.push(diagnosticLine('state', invalid)); diagnosticLines.splice(0, Math.max(0, diagnosticLines.length - 20));
+      model.note = requestFailure('state', invalid); return;
+    }
     model.status = state.data.state?.isStreaming || state.data.state?.isCompacting || state.data.state?.pendingMessageCount > 0 ? 'working' : 'idle';
     const history = await command('history');
     if (version !== selection) return;
-    if (history.data?.success !== true) { model.note = 'Historiken kunde inte hämtas. Kontrollera agenten lokalt.'; return; }
+    if (history.data?.success !== true) { model.synced = false; model.note = requestFailure('history', history); return; }
     if (!model.snapshot(history) && model.status === 'idle') scheduleSync();
   } finally { if (version === selection) { syncing = false; draw(); } }
 }
@@ -93,7 +111,7 @@ async function submit(message, clearDraft = false) {
     byId('command-note').textContent = 'Meddelandet accepterades av agenten. Det betyder inte att arbetet är slutfört.';
     if (clearDraft && byId('prompt').value === message) byId('prompt').value = '';
     if (result.data.disposition === 'handled') { syncAttempts = 0; scheduleSync(); }
-  } else byId('command-note').textContent = result.data?.duplicate ? 'Redan sett kommando. Hämta historiken; skicka inte om automatiskt.' : `Ingen automatisk omsändning. Resultat: ${result.data?.error || 'okänt'}. Hämta historiken innan du försöker igen.`;
+  } else byId('command-note').textContent = result.data?.duplicate ? 'Redan sett kommando. Hämta historiken; skicka inte om automatiskt.' : `Ingen automatisk omsändning. Resultat: ${resultCode(result)}. Hämta historiken innan du försöker igen.`;
   draw();
 }
 function receive(value) {
@@ -118,9 +136,12 @@ function receive(value) {
       if (value.frame.event?.type === 'agent_settled') scheduleSync();
       draw();
     }
+  } else if (value.type === 'accepted') {
+    const entry = pending.get(value.id);
+    if (entry?.agentId === value.agentId) entry.diagnosticTrace = safeTrace(value.trace);
   } else if (value.type === 'result') {
     const entry = pending.get(value.result?.id);
-    if (entry?.agentId === value.agentId) { clearTimeout(entry.timer); pending.delete(value.result.id); entry.resolve(value.result); }
+    if (entry?.agentId === value.agentId) { clearTimeout(entry.timer); pending.delete(value.result.id); entry.resolve({ ...value.result, diagnosticTrace: safeTrace(value.trace) }); }
   }
 }
 async function connect() {

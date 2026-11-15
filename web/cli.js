@@ -5,6 +5,7 @@ import { startDummyConnector } from './connector.js';
 import { startProjectConnector } from './project-connector.js';
 import { STARTUP_LABELS, startupFailure } from './public/startup.js';
 import { resolveWebProjects } from '../src/project-rpc.js';
+import { createDiagnostics } from './diagnostics.js';
 
 async function readPassword(piped) {
   const input = process.stdin, output = process.stderr;
@@ -41,7 +42,7 @@ async function readPassword(piped) {
     input.setEncoding('utf8'); input.setRawMode(true); input.on('data', onData); input.once('end', onEnd); input.resume();
   });
 }
-const options = { port: 43128, agents: 2, piped: false, projects: [] };
+const options = { port: 43128, agents: 2, piped: false, projects: [], diagnostics: false };
 const args = process.argv.slice(2), seen = new Set(), startupController = new AbortController();
 let server, connectors = [], stopping, startup, failedProjects = 0;
 async function stop() {
@@ -57,12 +58,13 @@ async function stop() {
 }
 try {
   const mode = args.shift();
-  if (!['demo', 'start'].includes(mode)) throw new Error('Usage: node web/cli.js start [--project NAME (repeatable) | --agents 1..8] [--port PORT] [--password-stdin]');
+  if (!['demo', 'start'].includes(mode)) throw new Error('Usage: node web/cli.js start [--project NAME (repeatable) | --agents 1..8] [--port PORT] [--password-stdin] [--diagnostics]');
   while (args.length) {
     const flag = args.shift();
     if (seen.has(flag) && flag !== '--project') throw new Error('Duplicate option.');
     seen.add(flag);
     if (flag === '--password-stdin') options.piped = true;
+    else if (flag === '--diagnostics') options.diagnostics = true;
     else if (flag === '--project' && mode === 'start') {
       const selector = args.shift();
       if (!selector || selector.startsWith('-') || options.projects.length >= 8) throw new Error('Expected a registered project name/ID (maximum eight).');
@@ -81,12 +83,14 @@ try {
     catch { throw Object.assign(new Error('Cannot select local Pi projects.'), { code: 'WEB_PROJECT_SELECTION' }); }
   }
   if (projects.length) console.error('EXPERIMENTAL: Starting real registered Pi sandboxes. Saved sessions/configured extensions and browser prompts may use model quota or incur API costs. Git/apt host approvals and quota-auto are unavailable.');
+  const diagnostic = createDiagnostics({ enabled: options.diagnostics });
+  if (options.diagnostics) console.error('Säker diagnostik aktiverad: dela bara rader med prefixet "pis web diagnostic:". Dela inte lösenordsraden, hela logg-/state-mappar eller råa nätverkssvar.');
   let password = await readPassword(options.piped), generatedPassword;
   if (password === '') { password = randomKey(); generatedPassword = password; }
   const passwordHash = await hashPassword(password); password = undefined;
   const agents = projects.length ? projects.map(project => ({ id: `pi-${project.id}`, label: project.label, kind: 'pi', project, token: randomKey() }))
     : Array.from({ length: options.agents }, (_, index) => ({ id: `dummy-${index + 1}`, label: `Dummy ${index + 1}`, kind: 'dummy', token: randomKey() }));
-  server = await startWebServer({ passwordHash, port: options.port, agents: agents.map(agent => ({ id: agent.id, label: agent.label, kind: agent.kind, tokenHash: digest(agent.token) })) });
+  server = await startWebServer({ passwordHash, port: options.port, diagnostic, agents: agents.map(agent => ({ id: agent.id, label: agent.label, kind: agent.kind, tokenHash: digest(agent.token) })) });
   if (generatedPassword !== undefined) {
     console.error(`Genererat tillfälligt adminlösenord (visas en gång):\n${generatedPassword}\nVarning: lösenordet syns i terminalen och kan hamna i terminalhistorik, inspelningar eller omdirigerad stderr. Det sparas inte av pis; nästa start får ett nytt om du lämnar tomt.`);
     generatedPassword = undefined;
@@ -105,8 +109,8 @@ try {
     const heartbeat = agent.project ? setInterval(() => {
       console.error(`pis web: [${Math.floor((Date.now() - startedAt) / 1000)}s] ${agent.id}: väntar fortfarande · ${STARTUP_LABELS[phase]} (ingen uppskattning av återstående tid).`);
     }, 10_000) : undefined;
-    startup = agent.project ? startProjectConnector({ origin: server.origin, token: agent.token, project: agent.project, signal: startupController.signal, onProgress })
-      : startDummyConnector({ origin: server.origin, token: agent.token });
+    startup = agent.project ? startProjectConnector({ origin: server.origin, token: agent.token, project: agent.project, signal: startupController.signal, onProgress, diagnostic })
+      : startDummyConnector({ origin: server.origin, token: agent.token, diagnostic });
     let connector;
     try { connector = await startup; }
     catch (error) {

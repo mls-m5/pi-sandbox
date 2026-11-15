@@ -18,6 +18,7 @@ export const HELP = `pis — project-scoped Pi sandbox (Linux / rootless Podman)
 Usage:
   pis --server [--port PORT] [--agents 1..8] # local dummy web UI by default
   pis --server --project NAME [--project OTHER] # experimental real Pi projects
+  pis --server --diagnostics         # safe request metadata; no chat/auth payloads
   pis --server --help                # server startup options
   pis [--project ID_OR_NAME] [--agent pi|claude] [--fresh] [-- AGENT_ARGS...]
   pis [--project ID_OR_NAME] --wait-codex # wait for quota, resume saved Pi task
@@ -54,6 +55,9 @@ the server itself is NOT sandboxed. Real Pi agents retain their Podman sandbox.
 Without --project it starts only token-free dummies; real Pi prompts can spend
 model quota/API credits. Install optional web dependencies first (from checkout):
   npm --prefix web ci --ignore-scripts --omit=optional --no-audit --no-fund
+--server --diagnostics traces bounded fixed error codes and request references.
+Share only lines prefixed "pis web diagnostic:" or the GUI diagnostic codes,
+not full state/log folders or the separately displayed generated password.
 At the server password prompt, Enter generates a random password displayed once
 in the terminal (can enter terminal/log captures); a supplied password stays hidden.
 The launcher selects supported Node or uses npm-provided Node 24 (may download).

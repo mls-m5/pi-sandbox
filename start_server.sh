@@ -7,8 +7,9 @@ ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
   printf '%s\n' \
-    'Usage: ./start_server.sh [--project NAME (repeatable) | --agents 1..8] [--port PORT] [--password-stdin]' \
+    'Usage: ./start_server.sh [--project NAME (repeatable) | --agents 1..8] [--port PORT] [--password-stdin] [--diagnostics]' \
     'Default: dummy-only demo, no model calls. --project starts real registered Pi sandboxes; prompts may cost tokens.' \
+    '--diagnostics emits bounded safe request metadata; share only pis web diagnostic: lines, never passwords/state folders.' \
     'Empty password input generates a strong password shown once on stderr (visible in terminal/log captures).' \
     'Web server runs on the host, NOT in a sandbox; real Pi agents remain in Podman. Loopback only.' \
     'Uses Node >=22.19 on PATH, then a compatible bundled Node, otherwise npm-provided Node 24.' \

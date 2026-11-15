@@ -5,7 +5,7 @@ import { run } from './util.js';
 // has no optional web dependencies and is compatible with older host Node so the
 // launcher can select its supported runtime before loading the web application.
 export async function startServer(args) {
-  const allowed = new Set(['--project', '--port', '--agents', '--password-stdin', '--help', '-h']);
+  const allowed = new Set(['--project', '--port', '--agents', '--password-stdin', '--diagnostics', '--help', '-h']);
   for (let index = 0; index < args.length; index++) {
     const flag = args[index];
     if (!allowed.has(flag)) throw new Error('Unknown server option. Use pis --server --help.');

@@ -4,18 +4,20 @@ import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { WebSocketServer } from 'ws';
 import { validateControlCommand } from '../src/pi-rpc.js';
 import { startupPhase } from './public/startup.js';
+import { resultCode, safeTrace } from './public/diagnostics.js';
 import { budget, digest, exact, generationValid, idValid, object, randomKey, send, verifyPassword, wsOptions } from './common.js';
 
 const assets = new Map([
   ['/', ['index.html', 'text/html; charset=utf-8']], ['/app.js', ['app.js', 'text/javascript; charset=utf-8']],
   ['/view-model.js', ['view-model.js', 'text/javascript; charset=utf-8']], ['/render.js', ['render.js', 'text/javascript; charset=utf-8']],
+  ['/diagnostics.js', ['diagnostics.js', 'text/javascript; charset=utf-8']],
   ['/startup.js', ['startup.js', 'text/javascript; charset=utf-8']],
   ['/keybindings.js', ['keybindings.js', 'text/javascript; charset=utf-8']],
   ['/style.css', ['style.css', 'text/css; charset=utf-8']],
 ]);
 const states = new Set(['unknown', 'idle', 'working', 'offline']);
 
-export async function startWebServer({ passwordHash, agents = [], port = 43128, sessionMs = 8 * 60 * 60 * 1000, heartbeatMs = 10_000, commandTimeoutMs = 35_000 } = {}) {
+export async function startWebServer({ passwordHash, agents = [], port = 43128, sessionMs = 8 * 60 * 60 * 1000, heartbeatMs = 10_000, commandTimeoutMs = 35_000, diagnostic = () => {} } = {}) {
   if (!/^[a-f0-9]{64}$/.test(passwordHash?.salt) || !/^[a-f0-9]{128}$/.test(passwordHash?.hash)) throw new Error('Invalid admin password hash.');
   if (!Number.isInteger(port) || port < 0 || port > 65535 || agents.length > 32) throw new Error('Invalid local server configuration.');
   const registrations = new Map();
@@ -76,6 +78,7 @@ export async function startWebServer({ passwordHash, agents = [], port = 43128, 
     }
     if (req.method === 'GET' && req.url === '/session') {
       const session = sessionFor(req);
+      diagnostic({ component: 'server', event: 'session_probe', code: session ? 'authenticated' : 'login_required' });
       json(res, session ? 200 : 401, session ? { csrf: session.csrf } : { error: 'login_required' }); return;
     }
     if (req.method === 'POST' && req.url === '/logout') {
@@ -96,12 +99,15 @@ export async function startWebServer({ passwordHash, agents = [], port = 43128, 
     return { id: agent.id, label: agent.label, kind: agent.kind, online: Boolean(peer?.generation), status: peer?.status || 'offline', generation: peer?.generation || null, seq: peer?.seq || 0, ...(agent.startup ? { startup: agent.startup } : {}) };
   });
   const broadcastRoster = () => { for (const ws of browsers) send(ws, { v: 1, type: 'roster', agents: roster() }); };
-  const errorResult = (ws, agentId, command, error) => send(ws, { v: 1, type: 'result', agentId, result: { id: command.id, action: command.action, generation: command.generation, data: { success: false, error } } });
+  const errorResult = (ws, agentId, command, error, trace = randomUUID()) => {
+    diagnostic({ component: 'server', event: 'command_failed', action: command.action, trace, code: error });
+    return send(ws, { v: 1, type: 'result', agentId, trace: safeTrace(trace), result: { id: command.id, action: command.action, generation: command.generation, data: { success: false, error } } });
+  };
   function removePending(route, error) {
     const entry = pending.get(route);
     if (!entry) return;
     clearTimeout(entry.timer); pending.delete(route);
-    if (error) errorResult(entry.browser, entry.agentId, entry.command, error);
+    if (error) errorResult(entry.browser, entry.agentId, entry.command, error, route);
   }
   function browserMessage(ws, value) {
     if (!object(value) || value.v !== 1) throw new Error('Protocol.');
@@ -118,15 +124,17 @@ export async function startWebServer({ passwordHash, agents = [], port = 43128, 
     if (command.generation !== peer.generation) { errorResult(ws, value.agentId, command, 'control_stale_generation'); return; }
     if (pending.size >= 128 || [...pending.values()].filter(entry => entry.browser === ws).length >= 8 || [...pending.values()].filter(entry => entry.agent === peer).length >= 16) { errorResult(ws, value.agentId, command, 'server_busy'); return; }
     const routeId = randomUUID();
-    const entry = { browser: ws, agent: peer, agentId: value.agentId, command: { id: command.id, action: command.action, generation: command.generation }, timer: setTimeout(() => removePending(routeId, 'outcome_unknown'), commandTimeoutMs) };
+    const entry = { browser: ws, agent: peer, agentId: value.agentId, command: { id: command.id, action: command.action, generation: command.generation }, startedAt: Date.now(), timer: setTimeout(() => removePending(routeId, 'outcome_unknown'), commandTimeoutMs) };
     pending.set(routeId, entry);
+    diagnostic({ component: 'server', event: 'command_routed', action: command.action, trace: routeId });
     if (!send(peer, { v: 1, type: 'command', routeId, command })) { removePending(routeId, 'outcome_unknown'); return; }
-    send(ws, { v: 1, type: 'accepted', agentId: value.agentId, id: command.id });
+    send(ws, { v: 1, type: 'accepted', agentId: value.agentId, id: command.id, trace: safeTrace(routeId) });
   }
   function agentMessage(ws, value) {
     if (!object(value) || value.v !== 1) throw new Error('Protocol.');
     if (!ws.generation) {
       if (!exact(value, ['v', 'type', 'generation', 'seq', 'status']) || value.type !== 'hello' || !generationValid(value.generation) || !Number.isSafeInteger(value.seq) || value.seq < 0 || !states.has(value.status)) throw new Error('Protocol.');
+      diagnostic({ component: 'server', event: 'agent_registered' });
       ws.generation = value.generation; ws.seq = value.seq; ws.status = value.status;
       const registration = registrations.get(ws.agentId);
       if (registration.startup) registration.startup = { ...registration.startup, phase: 'connected', updatedAt: Date.now() };
@@ -147,8 +155,9 @@ export async function startWebServer({ passwordHash, agents = [], port = 43128, 
       if (!entry) return; // Late result is never replayed or attached to another request.
       const result = value.result;
       if (entry.agent !== ws || !exact(result, ['v', 'generation', 'id', 'action', 'startSeq', 'endSeq', 'stable', 'data']) || result.v !== 1 || result.id !== entry.command.id || result.action !== entry.command.action || result.generation !== ws.generation || !Number.isSafeInteger(result.startSeq) || result.startSeq < 0 || !Number.isSafeInteger(result.endSeq) || result.endSeq < result.startSeq || result.stable !== (result.startSeq === result.endSeq) || !object(result.data) || Buffer.byteLength(JSON.stringify(result)) > 256 * 1024) throw new Error('Protocol.');
+      diagnostic({ component: 'server', event: 'command_result', action: entry.command.action, trace: value.routeId, code: resultCode(result), stable: result.stable, durationMs: Date.now() - entry.startedAt });
       removePending(value.routeId);
-      if (entry.browser.selected === ws.agentId) send(entry.browser, { v: 1, type: 'result', agentId: ws.agentId, result });
+      if (entry.browser.selected === ws.agentId) send(entry.browser, { v: 1, type: 'result', agentId: ws.agentId, trace: safeTrace(value.routeId), result });
       return;
     }
     throw new Error('Protocol.');
@@ -176,6 +185,7 @@ export async function startWebServer({ passwordHash, agents = [], port = 43128, 
         ws.agentId = registration.id; ws.status = 'unknown'; connected.set(registration.id, ws);
         ws.helloTimer = setTimeout(() => ws.terminate(), 5000);
       } else {
+        diagnostic({ component: 'server', event: 'browser_connected' });
         ws.sessionKey = session.key; browsers.add(ws);
         send(ws, { v: 1, type: 'roster', agents: roster() });
       }
@@ -184,15 +194,19 @@ export async function startWebServer({ passwordHash, agents = [], port = 43128, 
           if (binary || !receiveBudget() || (registration && !registrations.has(ws.agentId)) || (!registration && (!sessions.has(ws.sessionKey) || sessions.get(ws.sessionKey).expires <= Date.now()))) throw new Error('Protocol.');
           const value = JSON.parse(data.toString());
           if (registration) agentMessage(ws, value); else browserMessage(ws, value);
-        } catch { ws.terminate(); }
+        } catch { diagnostic({ component: 'server', event: 'protocol_rejected', code: 'protocol_rejected' }); ws.terminate(); }
       });
       ws.on('close', () => {
+        diagnostic({ component: 'server', event: registration ? 'agent_disconnected' : 'browser_disconnected' });
         clearTimeout(ws.helloTimer);
         browsers.delete(ws);
         if (registration && connected.get(registration.id) === ws) { connected.delete(registration.id); broadcastRoster(); }
         for (const [route, entry] of pending) {
           if (entry.agent === ws) removePending(route, 'outcome_unknown');
-          else if (entry.browser === ws) removePending(route);
+          else if (entry.browser === ws) {
+            diagnostic({ component: 'server', event: 'command_failed', action: entry.command.action, trace: route, code: 'outcome_unknown' });
+            removePending(route);
+          }
         }
       });
     });

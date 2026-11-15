@@ -5,6 +5,7 @@ import http from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { once } from 'node:events';
+import { createDiagnostics } from '../web/diagnostics.js';
 import { hashPassword, verifyPassword, randomKey, digest, send, wsOptions } from '../web/common.js';
 
 const installed = fs.existsSync(new URL('../web/node_modules/ws/package.json', import.meta.url));
@@ -175,6 +176,33 @@ webTest('real dummy subprocesses connect outward; browser routes scoped state/hi
   const history = await command(client, selected, 'history').result;
   assert.equal(history.data.history.messages.length, 2);
   assert.equal(history.data.history.messages[0].content[0].text, '<img src=x onerror=alert(1)>');
+});
+
+webTest('safe traces correlate browser state/history requests across server and connector, including an RPC failure', async t => {
+  const lines = [], diagnostic = createDiagnostics({ enabled: true, write: line => lines.push(line) });
+  const f = await fixture(t, { diagnostic });
+  const connector = await startDummyConnector({ origin: f.origin, token: f.keys[0], diagnostic });
+  t.after(() => connector.close());
+  await eventually(() => f.server.roster()[0].online);
+  const client = await browser(t, f.origin, await login(f.origin)), selected = await select(client);
+  const state = command(client, selected, 'state');
+  assert.equal((await state.result).data.success, true);
+  const wire = client.messages.find(value => value.type === 'result' && value.result.id === state.id);
+  assert.match(wire.trace, /^[a-f0-9-]{12}$/);
+  const records = () => lines.map(line => JSON.parse(line.slice('pis web diagnostic: '.length)));
+  assert.deepEqual(records().filter(record => record.trace === wire.trace).map(record => `${record.component}:${record.event}`), ['server:command_routed', 'connector:command_received', 'connector:command_result', 'server:command_result']);
+  const secret = 'MUST_NOT_LOG_CONVERSATION_OR_AUTH';
+  await command(client, selected, 'prompt', { message: secret }).result;
+  await client.wait(value => value.type === 'frame' && value.frame.event.type === 'agent_settled');
+  const original = connector.rpc.request.bind(connector.rpc);
+  connector.rpc.request = (type, ...args) => type === 'get_state' ? Promise.reject(Object.assign(new Error(secret), { code: 'rpc_unavailable' })) : original(type, ...args);
+  const failed = await command(client, selected, 'state').result;
+  assert.equal(failed.data.error, 'rpc_unavailable');
+  connector.rpc.request = original;
+  assert.ok(records().some(record => record.component === 'connector' && record.event === 'command_result' && record.code === 'rpc_unavailable'));
+  assert.ok(!lines.join('').includes(secret));
+  assert.ok(!lines.join('').includes(f.keys[0]));
+  assert.ok(!lines.join('').includes(password));
 });
 
 webTest('outbound disconnect during quota waiting preserves the runtime/session and never replays the prompt', async t => {

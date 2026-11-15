@@ -41,7 +41,7 @@ test('pis --server starts two fixed dummies, keeps secrets out of output and shu
   const port = reservation.address().port;
   await new Promise(resolve => reservation.close(resolve));
   const password = randomKey();
-  const child = spawn(process.execPath, [fileURLToPath(new URL('../bin/pis.js', import.meta.url)), '--server', '--password-stdin', '--port', String(port), '--agents', '2'], {
+  const child = spawn(process.execPath, [fileURLToPath(new URL('../bin/pis.js', import.meta.url)), '--server', '--diagnostics', '--password-stdin', '--port', String(port), '--agents', '2'], {
     stdio: ['pipe', 'pipe', 'pipe'], env: { PATH: `${path.dirname(process.execPath)}:${process.env.PATH}`, HOME: '/nonexistent-pis-web-test-home', TERM: 'dumb' },
   });
   t.after(() => { if (child.exitCode === null) child.kill('SIGKILL'); });
@@ -67,4 +67,5 @@ test('pis --server starts two fixed dummies, keeps secrets out of output and shu
   assert.equal(stdout, '');
   assert.ok(!output.includes(password));
   assert.match(output, /2 utgående dummy-anslutningar/);
+  assert.match(output, /pis web diagnostic:/);
 });

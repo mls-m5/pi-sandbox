@@ -6,6 +6,7 @@
 <main id="workspace" hidden>
 <aside><h2>Agenter</h2><p id="connection" role="status">Ansluter…</p><div id="agents"></div></aside>
 <section class="chat"><div class="toolbar"><h2 id="agent-title">Välj en agent</h2><button id="refresh" disabled>Hämta historik</button></div><p id="state" role="status"></p><p id="sync-note"></p><div id="messages" aria-label="Konversation"></div><details><summary>Senaste verktygshändelser</summary><div id="tools"></div></details>
+<details><summary>Anslutningsdiagnostik · utan chattinnehåll</summary><pre id="diagnostics"></pre><p>Dela bara kommando, kod och referens här. Skicka inte logg-/state-mappar, lösenord eller råa nätverkssvar.</p></details>
 <form id="prompt-form"><label>Meddelande<textarea id="prompt" rows="3" maxlength="64000" aria-describedby="prompt-help" placeholder="Skriv till dummy-agenten…"></textarea></label><small id="prompt-help">Enter skickar · Shift+Enter ger ny rad.</small><div class="actions"><button id="send" disabled>Skicka</button><button id="stop" type="button" disabled>Stoppa</button></div></form>
 <div class="actions"><button id="quota" disabled>Simulera kvotstopp 5 s</button><button id="refill" disabled>Fyll på dummy-kvot</button></div><p id="command-note" role="status"></p>
 </section></main>

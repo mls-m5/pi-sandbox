@@ -75,6 +75,32 @@ Image build/startup can take minutes; the connector allows up to ten minutes for
 
 Verification is deliberately limited: nine offline project tests use fake Podman and a synthetic native RPC subprocess to exercise registration/config preservation, Claude/config-race rejection, clean build/protocol streams, exclusive locks, unknown-cleanup lock retention, reconnect without a new run, actual web CLI project startup/shutdown and successful final cleanup. They do not execute real Pi or prove production container/proxy lifecycle. A new opt-in `PIS_INTEGRATION=1 node --test test/project-rpc-integration.test.js` exercises real rootless Podman state/history/lock/EOF cleanup with fresh credential-free state and **no model prompt**; it is present but **not run here**. First real-project use should be supervised; full stream/provider/browser lifecycle still needs real-container verification.
 
+## Troubleshooting state/history without sharing private folders
+
+First isolate the common browser/server/RPC path using the dummy; it needs no provider credentials or model quota. Stop the previous server with Ctrl-C and wait for cleanup, close old tabs, then run on the host:
+
+```sh
+pis --server --diagnostics --agents 1
+# Or, explicitly from this checkout:
+./start_server.sh --diagnostics --agents 1
+```
+
+Open **http://127.0.0.1:43128**, log in with this start's password and choose Dummy 1. Use **Hämta historik** before sending a test message. If it fails, expand **Anslutningsdiagnostik · utan chattinnehåll**. Share just the action/code/reference line (for example `state · kod=rpc_unavailable · ref=0123456789ab`) and matching terminal lines beginning **`pis web diagnostic:`**. Do not send the whole terminal output: empty CLI password input deliberately prints a generated admin password separately. Do not share auth/state/log directories, transcripts, HAR exports, headers, raw RPC or raw stderr. There is no automatic diagnostic log folder.
+
+`--diagnostics` is optional/off by default and works with dummies or `--project`. It emits only allowlisted event/action/error names, generated short references, timestamps, bounded durations and snapshot-stability flags. No project labels/paths, sessions, emails, headers, password/machine keys, prompts, history or arbitrary native error text are logged. At most 120 records/minute plus one limit notice are written; wait for the next window for a fresh trace if limited. Sink failure cannot break RPC draining. The GUI keeps at most twenty action/code/reference lines in memory even without the flag; no localStorage/files are used.
+
+A normal read follows `server:command_routed` → `connector:command_received` → `connector:command_result` → `server:command_result`, sharing a short reference. Success is `code=ok`; duplicates never re-execute. Useful fixed codes:
+
+- `not_connected_or_busy`: the browser could not route the command because its connection/queue was not ready.
+- `agent_offline` / `control_stale_generation`: disconnected/changed runtime; no prompt replay.
+- `rpc_unavailable`: local adapter closed/faulted/stopping; look for an earlier `connector:rpc_fault` or `rpc_closed` event.
+- `rpc_invalid_record`, `rpc_response_mismatch`, `rpc_record_too_large`: native framing/response/record-bound failure. Large history can still exceed the 4 MiB cap; diagnostics do not remove it.
+- `pi_command_rejected`: Pi returned a native failure; raw provider/extension text stays hidden.
+- `invalid_state_reply`: successful response lacked expected streaming/compaction/queue fields. The GUI does not guess idle or enable send from that state.
+- `outcome_unknown` / `rpc_timeout_ambiguous`: a deadline/disconnect prevented a confirmed result; no automatic mutation retry.
+
+401 on `/session` **before login** is expected (`login_required`); after login it becomes `authenticated`. Refused HTTP connection means server unreachability, not an agent Codex-auth error. If the dummy also fails, diagnose this common path before touching real Codex accounts/projects. Passing automated tests is not a diagnosis of the reported host issue; actual host browser behavior remains unconfirmed until these codes are collected.
+
 ## Components and dependency boundary
 
 - `web/server.js`: separate HTTP/WebSocket server, hashed admin authentication, cookie sessions, authenticated agent roster, scoped command routing and live forwarding. No Pi/provider/Git/Podman capability is supplied to this server.
@@ -114,7 +140,7 @@ npm run test:web
 npm run check
 ```
 
-**24 web tests pass** with the optional dependency installed. They use real loopback HTTP/WebSockets and fixed dummy subprocesses, covering authentication/rate limits, Host/Origin/CSRF/cookie/logout/expiry, payload bounds, cross-agent routing/forgery rejection, stale generations, ambiguous deadlines, key revocation, streaming, stop, browser/connector disconnect and same-runtime quota resumption. Pure UI tests cover authoritative final reconciliation, snapshot races, memory bounds and hostile text rendering. One integration test runs the **actual app module in a DOM shim**, exercises login/select/chat/quota/logout through real transports; another starts and shuts down the actual demo CLI, checking that secrets do not appear in output.
+**28 web tests pass** with the optional dependency installed. They use real loopback HTTP/WebSockets and fixed dummy subprocesses, covering authentication/rate limits, Host/Origin/CSRF/cookie/logout/expiry, payload bounds, cross-agent routing/forgery rejection, stale generations, ambiguous deadlines, key revocation, streaming, stop, browser/connector disconnect and same-runtime quota resumption. Pure UI tests cover authoritative final reconciliation, snapshot races, memory bounds and hostile text rendering. One integration test runs the **actual app module in a DOM shim**, exercises login/select/chat/quota/logout through real transports; another starts and shuts down the actual demo CLI, checking that secrets do not appear in output.
 
 Five additional offline launcher tests use fake Node/npm executables to cover compatible PATH/bundled selection, the Node 24 fallback, missing tools/dependencies, paths with spaces, option forwarding and help without downloads. The fallback's exact invocation is tested without making npm downloads in fast checks.
 

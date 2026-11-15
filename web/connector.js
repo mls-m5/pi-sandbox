@@ -5,16 +5,20 @@ import WebSocket from 'ws';
 import { PiRpc, validateControlCommand } from '../src/pi-rpc.js';
 import { PiView } from '../src/pi-view.js';
 import { budget, exact, send, wsOptions } from './common.js';
+import { resultCode } from './public/diagnostics.js';
 
 // Network lifecycle is independent of local runtime lifecycle. No arbitrary
 // executable, filesystem path, native RPC method or host action crosses this API.
-export function connectView({ view, origin, token }) {
+export function connectView({ view, origin, token, diagnostic = () => {} }) {
   const url = new URL(origin);
   if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1' || url.pathname !== '/' || url.username || url.password || url.search || url.hash || !/^[A-Za-z0-9_-]{43}$/.test(token)) throw new Error('Only explicit local loopback connections are supported in this version.');
   const events = new EventEmitter();
   let socket, timer, stopped = false, attempts = 0;
   const onFrame = frame => { if (socket) send(socket, { v: 1, type: 'frame', frame }); };
   view.on('frame', onFrame);
+  const onFault = code => diagnostic({ component: 'connector', event: 'rpc_fault', code });
+  const onClosed = code => diagnostic({ component: 'connector', event: 'rpc_closed', code });
+  view.rpc.on('fault', onFault); view.rpc.on('closed', onClosed);
   function connect() {
     if (stopped) return;
     const ws = new WebSocket(`${url.origin.replace('http:', 'ws:')}/agent`, {
@@ -41,14 +45,18 @@ export function connectView({ view, origin, token }) {
         }
         if (!exact(message, ['v', 'type', 'routeId', 'command']) || message.v !== 1 || message.type !== 'command' || typeof message.routeId !== 'string' || !/^[a-f0-9-]{36}$/.test(message.routeId)) throw new Error('Protocol.');
         const command = validateControlCommand(message.command);
+        const startedAt = Date.now();
+        diagnostic({ component: 'connector', event: 'command_received', action: command.action, trace: message.routeId });
         pending++;
         void view.execute(command).then(result => {
+          diagnostic({ component: 'connector', event: 'command_result', action: command.action, trace: message.routeId, code: resultCode(result), durationMs: Date.now() - startedAt, stable: result.stable });
           // A reply belongs only to this connection. Never queue it for reconnect.
           if (socket === ws) send(ws, { v: 1, type: 'result', routeId: message.routeId, result });
         }).catch(() => ws.terminate()).finally(() => pending--);
-      } catch { ws.terminate(); }
+      } catch { diagnostic({ component: 'connector', event: 'protocol_rejected', code: 'protocol_rejected' }); ws.terminate(); }
     });
     ws.on('close', () => {
+      diagnostic({ component: 'connector', event: 'agent_disconnected' });
       clearInterval(watchdog);
       if (socket === ws) socket = undefined;
       events.emit('disconnected');
@@ -59,11 +67,11 @@ export function connectView({ view, origin, token }) {
   return {
     events,
     disconnect() { socket?.terminate(); }, // Testable transport interruption, never EOF on Pi.
-    close() { stopped = true; clearTimeout(timer); socket?.terminate(); view.off('frame', onFrame); },
+    close() { stopped = true; clearTimeout(timer); socket?.terminate(); view.off('frame', onFrame); view.rpc.off('fault', onFault); view.rpc.off('closed', onClosed); },
   };
 }
 
-export async function startDummyConnector({ origin, token, autoResume = true }) {
+export async function startDummyConnector({ origin, token, autoResume = true, diagnostic }) {
   const child = spawn(process.execPath, [fileURLToPath(new URL('../bin/pis-dummy.js', import.meta.url)), ...(autoResume ? ['--auto-resume'] : [])], {
     stdio: ['pipe', 'pipe', 'pipe'], env: { PATH: process.env.PATH, HOME: '/nonexistent-pis-dummy-home', TERM: 'dumb' },
   });
@@ -71,7 +79,7 @@ export async function startDummyConnector({ origin, token, autoResume = true }) 
   try {
     const state = await rpc.request('get_state');
     if (!state.success) throw new Error('Dummy initialization failed.');
-    const network = connectView({ view, origin, token });
+    const network = connectView({ view, origin, token, diagnostic });
     rpc.once('closed', () => network.close());
     return {
       network, view, rpc,

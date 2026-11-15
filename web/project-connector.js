@@ -9,7 +9,7 @@ import { startupPhase, startupFailure } from './public/startup.js';
 
 // Only the local host supplies a descriptor resolved from its registered Store.
 // The server/browser cannot supply paths, mounts, model args or executables.
-export async function startProjectConnector({ project, origin, token, signal, startupTimeoutMs = 600_000, onProgress = () => {} }) {
+export async function startProjectConnector({ project, origin, token, signal, startupTimeoutMs = 600_000, onProgress = () => {}, diagnostic }) {
   if (!project || !ID_PATTERN.test(project.id) || !path.isAbsolute(project.root) || !path.isAbsolute(project.storeRoot)) throw new Error('Expected a locally registered project descriptor.');
   signal?.throwIfAborted();
   let lastPhase;
@@ -54,7 +54,7 @@ export async function startProjectConnector({ project, origin, token, signal, st
     if (closing || !state.success) throw new Error('Project RPC initialization failed.');
     rpc.timeoutMs = 30_000;
     report('rpc_ready');
-    network = connectView({ view, origin, token });
+    network = connectView({ view, origin, token, diagnostic });
     rpc.once('closed', () => network.close());
     await new Promise((resolve, reject) => {
       const finish = error => {

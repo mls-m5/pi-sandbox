@@ -16,7 +16,7 @@ test('pis --server forwards only server options to the fixed launcher, preservin
   fs.writeFileSync(path.join(base, 'bash'), '#!/bin/bash\nprintf "%s\\0" "$@" > "$CAPTURE"\nexit 17\n', { mode: 0o700 });
   const home = path.join(base, 'pis-home');
   const env = { PATH: base, HOME: base, PIS_HOME: home, CAPTURE: capture };
-  const args = ['--project', 'project with spaces', '--project', 'other', '--port', '43129'];
+  const args = ['--diagnostics', '--project', 'project with spaces', '--project', 'other', '--port', '43129'];
   const result = spawnSync(process.execPath, [cli, '--server', ...args], { env, encoding: 'utf8' });
   assert.equal(result.status, 17, result.stderr);
   assert.deepEqual(fs.readFileSync(capture, 'utf8').split('\0').slice(0, -1), [fileURLToPath(new URL('../start_server.sh', import.meta.url)), ...args]);
