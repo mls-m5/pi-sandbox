@@ -115,7 +115,6 @@ Proposed active configuration:
     "env": [],
     "proxy": {
       "provider": "openai",
-      "keyEnv": "OPENAI_API_KEY",
       "models": [],
       "maxRequests": 1000,
       "maxConcurrent": 4
@@ -293,7 +292,7 @@ The initial runtime allows outbound networking for model APIs and development wo
 
 Stronger egress controls, host/LAN restrictions, and proxy-only access are a separate tested milestone.
 
-Direct host credential forwarding is disabled. `credentials.env` must be empty; a missing proxy permits credential-free launches only. Existing direct configurations are rejected with migration guidance, never silently converted. OpenAI API keys can be read from a host environment variable by the proxy or stored with `pis --login openai`.
+Direct host credential forwarding is disabled. `credentials.env` must be empty; a missing proxy permits credential-free launches only. Existing direct configurations are rejected with migration guidance, never silently converted. API keys are stored only through host login (`pis --login openai|berget|mistral|custom`). The provider selects its matching profile automatically; environment-key sources and keyEnv are no longer supported. Active legacy keyEnv configurations fail with migration guidance; matching existing profile aliases remain accepted.
 
 ### Official Claude Code mode
 

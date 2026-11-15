@@ -2,7 +2,7 @@
 import { DEFAULT_EXTENSIONS } from './extensions.js';
 export const SCHEMA_REFERENCE = './project.schema.json';
 export const HINTS = {
-  credentials: 'New projects default to openai-codex host OAuth. Choose OpenAI/Berget/Mistral with keyEnv or a matching host profile (not both), custom with the custom host profile, or omit proxy for credential-free launches. Direct credential forwarding is disabled; env must be []. Examples below are inert.',
+  credentials: 'New projects default to openai-codex host OAuth. Use pis --login openai|berget|mistral|custom, then select that provider; its matching host profile is used automatically. No keys/environment-key sources belong in project configuration. Omit proxy for credential-free launches. Direct credential forwarding is disabled; env must be []. Examples below are inert.',
   extensions: 'Pi install sources baked into the image, e.g. npm:pi-web-access@0.40.0. Use [] to disable defaults. Changes rebuild the image; no source paths or -e flags are needed.',
   updates: 'Opt in once with pis --updates on (or all to include exact npm pins). Only tested Pi patch/npm image updates activate on later launches. Off freezes the current managed release; rollback disables automatic updates.',
   image: 'packages are apt names; extraInstructions are trusted single-line RUN instructions. Never put credentials here.',
@@ -39,8 +39,7 @@ export const PROJECT_SCHEMA = {
           type: 'object', additionalProperties: false, required: ['provider'],
           properties: {
             provider: { enum: ['openai', 'berget', 'mistral', 'custom', 'openai-codex'], description: 'API-key or host OAuth proxy.' },
-            keyEnv: { type: 'string', description: 'Host environment variable. Default: OPENAI_API_KEY, BERGET_API_KEY, or MISTRAL_API_KEY. Remove for a profile or Codex.' },
-            profile: { enum: ['openai', 'berget', 'mistral', 'custom'], description: 'Host-managed profile matching provider, instead of keyEnv.' },
+            profile: { enum: ['openai', 'berget', 'mistral', 'custom'], description: 'Optional legacy alias matching the provider; login profile is selected automatically. Never stores a key.' },
             models: { type: 'array', items: { type: 'string' }, default: [], description: 'Exact model allowlist; empty allows any model.' },
             discoverModels: { type: 'boolean', default: true, description: 'Berget only: fetch the public catalogue once at launch, without credentials. False uses bundled chat models.' },
             modelOverrides: { type: 'object', maxProperties: 100, description: 'Berget only: explicit model metadata, not a request allowlist. Set both token limits from verified provider information.',
@@ -53,7 +52,7 @@ export const PROJECT_SCHEMA = {
             maxRequests: { type: 'integer', minimum: 1, maximum: 100000, default: 1000 },
             maxConcurrent: { type: 'integer', minimum: 1, maximum: 64, default: 4 },
           },
-          allOf: [{ if: { properties: { provider: { const: 'openai-codex' } } }, then: { not: { anyOf: [{ required: ['keyEnv'] }, { required: ['profile'] }] } } }, { if: { properties: { provider: { const: 'custom' } } }, then: { properties: { profile: { const: 'custom' } }, required: ['profile'], not: { required: ['keyEnv'] } } }, { if: { properties: { provider: { not: { const: 'berget' } } } }, then: { not: { anyOf: [{ required: ['discoverModels'] }, { required: ['modelOverrides'] }] } } }, { not: { required: ['keyEnv', 'profile'] } }],
+          allOf: [{ if: { properties: { provider: { const: 'openai-codex' } } }, then: { not: { required: ['profile'] } } }, { if: { properties: { provider: { not: { const: 'berget' } } } }, then: { not: { anyOf: [{ required: ['discoverModels'] }, { required: ['modelOverrides'] }] } } }],
         },
       },
     },

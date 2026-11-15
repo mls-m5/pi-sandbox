@@ -102,7 +102,6 @@ export function inspectPodman() {
 
 export function podmanEnvironment(config) {
   const env = { ...process.env };
-  if (config.credentials.proxy?.keyEnv) delete env[config.credentials.proxy.keyEnv];
   delete env.OPENAI_API_KEY;
   delete env.BERGET_API_KEY;
   delete env.MISTRAL_API_KEY;

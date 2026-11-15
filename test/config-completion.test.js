@@ -16,7 +16,7 @@ test('configuration completion adds source defaults, hints and contextual fields
   assert.match(config.hints.credentials, /Codex|openai-codex/);
   assert.equal(config.credentials.proxy.maxRequests, 1000);
   assert.ok(!('keyEnv' in config.credentials.proxy));
-  assert.equal(config.examples.credentials.openai.proxy.keyEnv, 'OPENAI_API_KEY');
+  assert.ok(!('keyEnv' in config.examples.credentials.openai.proxy));
   assert.deepEqual(completeConfig(config), config);
   const direct = completeConfig({ ...old, credentials: { env: ['SOME_API_KEY'] }, extensions: [] });
   assert.deepEqual(direct.extensions, []);
@@ -25,7 +25,10 @@ test('configuration completion adds source defaults, hints and contextual fields
   assert.ok(!('direct' in config.examples.credentials));
   const api = completeConfig({ ...old, credentials: { proxy: { provider: 'openai', maxRequests: 12 } } });
   assert.equal(api.credentials.proxy.maxRequests, 12);
-  assert.equal(api.credentials.proxy.keyEnv, 'OPENAI_API_KEY');
+  assert.ok(!('keyEnv' in api.credentials.proxy));
+  const legacy = completeConfig({ ...old, credentials: { env: [], proxy: { provider: 'openai', keyEnv: 'OPENAI_API_KEY' } } });
+  assert.equal(legacy.credentials.proxy.keyEnv, 'OPENAI_API_KEY', 'Do not silently rewrite explicit legacy credentials.');
+  assert.throws(() => validate(legacy, { paths: false }), /Remove keyEnv/);
 });
 
 test('completion preserves invalid values for validation rather than silently replacing them', () => {

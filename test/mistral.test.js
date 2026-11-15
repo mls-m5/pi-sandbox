@@ -32,9 +32,9 @@ test('Mistral host API-key login, proxy, model routes and logout', async t => {
   const root = path.join(home, 'project'); fs.mkdirSync(root);
   const store = new Store(path.join(home, 'store'));
   const config = await store.register(root);
-  config.credentials.proxy = { provider: 'mistral', profile: 'mistral', models: ['codestral-latest'] };
+  config.credentials.proxy = { provider: 'mistral', models: ['codestral-latest'] };
   validate(config, { storage: store.root });
-  assert.equal(completeConfig({ credentials: { env: [], proxy: { provider: 'mistral' } } }).credentials.proxy.keyEnv, 'MISTRAL_API_KEY');
+  assert.ok(!('keyEnv' in completeConfig({ credentials: { env: [], proxy: { provider: 'mistral' } } }).credentials.proxy));
   assert.equal(API_PRESETS.mistral.url, 'https://api.mistral.ai/v1');
   const invalid = structuredClone(config); invalid.credentials.proxy.keyEnv = 'MISTRAL_API_KEY';
   assert.throws(() => validate(invalid, { storage: store.root }));

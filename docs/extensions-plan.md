@@ -73,7 +73,7 @@ Completion:
 4. Generates `project.schema.json` beside `project.json`, referenced through `$schema`, for JSON-aware editor descriptions/completion.
 5. Saves formatted JSON with two-space indentation and a trailing newline under the registry lock.
 
-The same completion runs after `pis --edit`, before validation/save. Invalid edits retain the previous valid file. New fields in a selected proxy mode appear automatically: API-key mode gets missing `keyEnv`; Codex gets model/request-limit defaults but never an API-key-only field. If `credentials.proxy` was deliberately absent, it stays absent; alternative modes are examples, not silently activated permissions.
+The same completion runs after `pis --edit`, before validation/save. Invalid edits retain the previous valid file. New fields in a selected proxy mode appear automatically: API-key providers now select matching saved login profiles automatically; no keyEnv is added (legacy active fields are rejected with migration guidance). Codex retains OAuth and model/request-limit defaults. If `credentials.proxy` was deliberately absent, it stays absent; alternative modes are examples, not silently activated permissions.
 
 Identity fields are never guessed or rewritten. Unknown fields and malformed types still fail validation rather than being discarded. `examples` and `hints` never execute commands, share directories, or pass credentials. Clearing an array means disable it; deleting a field requests its default again.
 

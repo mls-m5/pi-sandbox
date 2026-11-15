@@ -66,7 +66,8 @@ test('real Pi Berget and custom profiles complete fake streamed tool round trips
     assert.ok(exchange.every(request => !JSON.stringify(request.body).includes(key)));
   };
 
-  config.credentials = { env: [], proxy: { provider: 'berget', keyEnv: 'BERGET_API_KEY', models: [model] } };
+  await saveApiProfile(store, 'berget', 'https://api.berget.ai/v1', key);
+  config.credentials = { env: [], proxy: { provider: 'berget', models: [model] } };
   await store.save(config, store.load(config.id));
   await runPi(`berget/${model}`, '/v1/chat/completions');
 

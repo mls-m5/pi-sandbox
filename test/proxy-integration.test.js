@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import http from 'node:http';
 import { spawnSync } from 'node:child_process';
+import { saveApiProfile } from '../src/api-auth.js';
 import { Store } from '../src/store.js';
 import { imagePlan, launch } from '../src/container.js';
 
@@ -34,13 +35,14 @@ test('real Podman proxy: private socket, dummy-only sandbox, HTTP access, and Pi
   const root = path.join(base, 'project'); fs.mkdirSync(root);
   const store = new Store(path.join(base, 'storage'));
   const config = await store.register(root, 'proxy-integration');
-  config.credentials.proxy.models = ['gpt-4o'];
+  config.credentials.proxy = { provider: 'openai', models: ['gpt-4o'] };
   config.extensions = [];
   await store.save(config, store.load(config.id));
   const image = imagePlan(config).image;
   const oldKey = process.env.OPENAI_API_KEY;
   const key = 'sk-host-only-fake-openai-credential-for-integration';
   process.env.OPENAI_API_KEY = key;
+  await saveApiProfile(store, 'openai', 'https://api.openai.com/v1', key);
   const received = [];
   const upstream = http.createServer((req, res) => {
     const chunks = [];

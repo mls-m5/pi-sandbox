@@ -34,7 +34,7 @@ async function fixture(t) {
 
 test('Berget config, profile permissions, precedence, missing profile and logout', async t => {
   const { store, config } = await fixture(t);
-  assert.equal(completeConfig({ credentials: { env: [], proxy: { provider: 'berget' } } }).credentials.proxy.keyEnv, 'BERGET_API_KEY');
+  assert.ok(!('keyEnv' in completeConfig({ credentials: { env: [], proxy: { provider: 'berget' } } }).credentials.proxy));
   config.credentials.proxy = { provider: 'berget', profile: 'berget' };
   validate(config, { storage: store.root });
   assert.equal(completeConfig(config).credentials.proxy.profile, 'berget');
@@ -53,7 +53,7 @@ test('Berget config, profile permissions, precedence, missing profile and logout
   assert.equal(fs.statSync(file).mode & 0o777, 0o600);
   assert.equal(fs.statSync(path.dirname(file)).mode & 0o777, 0o700);
   assert.equal(readApiProfile(store, 'berget').key, key);
-  assert.deepEqual(apiProfileStatus(store).find(p => p.provider === 'berget'), { provider: 'berget', profilePresent: true, environmentVariable: 'BERGET_API_KEY', environmentPresent: true, credentialPresent: true });
+  assert.deepEqual(apiProfileStatus(store).find(p => p.provider === 'berget'), { provider: 'berget', profilePresent: true, credentialPresent: true });
   const proxy = await prepareProxy(store, config, { bergetCatalogFetch: async () => { throw new Error('offline fixture'); } });
   try {
     const models = JSON.parse(fs.readFileSync(path.join(proxy.directory, 'models.json')));
@@ -90,9 +90,10 @@ test('interactive API-key login hides keys and cancellation writes no partial pr
 
 test('Berget relay sends only chat completions to fixed path with host key and redacts streamed secrets', async t => {
   const { store, config } = await fixture(t);
-  config.credentials.proxy = { provider: 'berget', keyEnv: 'BERGET_API_KEY', models: ['google/gemma-4-31B-it'] };
+  config.credentials.proxy = { provider: 'berget', models: ['google/gemma-4-31B-it'] };
   validate(config, { storage: store.root });
   const key = 'berget-test-key-123456';
+  await saveApiProfile(store, 'berget', 'https://api.berget.ai/v1', key);
   const oldBergetKey = process.env.BERGET_API_KEY;
   process.env.BERGET_API_KEY = key;
   t.after(() => { if (oldBergetKey === undefined) delete process.env.BERGET_API_KEY; else process.env.BERGET_API_KEY = oldBergetKey; });
@@ -138,10 +139,10 @@ test('custom API profiles validate destinations, pinning rules, metadata, prefix
   await saveApiProfile(store, 'custom', baseUrl, key, catalog);
   const saved = readApiProfile(store, 'custom');
   assert.deepEqual(saved.models[0], { id: 'vendor/tool-model', name: 'vendor/tool-model', reasoning: false, input: ['text', 'image'], contextWindow: 32768, maxTokens: 4096 });
-  config.credentials.proxy = { provider: 'custom', profile: 'custom' };
+  config.credentials.proxy = { provider: 'custom' };
   validate(config, { storage: store.root });
-  const invalid = structuredClone(config); delete invalid.credentials.proxy.profile;
-  assert.throws(() => validate(invalid, { storage: store.root }), /requires credentials.proxy.profile/);
+  const invalid = structuredClone(config); invalid.credentials.proxy.profile = 'openai';
+  assert.throws(() => validate(invalid, { storage: store.root }), /Profile must match/);
   const requests = [];
   const server = http.createServer((req, res) => {
     requests.push({ url: req.url, authorization: req.headers.authorization, cookie: req.headers.cookie });

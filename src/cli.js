@@ -139,10 +139,10 @@ This requires saved sessions/extensions and host-confirmed exhaustion/availabili
 It sends one continuation prompt (uses model quota), not a replay of the original
 prompt/tools. Web/RPC mode does NOT support --auto-wait-codex.
 
-Berget: set credentials.proxy.provider=berget, and use BERGET_API_KEY on the host,
-or run --login berget and set credentials.proxy.profile=berget (remove keyEnv).
-Mistral: --login-mistral stores an API key; set provider=mistral, profile=mistral.
-Custom endpoints: run --login custom, then set provider=custom and profile=custom.
+API providers: run --login openai|berget|mistral|custom, then set
+credentials.proxy.provider to that provider. Host login profiles are selected
+automatically; no keyEnv/environment-key source is supported.
+Mistral also accepts --login-mistral. Custom endpoints use --login custom.
 Only an explicit trusted host profile can select a custom destination.
 Never run as root. Mounted files and Claude Code's copied login tokens are accessible to the sandbox.
 `;
@@ -258,7 +258,7 @@ export async function main(argv = process.argv.slice(2)) {
   if (options.action === 'login' || options.action === 'login-mistral') {
     const provider = options.action === 'login-mistral' ? 'mistral' : options.target;
     await promptApiProfile(store, provider);
-    console.log(`Saved host ${provider} API-key profile. Set credentials.proxy.provider and credentials.proxy.profile to ${provider} and remove keyEnv in pis --edit.`);
+    console.log(`Saved host ${provider} API-key profile. Set credentials.proxy.provider to ${provider} in pis --edit; its login profile is selected automatically. Remove any obsolete keyEnv field.`);
     return 0;
   }
   if (options.action === 'logout' || options.action === 'logout-mistral') {
@@ -368,13 +368,10 @@ export async function main(argv = process.argv.slice(2)) {
       }
     } catch { managedUpdate = { status: 'invalid-state', fallback: 'declared-image' }; }
     const workdir = within(config.root, cwd) ? cwd : config.root;
-    const proxyKeyEnv = config.credentials.proxy?.keyEnv || (config.credentials.proxy?.provider === 'berget' ? 'BERGET_API_KEY' : config.credentials.proxy?.provider === 'mistral' ? 'MISTRAL_API_KEY' : 'OPENAI_API_KEY');
     const isClaude = config.agent === 'claude';
     const isCodex = !isClaude && config.credentials.proxy?.provider === 'openai-codex';
-    const credentialVariables = !isClaude && config.credentials.proxy
-      ? (isCodex || config.credentials.proxy.profile ? [] : [{ name: proxyKeyEnv, present: Boolean(process.env[proxyKeyEnv]), handling: 'host-proxy' }])
-      : [];
-    const credentialSource = isClaude ? { kind: 'sandbox-oauth-copy', provider: 'claude-code', warning: 'Real tokens are readable and writable inside the sandbox. Pi proxy is not used.' } : isCodex ? { kind: 'host-oauth', provider: 'openai-codex', present: hasCodexCredential(store) } : config.credentials.proxy?.profile ? { kind: 'host-api-key', provider: config.credentials.proxy.profile, present: Boolean(readApiProfile(store, config.credentials.proxy.profile)) } : undefined;
+    const credentialVariables = [];
+    const credentialSource = isClaude ? { kind: 'sandbox-oauth-copy', provider: 'claude-code', warning: 'Real tokens are readable and writable inside the sandbox. Pi proxy is not used.' } : isCodex ? { kind: 'host-oauth', provider: 'openai-codex', present: hasCodexCredential(store) } : config.credentials.proxy ? { kind: 'host-api-key', provider: config.credentials.proxy.provider, present: Boolean(readApiProfile(store, config.credentials.proxy.provider)) } : undefined;
     console.log(JSON.stringify({ config, configurationFile: store.configPath(config.id), image: plan.image, piVersion: plan.piVersion, managedUpdate, workingDirectory: workdir, containerHome: CONTAINER_HOME, agentCommand: isClaude ? claudeCommand() : piCommand(), piCommand: piCommand(), claudeVersion: CLAUDE_VERSION, mounts: [{ source: config.root, target: config.root, access: 'read-write' }, ...config.mounts.map(m => ({ source: m.source, target: m.source, access: m.access || 'read-only' }))], credentialVariables, credentialSource }, null, 2));
     return 0;
   }

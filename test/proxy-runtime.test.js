@@ -6,6 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { Store } from '../src/store.js';
 import { defaults, validate } from '../src/config.js';
 import { prepareProxy, PROXY_BASE_URL, CODEX_PROXY_BASE_URL } from '../src/proxy-runtime.js';
+import { saveApiProfile, logoutApiProfile, apiProfileStatus } from '../src/api-auth.js';
 import { saveCodexCredential } from '../src/codex-auth.js';
 import { fakeCodexCredential } from './fixtures/codex.js';
 import { launchArgs, imagePlan } from '../src/container.js';
@@ -17,12 +18,13 @@ async function fixture(t) {
   const store = new Store(path.join(base, 'storage'));
   const config = await store.register(root);
   // These fixtures exercise the API-key proxy unless a test explicitly selects Codex.
-  config.credentials.proxy = { provider: 'openai', keyEnv: 'OPENAI_API_KEY', models: [], maxRequests: 1000, maxConcurrent: 4 };
+  config.credentials.proxy = { provider: 'openai', models: [], maxRequests: 1000, maxConcurrent: 4 };
   const agent = path.join(store.projectDir(config.id), 'state', '.pi', 'agent');
   fs.mkdirSync(agent, { recursive: true });
   const keyName = `PIS_TEST_PROXY_KEY_${config.id.toUpperCase()}`;
-  config.credentials.proxy.keyEnv = keyName;
   process.env[keyName] = 'sk-host-secret-must-stay-outside';
+  await saveApiProfile(store, 'openai', 'https://api.openai.com/v1', process.env[keyName]);
+  await saveApiProfile(store, 'berget', 'https://api.berget.ai/v1', process.env[keyName]);
   t.after(() => { delete process.env[keyName]; });
   return { base, root, store, config, agent, keyName };
 }
@@ -70,7 +72,7 @@ test('runtime overlays replace stale OpenAI auth and endpoints, without editing 
 
 test('Berget discovery populates only safe models and preserves originals, limits and metadata overrides', async t => {
   const { store, config, agent, keyName } = await fixture(t);
-  config.credentials.proxy = { provider: 'berget', keyEnv: keyName, models: ['new/chat'], modelOverrides: { 'new/chat': { contextWindow: 16000, maxTokens: 2000 } } };
+  config.credentials.proxy = { provider: 'berget', models: ['new/chat'], modelOverrides: { 'new/chat': { contextWindow: 16000, maxTokens: 2000 } } };
   validate(config, { storage: store.root });
   for (const change of [proxy => { proxy.discoverModels = 'yes'; }, proxy => { proxy.provider = 'openai'; }, proxy => { proxy.modelOverrides['new/chat'].headers = { Authorization: '!exec' }; }]) {
     const bad = structuredClone(config); change(bad.credentials.proxy);
@@ -102,7 +104,7 @@ test('Codex snapshots and environment contain only synthetic credentials, never 
   config.credentials = { env: [], proxy: { provider: 'openai-codex' } };
   validate(config, { storage: store.root });
   const bad = structuredClone(config); bad.credentials.proxy.keyEnv = 'CODEX_TOKEN';
-  assert.throws(() => validate(bad, { storage: store.root }), /remove keyEnv/);
+  assert.throws(() => validate(bad, { storage: store.root }), /Remove keyEnv/);
   fs.writeFileSync(path.join(agent, 'auth.json'), JSON.stringify({ 'openai-codex': credential }));
   const proxy = await prepareProxy(store, config);
   try {
@@ -121,9 +123,27 @@ test('Codex snapshots and environment contain only synthetic credentials, never 
 
 test('proxy setup refuses missing host keys and never silently falls back to direct mode', async t => {
   const { store, config, keyName } = await fixture(t);
-  delete process.env[keyName];
-  await assert.rejects(prepareProxy(store, config), /Set .* on the host/);
+  await logoutApiProfile(store, 'openai');
+  const previous = process.env.OPENAI_API_KEY; process.env.OPENAI_API_KEY = 'environment-must-not-be-used';
+  t.after(() => { if (previous === undefined) delete process.env.OPENAI_API_KEY; else process.env.OPENAI_API_KEY = previous; });
+  await assert.rejects(prepareProxy(store, config), /missing.*pis --login openai/);
+  await assert.rejects(prepareProxy(store, { ...config, credentials: { env: [], proxy: { provider: 'openai', keyEnv: keyName } } }), /Remove keyEnv/);
   assert.throws(() => launchArgs(store, config, ['pi'], { cwd: config.root, image: 'test' }), /active host proxy/);
+});
+
+test('all API providers require saved login even with host environment keys, and status ignores those variables', async t => {
+  const { store, config } = await fixture(t);
+  const variables = ['OPENAI_API_KEY', 'BERGET_API_KEY', 'MISTRAL_API_KEY'];
+  const previous = variables.map(name => process.env[name]);
+  t.after(() => variables.forEach((name, index) => { if (previous[index] === undefined) delete process.env[name]; else process.env[name] = previous[index]; }));
+  for (const name of variables) process.env[name] = 'fake-environment-key-must-not-authenticate';
+  for (const provider of ['openai', 'berget', 'mistral', 'custom']) {
+    await logoutApiProfile(store, provider);
+    config.credentials.proxy = { provider };
+    validate(config, { storage: store.root });
+    await assert.rejects(prepareProxy(store, config), error => error.message.includes(`pis --login ${provider}`));
+    assert.deepEqual(apiProfileStatus(store).find(item => item.provider === provider), { provider, profilePresent: false, credentialPresent: false });
+  }
 });
 
 test('sandbox-controlled state cannot use symlinks or FIFOs to read host files or block startup', async t => {

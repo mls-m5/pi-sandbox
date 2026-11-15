@@ -14,7 +14,6 @@ Run `pis --edit` and use this complete `credentials` section:
     "env": [],
     "proxy": {
       "provider": "openai",
-      "keyEnv": "OPENAI_API_KEY",
       "models": [],
       "maxRequests": 1000,
       "maxConcurrent": 4
@@ -25,19 +24,18 @@ Run `pis --edit` and use this complete `credentials` section:
 
 This is a configuration fragment; retain the rest of the project configuration.
 
-Set `OPENAI_API_KEY` in the **host terminal**, then run `pis`. To enter a key without putting its value in shell history, Bash users can use:
+Log in once on the **host terminal**; the key is entered at a hidden prompt, never in project JSON, argv or shell history:
 
 ```sh
-read -rsp 'OpenAI API key: ' OPENAI_API_KEY; echo
-export OPENAI_API_KEY
+pis --login openai
 pis -- --model openai/<model-id>
 ```
 
 Replace `<model-id>` with an OpenAI model supported by Pi. The same proxy is available in `pis --bash` and `pis --exec`.
 
-`keyEnv` may name another host variable. Its value is never passed into the container. A missing key stops launch: there is **no fallback** to direct credential forwarding. `pis --build`, `--check`, and `--show` do not require a key. OpenAI and Berget can instead reference a private host profile; a profile always takes precedence and never falls back to an environment key.
+The provider's matching host login profile is selected automatically. The environment-key route has been removed: `OPENAI_API_KEY`, `BERGET_API_KEY` and `MISTRAL_API_KEY` are ignored as host credential sources. A missing login stops launch with a `pis --login PROVIDER` instruction, even if such a variable is set. `pis --build`, `--check`, and `--show` do not require a login. Existing stored profiles work unchanged; no logout, credential replacement or re-entry is required. The old optional `profile` field is still accepted only if it matches the provider, for compatibility; new configuration needs only `provider`.
 
-`credentials.env` must always be `[]`. Direct host credential forwarding has been removed. Older configurations with nonempty `env` fail validation rather than silently changing provider or exposing a key. To migrate OpenAI, keep `OPENAI_API_KEY` on the host and set `credentials` to `{ "env": [], "proxy": { "provider": "openai", "keyEnv": "OPENAI_API_KEY" } }`, or run `pis --login openai` and use `profile: "openai"` instead of `keyEnv`. Omitting `proxy` allows a credential-free launch, not host key forwarding.
+`credentials.env` must always be `[]`. Direct host credential forwarding has been removed. Older configurations with nonempty `env` fail validation rather than silently changing provider or exposing a key. To migrate, run `pis --login openai` (or the selected API provider) if no login was saved, explicitly remove `keyEnv`, keep the rest of the project policy, and use `{ "env": [], "proxy": { "provider": "openai" } }`. Active legacy `keyEnv` settings produce a migration error rather than being silently rewritten or interpreted as a new credential source. Since invalid stored projects can block normal registry selection/`pis --edit`, remove that field directly in the host project file first (`$PIS_HOME/projects/ID/project.json`, default `~/.local/share/pis/projects/ID/project.json`), preserving all unrelated fields. Then normal edit/check commands work again. Inert examples from older configurations are not credential sources; new generated examples omit keyEnv. Omitting `proxy` allows a credential-free launch, not host key forwarding.
 
 ## Host API-key profiles
 
@@ -54,11 +52,11 @@ pis --logout berget      # removes local copy; does not revoke the provider key
 
 Profiles live in `$PIS_HOME/auth/` (default `~/.local/share/pis/auth/`), are written atomically with mode 0600 inside a 0700 directory, and are never mounted into the container or included in image builds. Login does not make a paid API request. Cancellation or invalid input does not save a partial profile. `pis --show` and `--login-status` report profile/provider and credential presence only, never key values.
 
-To select a stored Mistral key, set `credentials.env` to `[]` and use `{ "provider": "mistral", "profile": "mistral" }` (without `keyEnv`). Pi's native Mistral Conversations provider sends `POST /v1/chat/completions`; the host fixes the destination to `https://api.mistral.ai/v1/chat/completions`. Only this chat route is available, not other Mistral API routes. For an environment key instead use `{ "provider": "mistral", "keyEnv": "MISTRAL_API_KEY" }`. `--login-mistral` does not implement a subscription sign-in.
+To select a stored Mistral key, set `credentials.env` to `[]` and use `{ "provider": "mistral" }` after `pis --login-mistral`. Pi's native Mistral Conversations provider sends `POST /v1/chat/completions`; the host fixes the destination to `https://api.mistral.ai/v1/chat/completions`. Only this chat route is available, not other Mistral API routes. `--login-mistral` does not implement a subscription sign-in.
 
-To select a stored Berget profile in a project, set `credentials.env` to `[]` and use `{ "provider": "berget", "profile": "berget" }`. To select the environment-key route instead, use `{ "provider": "berget", "keyEnv": "BERGET_API_KEY" }`. These are mutually exclusive; a missing selected credential fails closed.
+For Berget, run `pis --login berget`, set `credentials.env` to `[]` and use `{ "provider": "berget" }`. The matching saved login is the only credential source; missing/invalid profiles fail closed without environment fallback.
 
-`pis --login custom` asks for an HTTPS API base URL ending in `/v1`, confirmation of tool-call support, verified model IDs, published context/output limits, image-input and reasoning capabilities, and a hidden API key. Only OpenAI Chat Completions is supported; no discovery, model-list, or live validation request is made. The custom model catalog belongs to the host profile, not `credentials.proxy.models`. Project config contains only `provider: "custom"` and `profile: "custom"`, never the endpoint or key.
+`pis --login custom` asks for an HTTPS API base URL ending in `/v1`, confirmation of tool-call support, verified model IDs, published context/output limits, image-input and reasoning capabilities, and a hidden API key. Only OpenAI Chat Completions is supported; no discovery, model-list, or live validation request is made. The custom model catalog belongs to the host profile, not `credentials.proxy.models`. Project config only needs `provider: "custom"` (a matching legacy `profile` is optional), never the endpoint or key.
 
 Custom destinations must use HTTPS on port 443, with no URL credentials, query, or fragment, and a safe path prefix ending in `/v1`. IP literals, local hostnames, and DNS results in private/special-use ranges are rejected. DNS answers are resolved and pinned when the host proxy starts; requests use only `/v1/chat/completions` with the configured base path prefix and never follow redirects. Loopback HTTP remains available only to the internal fake-service test seam. This does not constrain container egress generally.
 
@@ -114,7 +112,7 @@ Response → stream back without exposing authentication headers
 
 There is **no host TCP listener**, published port, host network mode, or requirement to make host localhost reachable through Podman networking. Each launch gets an independent capability, socket, and request budget. The capability is invalid after shutdown.
 
-Only the Unix socket, dummy credentials, and container relay/configuration files are mounted at `/pis/proxy`. The host proxy implementation and real key are not mounted. The selected source key variable is removed from Podman build/run subprocess environments. Host `OPENAI_API_KEY`, `BERGET_API_KEY`, and `MISTRAL_API_KEY` are removed even for credential-free launches; the runtime gets only dummy values. The runtime directory is private (0700), its files/socket are 0600, and normal shutdown removes it. Forced process death can leave inert runtime files. They do not contain the host proxy credential, but preserved entries for other sandbox providers may contain previously stored secrets, so treat leftover runtime directories as sensitive.
+Only the Unix socket, dummy credentials, and container relay/configuration files are mounted at `/pis/proxy`. The host proxy implementation and real key are not mounted. As defense in depth, host `OPENAI_API_KEY`, `BERGET_API_KEY`, and `MISTRAL_API_KEY` are removed even for credential-free launches; the runtime gets only dummy values. The runtime directory is private (0700), its files/socket are 0600, and normal shutdown removes it. Forced process death can leave inert runtime files. They do not contain the host proxy credential, but preserved entries for other sandbox providers may contain previously stored secrets, so treat leftover runtime directories as sensitive.
 
 The container entry process starts the relay, launches Pi/Bash/the selected program, forwards signals, and stops the relay when that program exits. The host wrapper stops the proxy after container cleanup.
 

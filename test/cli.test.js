@@ -67,8 +67,9 @@ test('help does not initialize storage and registration/show/list/check work', t
   assert.match(invoke(['--extensions-list']).stdout, /npm:pi-web-access@0\.40\.0/);
   const status = invoke(['--login-status']);
   assert.equal(status.status, 0, status.stderr);
-  assert.deepEqual(JSON.parse(status.stdout).find(entry => entry.provider === 'berget'), { provider: 'berget', profilePresent: false, environmentVariable: 'BERGET_API_KEY', environmentPresent: false, credentialPresent: false });
-  assert.ok(status.stdout.includes('"environmentPresent": true'));
+  assert.deepEqual(JSON.parse(status.stdout).find(entry => entry.provider === 'berget'), { provider: 'berget', profilePresent: false, credentialPresent: false });
+  assert.equal(JSON.parse(status.stdout).find(entry => entry.provider === 'openai').credentialPresent, false);
+  assert.ok(!status.stdout.includes('environmentPresent'));
   assert.ok(!status.stdout.includes(env.OPENAI_API_KEY));
 });
 

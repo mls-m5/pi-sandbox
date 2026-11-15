@@ -9,7 +9,6 @@ import { HINTS, SCHEMA_REFERENCE } from './config-schema.js';
 export const ID_PATTERN = /^[a-z0-9]{5}$/;
 export const NAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/;
 const RESERVED = ['/etc', '/usr', '/bin', '/sbin', '/lib', '/lib64', '/proc', '/sys', '/dev', '/run', '/root', '/pis', '/opt/pis'];
-const RESERVED_ENV = ['HOME', 'PATH', 'USER', 'LOGNAME', 'SHELL', 'ENV', 'BASH_ENV', 'NODE_OPTIONS', 'NODE_PATH', 'LD_PRELOAD', 'LD_LIBRARY_PATH', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_CACHE_HOME'];
 
 function object(value, keys, label) {
   assert(value && typeof value === 'object' && !Array.isArray(value), `${label} must be an object.`);
@@ -57,16 +56,14 @@ export function validate(config, { storage, home = os.homedir(), identity, paths
   }
   object(config.credentials, ['env', 'proxy'], 'credentials');
   strings(config.credentials.env, 'credentials.env');
-  assert(config.credentials.env.length === 0, 'Direct credential forwarding is no longer supported. Set credentials.env to [] and configure credentials.proxy (for OpenAI: provider=openai with keyEnv=OPENAI_API_KEY, or profile=openai after pis --login openai). Real keys must stay on the host.');
+  assert(config.credentials.env.length === 0, 'Direct credential forwarding is no longer supported. Set credentials.env to [] and configure credentials.proxy (for OpenAI: provider=openai after pis --login openai). Real keys must stay on the host.');
   if (config.credentials.proxy !== undefined) {
     const proxy = config.credentials.proxy;
-    object(proxy, ['provider', 'keyEnv', 'profile', 'models', 'maxRequests', 'maxConcurrent', 'discoverModels', 'modelOverrides'], 'credentials.proxy');
+    assert(!Object.hasOwn(proxy || {}, 'keyEnv'), 'Remove keyEnv from credentials.proxy; environment API keys are no longer supported. Run pis --login PROVIDER and select its provider. Edit the host project.json directly if pis --edit cannot open this legacy configuration.');
+    object(proxy, ['provider', 'profile', 'models', 'maxRequests', 'maxConcurrent', 'discoverModels', 'modelOverrides'], 'credentials.proxy');
     assert(['openai', 'openai-codex', 'berget', 'mistral', 'custom'].includes(proxy.provider), 'Proxy provider must be openai, berget, mistral, custom or openai-codex.');
     assert(proxy.profile === undefined || (proxy.provider !== 'openai-codex' && proxy.profile === proxy.provider), 'Profile must match the API-key provider (openai, berget, mistral or custom).');
-    assert(proxy.provider !== 'custom' || proxy.profile === 'custom', 'Custom provider requires credentials.proxy.profile=custom; use pis --login custom to configure a trusted host profile.');
-    assert(proxy.profile === undefined || proxy.keyEnv === undefined, 'Remove keyEnv when using a host profile.');
-    assert(proxy.provider !== 'openai-codex' || proxy.keyEnv === undefined, 'Codex uses host OAuth credentials; remove keyEnv and use pis --login-codex or --import-codex.');
-    assert(proxy.keyEnv === undefined || (typeof proxy.keyEnv === 'string' && /^[A-Z_][A-Z0-9_]*$/.test(proxy.keyEnv) && !RESERVED_ENV.includes(proxy.keyEnv)), 'Invalid proxy keyEnv variable name.');
+
     assert(config.credentials.env.length === 0, 'Proxy mode requires credentials.env to be empty; never forward real credentials alongside the proxy.');
     validateBergetModelSettings(proxy);
     if (proxy.models !== undefined) strings(proxy.models, 'credentials.proxy.models');
@@ -128,7 +125,6 @@ export function completeConfig(input) {
   if (record(config.credentials?.proxy)) {
     const proxy = config.credentials.proxy;
     fill(proxy, { models: [], maxRequests: 1000, maxConcurrent: 4 });
-    if (!proxy.profile && ['openai', 'berget', 'mistral'].includes(proxy.provider)) fill(proxy, { keyEnv: proxy.provider === 'berget' ? 'BERGET_API_KEY' : proxy.provider === 'mistral' ? 'MISTRAL_API_KEY' : 'OPENAI_API_KEY' });
   }
   fill(config.hints, HINTS);
   fill(config.examples, {
@@ -141,9 +137,9 @@ export function completeConfig(input) {
     credentials: {},
   });
   fill(config.examples?.credentials, {
-    openai: { env: [], proxy: { provider: 'openai', keyEnv: 'OPENAI_API_KEY', models: [], maxRequests: 1000, maxConcurrent: 4 } },
-    berget: { env: [], proxy: { provider: 'berget', keyEnv: 'BERGET_API_KEY', models: [], maxRequests: 1000, maxConcurrent: 4 } },
-    mistral: { env: [], proxy: { provider: 'mistral', profile: 'mistral', models: [], maxRequests: 1000, maxConcurrent: 4 } },
+    openai: { env: [], proxy: { provider: 'openai', models: [], maxRequests: 1000, maxConcurrent: 4 } },
+    berget: { env: [], proxy: { provider: 'berget', models: [], maxRequests: 1000, maxConcurrent: 4 } },
+    mistral: { env: [], proxy: { provider: 'mistral', models: [], maxRequests: 1000, maxConcurrent: 4 } },
     codex: { env: [], proxy: { provider: 'openai-codex', models: [], maxRequests: 1000, maxConcurrent: 4 } },
   });
   return config;

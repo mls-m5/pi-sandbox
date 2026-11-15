@@ -12,7 +12,7 @@ Status: core Berget proxying, host API-key profiles and custom trusted-endpoint 
 ## Implemented behavior
 
 - Codex retains host-side login/import/logout support.
-- `pis --login openai|berget|custom`, `--logout`, and `--login-status` manage private host API-key profiles. OpenAI/Berget can also use an explicitly selected host environment variable.
+- `pis --login openai|berget|custom`, `--logout`, and `--login-status` manage private host API-key profiles. API providers now use login profiles only; environment-key sources were removed at the user's request. A provider automatically selects its matching saved login; an optional matching legacy profile field remains accepted.
 - Berget is fixed to `https://api.berget.ai/v1` and initially permits only Chat Completions. Responses and sandbox `/v1/models` remain disabled. Host-only public `/v1/models` discovery is now implemented separately without API credentials.
 - Custom API profiles are host-only, HTTPS/public-DNS constrained, DNS-pinned per run, path-prefix aware, and limited to Chat Completions. Custom model metadata is entered by the user and stored with the host profile.
 - Selected-provider Pi auth/model entries remain read-only per-run overlays. Real keys stay out of the sandbox, build context, and project JSON.
@@ -50,7 +50,7 @@ Also provide a login-status command that reports profile/provider and credential
 ### 2. Berget provider preset and configuration
 
 - [x] Add a distinct `berget` provider in configuration/schema, including defaults, inert examples, and hints.
-- [x] Use `BERGET_API_KEY` as the default environment-variable source when not using a stored profile.
+- [x] Initial environment-key option replaced by login-only sourcing; reject keyEnv with migration guidance and never fall back to host environment keys.
 - [x] Update CLI help and credential diagnostics.
 - [x] Keep existing project behavior and new-project defaults unchanged.
 - [x] Keep credential values out of project configuration; reference a host-managed profile instead.

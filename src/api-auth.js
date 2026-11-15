@@ -5,9 +5,9 @@ import dns from 'node:dns/promises';
 import { assert, atomicWrite, withLock } from './util.js';
 
 export const API_PRESETS = Object.freeze({
-  openai: { url: 'https://api.openai.com/v1', keyEnv: 'OPENAI_API_KEY' },
-  berget: { url: 'https://api.berget.ai/v1', keyEnv: 'BERGET_API_KEY' },
-  mistral: { url: 'https://api.mistral.ai/v1', keyEnv: 'MISTRAL_API_KEY' },
+  openai: { url: 'https://api.openai.com/v1' },
+  berget: { url: 'https://api.berget.ai/v1' },
+  mistral: { url: 'https://api.mistral.ai/v1' },
   custom: {},
 });
 
@@ -124,12 +124,10 @@ export async function logoutApiProfile(store, name) {
   await withLock(`${file}.lock`, async () => { readApiProfile(store, name); fs.rmSync(file, { force: true }); });
 }
 
-export function apiProfileStatus(store, env = process.env) {
-  return Object.entries(API_PRESETS).map(([provider, preset]) => {
+export function apiProfileStatus(store) {
+  return Object.keys(API_PRESETS).map(provider => {
     const profilePresent = Boolean(readApiProfile(store, provider));
-    const environmentVariable = preset.keyEnv;
-    const environmentPresent = environmentVariable ? Boolean(env[environmentVariable]) : false;
-    return { provider, profilePresent, ...(environmentVariable ? { environmentVariable, environmentPresent } : {}), credentialPresent: profilePresent || environmentPresent };
+    return { provider, profilePresent, credentialPresent: profilePresent };
   });
 }
 

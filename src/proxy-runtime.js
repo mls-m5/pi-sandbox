@@ -39,11 +39,12 @@ function stateRecord(file) {
 export async function prepareProxy(store, config, { upstream, codexAuthFetch, bergetCatalogFetch } = {}) {
   const settings = { ...DEFAULT_PROXY, ...config.credentials.proxy };
   const isCodex = settings.provider === 'openai-codex';
+  assert(!Object.hasOwn(settings, 'keyEnv'), 'Remove keyEnv; use pis --login PROVIDER. Environment API keys are no longer supported.');
+  assert(settings.profile === undefined || (!isCodex && settings.profile === settings.provider), 'Host profile must match the selected API provider.');
   const credential = isCodex ? readCodexCredential(store) : undefined;
-  const apiProfile = settings.profile ? readApiProfile(store, settings.profile) : undefined;
-  const keyEnv = settings.keyEnv || (settings.provider === 'berget' ? 'BERGET_API_KEY' : settings.provider === 'mistral' ? 'MISTRAL_API_KEY' : 'OPENAI_API_KEY');
-  const apiKey = isCodex ? credential.access : settings.profile ? apiProfile?.key : process.env[keyEnv];
-  assert(apiKey, settings.profile ? `Host profile ${settings.profile} is missing. Run pis --login ${settings.profile}.` : `Set ${keyEnv} on the host before starting this proxy-enabled project.`);
+  const apiProfile = !isCodex ? readApiProfile(store, settings.provider) : undefined;
+  const apiKey = isCodex ? credential.access : apiProfile?.key;
+  assert(apiKey, `Host profile ${settings.provider} is missing. Run pis --login ${settings.provider}.`);
   const baseUrl = isCodex ? CODEX_PROXY_BASE_URL : settings.provider === 'mistral' ? 'http://127.0.0.1:43127' : PROXY_BASE_URL;
   const router = isCodex ? createCodexAccountRouter(store, { fetchImpl: codexAuthFetch }) : undefined;
   const getCredentials = router?.credentials;
