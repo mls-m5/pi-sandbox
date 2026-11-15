@@ -130,7 +130,7 @@ test('user messages, thinking and tool output stay literal; only assistant text 
   assert.ok(!walk(root).some(node => /^h[1-6]$/.test(node.tag) || node.tag === 'em'));
   assert.ok(text(root).includes('# Literal user')); assert.ok(text(root).includes('**Literal thinking**')); assert.ok(text(root).includes('**Literal tool**'));
   renderTools(document, root, [{ name: 'read', state: 'klar', text: '```js\nattack()\n```' }]);
-  assert.equal(root.children[0].tag, 'pre'); assert.ok(text(root).includes('```js'));
+  assert.equal(root.children[0].tag, 'section'); assert.ok(text(root).includes('```js'));
 });
 
 test('escapes and snake_case remain readable; hostile repeated markers and many headings are bounded', () => {

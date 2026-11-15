@@ -102,6 +102,14 @@ A normal read follows `server:command_routed` â†’ `connector:command_received` â
 
 401 on `/session` **before login** is expected (`login_required`); after login it becomes `authenticated`. Refused HTTP connection means server unreachability, not an agent Codex-auth error. If the dummy also fails, diagnose this common path before touching real Codex accounts/projects. Passing automated tests is not a diagnosis of the reported host issue; actual host browser behavior remains unconfirmed until these codes are collected.
 
+## Work indicators and tool results
+
+The agent status has a rotating CSS indicator and a text label while working (or waiting for synthetic dummy quota). It stops on `agent_settled`, **not** merely `agent_end`. Idle means no current runtime work, not that the task succeeded; reported errors, abortion, offline and unknown state are labelled separately. Reduced-motion preferences disable rotation without hiding the text status.
+
+Tool calls and results are correlated by the bounded projected `toolCallId`/call ID, including saved history. The chat renders **one card per correlated call**, with its literal output in the same card: dashed amber while running, solid **blue** on completion, solid **red** when the tool reports `isError`. A result whose call was omitted from recent history still gets one self-contained card. Missing IDs cannot be reliably merged. Arguments remain omitted, tool results are not Markdown/HTML, and live output remains capped at 2048 characters per tracked call (at most 20 live calls); existing message/history caps still apply. The collapsed tools overview is an optional second view of those calls, not another execution.
+
+A missing completion after settlement, sequence gaps, runtime faults or disconnection is **unknown**, not successful and not an endless spinner. Reopening a history view cannot establish that an old result-less call is still running. Historical results remain blue/red even without live events. Automated tests cover correlation, live updates, errors/history, interruptions, agent-end versus settlement, literal hostile output and reduced-motion CSS; real graphical appearance remains a manual verification gate.
+
 ## Basic Markdown in assistant replies
 
 Assistant **text** blocks, both live partials and final/history messages, support a small dependency-free Markdown subset:
@@ -158,7 +166,7 @@ npm run test:web
 npm run check
 ```
 
-**39 web tests pass** with the optional dependency installed. They use real loopback HTTP/WebSockets and fixed dummy subprocesses, covering authentication/rate limits, Host/Origin/CSRF/cookie/logout/expiry, payload bounds, cross-agent routing/forgery rejection, stale generations, ambiguous deadlines, key revocation, streaming, stop, browser/connector disconnect and same-runtime quota resumption. Pure UI tests cover authoritative final reconciliation, snapshot races, memory bounds and hostile text rendering. One integration test runs the **actual app module in a DOM shim**, exercises login/select/chat/quota/logout through real transports; another starts and shuts down the actual demo CLI, checking that secrets do not appear in output.
+**42 web tests pass** with the optional dependency installed. They use real loopback HTTP/WebSockets and fixed dummy subprocesses, covering authentication/rate limits, Host/Origin/CSRF/cookie/logout/expiry, payload bounds, cross-agent routing/forgery rejection, stale generations, ambiguous deadlines, key revocation, streaming, stop, browser/connector disconnect and same-runtime quota resumption. Pure UI tests cover authoritative final reconciliation, snapshot races, memory bounds and hostile text rendering. One integration test runs the **actual app module in a DOM shim**, exercises login/select/chat/quota/logout through real transports; another starts and shuts down the actual demo CLI, checking that secrets do not appear in output.
 
 Five additional offline launcher tests use fake Node/npm executables to cover compatible PATH/bundled selection, the Node 24 fallback, missing tools/dependencies, paths with spaces, option forwarding and help without downloads. The fallback's exact invocation is tested without making npm downloads in fast checks.
 

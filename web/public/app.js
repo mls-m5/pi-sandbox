@@ -1,5 +1,5 @@
 import { ChatModel } from './view-model.js';
-import { renderChat, renderTools } from './render.js';
+import { renderChat, renderTools, renderActivity } from './render.js';
 import { handlePromptKey } from './keybindings.js';
 import { startupText, startupFailure } from './startup.js';
 import { diagnosticLine, requestFailure, resultCode, safeTrace } from './diagnostics.js';
@@ -22,7 +22,12 @@ function draw() {
     byId('prompt').placeholder = selectedAgent?.kind === 'pi' ? 'Skriv till Pi i sandboxen…' : 'Skriv till dummy-agenten…';
     for (const id of ['quota', 'refill']) byId(id).hidden = selectedAgent?.kind !== 'dummy';
     const starting = !selectedAgent?.online ? startupText(selectedAgent?.startup) : '';
-    byId('state').textContent = starting || `${model.status}${model.quota ? ` · dummy-kvot: ${model.quota}` : ''}`;
+    const lastReply = model.messages.findLast(message => message.role === 'assistant');
+    const waiting = online() && model.quota === 'waiting';
+    const aborted = model.status === 'idle' && (model.aborted || lastReply?.stopReason === 'aborted');
+    const activity = starting ? (startupFailure(selectedAgent?.startup?.phase) ? 'failed' : 'working') : !online() ? 'offline' : waiting ? 'waiting' : !model.stateKnown || aborted ? 'unknown' : model.status === 'idle' && lastReply?.stopReason === 'error' ? 'failed' : model.status;
+    const activityLabel = starting || (waiting ? 'Väntar på dummy-kvot · inte färdig' : activity === 'working' ? 'Agenten arbetar…' : activity === 'idle' ? 'Agenten är inaktiv · kontrollera resultatet' : activity === 'failed' ? 'Agenten rapporterade ett fel · kontrollera resultatet' : activity === 'offline' ? 'Agenten är offline · utfallet är okänt' : aborted ? 'Avbruten · inget lyckat avslut bekräftat' : 'Agentens tillstånd är okänt');
+    renderActivity(document, byId('state'), activity, `${activityLabel}${model.quota ? ` · dummy-kvot: ${model.quota}` : ''}`);
     byId('sync-note').textContent = starting ? (startupFailure(selectedAgent?.startup?.phase)
       ? 'Projektstarten misslyckades, men webbservern är igång. Kontrollera orsaken på värden; ingen automatisk omstart sker.'
       : 'Webbservern är igång. Agenten kan inte ta emot meddelanden förrän Pi och anslutningen är klara.') : model.note;
@@ -37,7 +42,7 @@ function draw() {
     });
     byId('agents').replaceChildren(...buttons);
     const root = byId('messages'), bottom = root.scrollHeight - root.scrollTop - root.clientHeight < 80;
-    renderChat(document, root, model); renderTools(document, byId('tools'), model.tools);
+    renderChat(document, root, model); renderTools(document, byId('tools'), model.tools, online() && model.stateKnown && model.status === 'working');
     if (bottom) root.scrollTop = root.scrollHeight;
   });
 }

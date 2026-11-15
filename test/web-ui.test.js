@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { ChatModel, cleanMessage } from '../web/public/view-model.js';
-import { renderChat, renderTools } from '../web/public/render.js';
+import { renderChat, renderTools, renderActivity } from '../web/public/render.js';
 import { handlePromptKey } from '../web/public/keybindings.js';
 import { startupText } from '../web/public/startup.js';
 
@@ -42,6 +42,8 @@ class Element {
 }
 const document = { createElement: tag => new Element(tag) };
 const allText = element => element.textContent + element.children.map(allText).join('');
+const descendants = element => [element, ...element.children.flatMap(descendants)];
+const cards = root => descendants(root).filter(node => node.className?.startsWith('tool-card '));
 
 test('chat reconciles streamed text/thinking with authoritative final messages without duplicating them', () => {
   const model = new ChatModel(); model.reset(generation, 0);
@@ -101,6 +103,64 @@ test('browser-side models are bounded even with hostile DTOs, endless deltas and
   assert.ok(model.partial.content.reduce((sum, block) => sum + block.text.length, 0) <= 16384);
   for (let i = 301; i <= 400; i++) model.frame(frame(i, { type: 'tool_execution_end', toolCallId: `tool-${i}`, toolName: 'fake', result: message('toolResult', 'y'.repeat(10000)) }));
   assert.equal(model.tools.length, 20);
-  assert.ok(model.tools.every(tool => tool.text.length <= 2048));
+  assert.ok(model.tools.every(tool => tool.text.length <= 2048 && tool.truncated));
+  const clipped = new Element('div'); renderTools(document, clipped, model.tools);
+  assert.ok(allText(clipped).includes('Resultatet är förkortat'));
   assert.equal(cleanMessage({ role: 'evil-role', content: [{ type: 'image', data: 'private-base64' }] }).role, 'unknown');
+});
+
+test('activity has a spinner only during work/wait, text labels and reduced-motion styling', () => {
+  const root = new Element('p');
+  for (const status of ['working', 'waiting', 'idle', 'failed', 'unknown', 'offline']) {
+    renderActivity(document, root, status, status);
+    assert.equal(descendants(root).some(node => node.className === 'activity-spinner'), ['working', 'waiting'].includes(status));
+    assert.ok(allText(root).includes(status));
+  }
+  renderActivity(document, root, 'working', 'first'); const spinner = root.children[0];
+  renderActivity(document, root, 'working', 'next delta'); assert.equal(root.children[0], spinner, 'Agent spinner must not restart on every text delta.');
+  const css = fs.readFileSync(new URL('../web/public/style.css', import.meta.url), 'utf8');
+  assert.match(css, /prefers-reduced-motion:reduce/);
+  assert.match(css, /tool-succeeded\{border-style:solid;border-color:#70b5ff/);
+  assert.match(css, /tool-failed\{border-style:solid;border-color:#ff8d95/);
+});
+
+test('tool call, live updates and final result share one card, including failed historical results', () => {
+  const model = new ChatModel(); model.reset(generation, 0);
+  const call = { role: 'assistant', content: [{ type: 'tool_call', id: 'call-1', name: 'read', arguments: 'NEVER_SHOW_ARGUMENTS' }] };
+  model.frame(frame(1, { type: 'agent_start' }));
+  model.frame(frame(2, { type: 'message_end', message: call }));
+  model.frame(frame(3, { type: 'tool_execution_start', toolCallId: 'call-1', toolName: 'read' }));
+  const root = new Element('div'); renderChat(document, root, model);
+  assert.equal(cards(root).length, 1); assert.equal(cards(root)[0].className, 'tool-card tool-running');
+  assert.ok(!allText(root).includes('NEVER_SHOW_ARGUMENTS'));
+  model.frame(frame(4, { type: 'tool_execution_update', toolCallId: 'call-1', result: message('toolResult', 'partial') }));
+  model.frame(frame(5, { type: 'tool_execution_update', toolCallId: 'call-1' }));
+  assert.equal(model.tools[0].text, 'partial');
+  const result = { ...message('toolResult', '<script>literal failure</script>'), toolCallId: 'call-1', toolName: 'read', isError: true };
+  model.frame(frame(6, { type: 'tool_execution_end', toolCallId: 'call-1', result }));
+  model.frame(frame(7, { type: 'message_end', message: result }));
+  renderChat(document, root, model);
+  assert.equal(cards(root).length, 1); assert.equal(cards(root)[0].className, 'tool-card tool-failed');
+  assert.ok(allText(cards(root)[0]).includes('<script>literal failure</script>'));
+  assert.ok(!descendants(root).some(node => node.tag === 'script' || node.className === 'activity-spinner'));
+  model.snapshot({ generation, stable: true, endSeq: 7, data: { history: { messages: [call, result] } } }); model.tools = [];
+  renderChat(document, root, model);
+  assert.equal(cards(root).length, 1); assert.equal(cards(root)[0].className, 'tool-card tool-failed');
+  result.isError = false; model.messages = [cleanMessage(result)]; renderChat(document, root, model);
+  assert.equal(cards(root)[0].className, 'tool-card tool-succeeded');
+});
+
+test('interrupted/missed tool completion stays unknown, never falsely successful or indefinitely spinning', () => {
+  const model = new ChatModel(); model.reset(generation, 0);
+  model.frame(frame(1, { type: 'agent_start' }));
+  model.frame(frame(2, { type: 'tool_execution_start', toolCallId: 'pending', toolName: 'bash' }));
+  const root = new Element('div');
+  model.status = 'offline'; renderChat(document, root, model);
+  assert.equal(cards(root)[0].className, 'tool-card tool-unknown');
+  renderTools(document, root, model.tools, false); assert.equal(cards(root)[0].className, 'tool-card tool-unknown');
+  model.frame(frame(3, { type: 'agent_settled', aborted: true }));
+  assert.equal(model.tools[0].state, 'unknown');
+  model.frame(frame(4, { type: 'tool_execution_start', toolCallId: 'another', toolName: 'read' }));
+  model.frame(frame(6, { type: 'message_end', message: message('assistant', 'gap') }));
+  assert.equal(model.tools[1].state, 'unknown');
 });

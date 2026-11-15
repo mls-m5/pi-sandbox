@@ -7,16 +7,16 @@ export function cleanMessage(source = {}) {
     if (block?.type === 'text' || block?.type === 'thinking') {
       const value = text(block.text, Math.min(8192, remaining)); remaining -= value.length;
       content.push({ type: block.type, text: value, truncated: block.truncated === true || value.length < (block.text?.length || 0) });
-    } else if (block?.type === 'tool_call') content.push({ type: 'tool_call', name: text(block.name, 256) });
+    } else if (block?.type === 'tool_call') content.push({ type: 'tool_call', id: text(block.id, 256), name: text(block.name, 256) });
     else content.push({ type: 'omitted', kind: text(block?.kind, 32) });
   }
-  return { role: roles.includes(source?.role) ? source.role : 'unknown', content, stopReason: text(source?.stopReason, 32), truncated: source?.truncated === true };
+  return { toolCallId: text(source?.toolCallId, 256), toolName: text(source?.toolName, 256), isError: source?.isError === true, role: roles.includes(source?.role) ? source.role : 'unknown', content, stopReason: text(source?.stopReason, 32), truncated: source?.truncated === true };
 }
 export class ChatModel {
   constructor() { this.reset(null, 0); }
   reset(generation, seq) {
     this.generation = generation; this.seq = seq; this.status = 'unknown'; this.messages = []; this.partial = null;
-    this.tools = []; this.quota = ''; this.synced = false; this.stateKnown = false; this.historyLoaded = false; this.note = 'Hämtar agentens tillstånd · historik läses vid behov.';
+    this.tools = []; this.quota = ''; this.aborted = false; this.synced = false; this.stateKnown = false; this.historyLoaded = false; this.note = 'Hämtar agentens tillstånd och senaste historik…';
   }
   trim() {
     let chars = this.messages.reduce((sum, message) => sum + message.content.reduce((n, block) => n + (block.text?.length || 0), 0), 0);
@@ -27,11 +27,14 @@ export class ChatModel {
   frame(frame) {
     if (frame?.generation !== this.generation || !Number.isSafeInteger(frame.seq) || frame.seq <= this.seq) return false;
     if (frame.seq !== this.seq + 1) { this.synced = false; this.stateKnown = false; this.note = 'Uppdateringar saknas. Uppdatera tillståndet eller hämta historiken igen.'; }
+    if (frame.seq !== this.seq + 1 || ['runtime_fault', 'agent_settled'].includes(frame.event?.type)) {
+      for (const tool of this.tools) if (tool.state === 'running') tool.state = 'unknown';
+    }
     this.seq = frame.seq;
     const event = frame.event || {};
     if (event.type === 'status' && ['unknown', 'idle', 'working', 'offline'].includes(event.status)) { this.status = event.status; this.stateKnown = ['idle', 'working'].includes(event.status); }
-    if (event.type === 'agent_start') { this.status = 'working'; this.stateKnown = true; }
-    if (event.type === 'agent_settled') { this.status = 'idle'; this.stateKnown = true; }
+    if (event.type === 'agent_start') { this.status = 'working'; this.stateKnown = true; this.aborted = false; }
+    if (event.type === 'agent_settled') { this.status = 'idle'; this.stateKnown = true; this.aborted = event.aborted === true; }
     if (event.type === 'runtime_fault') { this.status = 'unknown'; this.stateKnown = false; this.synced = false; this.note = 'Agentens RPC behöver lokal kontroll.'; }
     if (event.type === 'dummy_status') this.quota = text(event.state, 32);
     if (event.type === 'message_start' && event.message?.role === 'assistant') this.partial = { role: 'assistant', content: [] };
@@ -53,8 +56,13 @@ export class ChatModel {
       const id = text(event.toolCallId, 256);
       let tool = this.tools.find(value => value.id === id);
       if (!tool) { tool = { id, name: text(event.toolName, 256) }; this.tools.push(tool); this.tools = this.tools.slice(-20); }
-      tool.state = event.type === 'tool_execution_end' ? 'klar' : 'arbetar';
-      tool.text = cleanMessage(event.result).content.filter(block => block.type === 'text').map(block => block.text).join('\n').slice(0, 2048);
+      if (event.type === 'tool_execution_start') { tool.text = ''; tool.truncated = false; tool.name = text(event.toolName, 256); }
+      tool.state = event.type === 'tool_execution_end' ? (event.result?.isError === true ? 'failed' : 'succeeded') : 'running';
+      if (event.result) {
+        const result = cleanMessage(event.result), output = result.content.filter(block => block.type === 'text').map(block => block.text).join('\n');
+        tool.text = output.slice(0, 2048);
+        tool.truncated = result.truncated || output.length > 2048 || result.content.some(block => block.truncated || block.type !== 'text');
+      }
     }
     return true;
   }
