@@ -58,13 +58,14 @@ export async function startProjectConnector({ project, origin, token, signal, st
     rpc.once('closed', () => network.close());
     await new Promise((resolve, reject) => {
       const finish = error => {
-        clearTimeout(timer); network.events.off('registered', registered); signal?.removeEventListener('abort', aborted);
+        clearTimeout(timer); network.events.off('registered', registered); network.events.off('rejected', rejected); signal?.removeEventListener('abort', aborted);
         if (error) reject(error); else resolve();
       };
       const registered = () => finish();
+      const rejected = () => finish(new Error('Agent registration rejected.'));
       const aborted = () => finish(new Error('Startup cancelled.'));
       const timer = setTimeout(() => finish(new Error('Agent registration deadline.')), 8000);
-      network.events.once('registered', registered);
+      network.events.once('registered', registered); network.events.once('rejected', rejected);
       signal?.addEventListener('abort', aborted, { once: true });
       if (signal?.aborted) aborted();
     });

@@ -262,7 +262,7 @@ webTest('one connector cannot forge another connector result or registration ide
   assert.ok(!client.messages.some(value => value.type === 'result' && value.result.id === request.id));
   a.send({ v: 1, type: 'result', routeId: routed.routeId, result });
   assert.equal((await request.result).data.success, true);
-  assert.equal(await denied(f.origin, '/agent', { Authorization: `Bearer ${f.keys[0]}` }), 403);
+  assert.equal(await denied(f.origin, '/agent', { Authorization: `Bearer ${f.keys[0]}` }), 409);
 });
 
 webTest('browser cannot command an unselected agent, forward arbitrary native RPC or use stale generations', async t => {

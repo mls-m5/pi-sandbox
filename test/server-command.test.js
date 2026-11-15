@@ -49,4 +49,7 @@ test('server help works before the normal Node version gate without storage, web
   assert.match(result.stdout, /--project NAME/);
   assert.equal(fs.existsSync(path.join(home, 'storage')), false);
   assert.doesNotMatch(result.stderr, /download|Unsupported|Node.js 22/);
+  const agent = spawnSync(process.execPath, ['--import', preload, cli, '--connect', '--help'], { env: { PATH: '/usr/bin:/bin', HOME: home, PIS_HOME: path.join(home, 'storage') }, encoding: 'utf8' });
+  assert.equal(agent.status, 0); assert.match(agent.stdout, /--connect register NAME/);
+  assert.equal(fs.existsSync(path.join(home, 'storage')), false); assert.equal(agent.stderr, '');
 });

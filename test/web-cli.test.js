@@ -35,6 +35,23 @@ test('empty password input generates a fresh one-time displayed password that ac
   assert.ok(passwords[0] !== passwords[1], 'Restarting with empty input must rotate the generated password.');
 });
 
+test('pis --server --standalone starts an empty ephemeral roster with no local runtimes', { skip: !installed, timeout: 15000 }, async t => {
+  const reservation = net.createServer(); await new Promise(resolve => reservation.listen(0, '127.0.0.1', resolve));
+  const port = reservation.address().port; await new Promise(resolve => reservation.close(resolve));
+  const child = spawn(process.execPath, [fileURLToPath(new URL('../bin/pis.js', import.meta.url)), '--server', '--standalone', '--password-stdin', '--port', String(port)], { stdio: ['pipe', 'pipe', 'pipe'], env: { PATH: `${path.dirname(process.execPath)}:${process.env.PATH}`, HOME: '/nonexistent-pis-web-test-home' } });
+  t.after(() => { if (child.exitCode === null) child.kill('SIGKILL'); });
+  let output = ''; child.stderr.on('data', data => { output += data; }); child.stdout.resume();
+  const password = randomKey(); child.stdin.end(`${password}\n`);
+  for (let index = 0; index < 500 && !output.includes('Fristående lokal webbserver:') && child.exitCode === null; index++) await new Promise(resolve => setTimeout(resolve, 10));
+  assert.match(output, /Fristående lokal webbserver:/); assert.ok(!output.includes(password)); assert.ok(!output.includes('utgående dummy'));
+  const origin = `http://127.0.0.1:${port}`, response = await fetch(`${origin}/login`, { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json', 'X-Pis-Web': '1' }, body: JSON.stringify({ password }) });
+  assert.equal(response.status, 200);
+  const { default: WebSocket } = await import('../web/node_modules/ws/wrapper.mjs');
+  const ws = new WebSocket(`${origin.replace('http:', 'ws:')}/browser`, { headers: { Origin: origin, Cookie: response.headers.getSetCookie()[0].split(';')[0] } });
+  t.after(() => ws.terminate()); const [message] = await once(ws, 'message'); assert.deepEqual(JSON.parse(message).agents, []); ws.terminate();
+  const closed = once(child, 'close'); child.kill('SIGTERM'); await closed; assert.equal(child.exitCode, 143);
+});
+
 test('pis --server starts two fixed dummies, keeps secrets out of output and shuts down on SIGTERM', { skip: !installed, timeout: 15_000 }, async t => {
   const reservation = net.createServer();
   await new Promise(resolve => reservation.listen(0, '127.0.0.1', resolve));

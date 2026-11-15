@@ -55,6 +55,19 @@ export async function startWebServer({ passwordHash, agents = [], port = 43128, 
     for await (const chunk of req) { size += chunk.length; if (size > 8192) throw new Error('Request too large.'); chunks.push(chunk); }
     return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks)));
   };
+  const authenticateAgent = req => {
+    if (req.headers.origin || req.headers.cookie) return;
+    const match = /^Bearer ([A-Za-z0-9_-]{43})$/.exec(req.headers.authorization || '');
+    if (!match) return;
+    const hash = Buffer.from(digest(match[1]), 'hex');
+    for (const candidate of registrations.values()) if (timingSafeEqual(hash, Buffer.from(candidate.tokenHash, 'hex'))) return candidate;
+  };
+  function revokeAgent(id) {
+    const peer = connected.get(id);
+    registrations.delete(id); connected.delete(id);
+    for (const [route, entry] of pending) if (entry.agentId === id) removePending(route, 'outcome_unknown');
+    peer?.terminate(); broadcastRoster();
+  }
   function logout(key) {
     sessions.delete(key);
     for (const ws of browsers) if (ws.sessionKey === key) ws.terminate();
@@ -87,6 +100,26 @@ export async function startWebServer({ passwordHash, agents = [], port = 43128, 
       if (!session || req.headers.origin !== origin || req.headers['x-csrf-token'] !== session.csrf) { json(res, 403, { error: 'invalid_session' }); return; }
       await body(req);
       logout(session.key); res.setHeader('Set-Cookie', 'pis_web=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0'); json(res, 200, { ok: true }); return;
+    }
+    if (req.method === 'GET' && req.url === '/agent/identity') {
+      const registration = authenticateAgent(req);
+      json(res, registration ? 200 : 403, registration ? { id: registration.id, kind: registration.kind } : { error: 'agent_unauthorized' }); return;
+    }
+    if (req.method === 'POST' && ['/agents', '/agents/revoke'].includes(req.url)) {
+      const session = sessionFor(req);
+      if (!session || req.headers.origin !== origin || req.headers['x-csrf-token'] !== session.csrf || req.headers.authorization) { json(res, 403, { error: 'invalid_session' }); return; }
+      const value = await body(req);
+      if (req.url === '/agents/revoke') {
+        if (!exact(value, ['id']) || !idValid(value.id)) { json(res, 400, { error: 'invalid_registration' }); return; }
+        if (!registrations.has(value.id)) { json(res, 404, { error: 'agent_not_found' }); return; }
+        revokeAgent(value.id); json(res, 200, { ok: true }); return;
+      }
+      if (!exact(value, ['label', 'kind']) || typeof value.label !== 'string' || !value.label.trim() || value.label.length > 80 || /[\x00-\x1f\x7f-\x9f\u2028\u2029\u202a-\u202e\u2066-\u2069]/.test(value.label) || !['dummy', 'pi'].includes(value.kind)) { json(res, 400, { error: 'invalid_registration' }); return; }
+      if (registrations.size >= 32) { json(res, 429, { error: 'agent_limit' }); return; }
+      const id = randomUUID(), token = randomKey();
+      registrations.set(id, { id, label: value.label.trim(), kind: value.kind, tokenHash: digest(token) });
+      // Only this creation response includes the plaintext. Never retain/re-list it.
+      json(res, 201, { id, token, kind: value.kind }); broadcastRoster(); return;
     }
     if (req.method === 'GET' && assets.has(req.url)) {
       const [name, type] = assets.get(req.url);
@@ -164,18 +197,14 @@ export async function startWebServer({ passwordHash, agents = [], port = 43128, 
     throw new Error('Protocol.');
   }
   server.on('upgrade', (req, socket, head) => {
-    const refuse = () => socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
-    if (!validHost(req) || !upgradeBudget()) { refuse(); return; }
+    const refuse = (code = '403 Forbidden') => socket.end(`HTTP/1.1 ${code}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
+    if (!validHost(req)) { refuse(); return; }
+    if (!upgradeBudget()) { refuse('429 Too Many Requests'); return; }
     let session, registration;
     if (req.url === '/browser' && req.headers.origin === origin && !req.headers.authorization && browsers.size < 8) session = sessionFor(req);
-    else if (req.url === '/agent' && !req.headers.origin && !req.headers.cookie) {
-      const match = /^Bearer ([A-Za-z0-9_-]{43})$/.exec(req.headers.authorization || '');
-      if (match) {
-        const hash = Buffer.from(digest(match[1]), 'hex');
-        for (const candidate of registrations.values()) if (timingSafeEqual(hash, Buffer.from(candidate.tokenHash, 'hex'))) registration = candidate;
-      }
-    }
-    if ((!session && !registration) || (registration && connected.has(registration.id))) { refuse(); return; }
+    else if (req.url === '/agent') registration = authenticateAgent(req);
+    if (!session && !registration) { refuse(); return; }
+    if (registration && connected.has(registration.id)) { refuse('409 Conflict'); return; }
     wss.handleUpgrade(req, socket, head, ws => {
       ws.alive = true;
       const receiveBudget = budget(registration ? 500 : 30, 1000);
@@ -231,7 +260,7 @@ export async function startWebServer({ passwordHash, agents = [], port = 43128, 
       agent.startup = { phase, startedAt: agent.startup?.startedAt || now, updatedAt: now };
       broadcastRoster();
     },
-    revokeAgent(id) { registrations.delete(id); connected.get(id)?.terminate(); broadcastRoster(); },
+    revokeAgent,
     close() {
       return closing ||= (async () => {
         clearInterval(heartbeat);
@@ -239,7 +268,7 @@ export async function startWebServer({ passwordHash, agents = [], port = 43128, 
         for (const ws of wss.clients) ws.terminate();
         await new Promise(resolve => wss.close(resolve));
         server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
-        sessions.clear();
+        sessions.clear(); registrations.clear(); connected.clear();
       })();
     },
   };

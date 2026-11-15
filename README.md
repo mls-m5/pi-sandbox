@@ -379,6 +379,22 @@ The launcher selects a compatible local/bundled Node or uses npm-provided Node 2
 
 Choose a hidden temporary password of at least 20 characters, or press Enter to generate one and display it once in the terminal (warning: visible in terminal/log captures), then open **http://127.0.0.1:43128**. Select either dummy agent to try streaming chat, history, tools, stop and the **Simulera kvotstopp 5 s** button. For real projects you can open the URL as soon as the server announces it: terminal/GUI startup stages show whether it is checking Podman, preparing an image, starting Pi/extensions or waiting for agent registration. Once connections are ready the terminal stays open to run the server; it is not a stalled startup. The server binds loopback only; all demo credentials/history are memory-only and reset on exit. This does not launch Pi/Podman or spend model tokens. Experimental real Pi projects can be selected explicitly with `./start_server.sh --project NAME` (use `pis --list` for existing names/IDs); their prompts can spend quota/credits. This path has fake-Podman tests but has not been validated with real containers here. Git/apt web approvals, production quota-auto in RPC and Internet deployment remain unsupported. The first agent opens automatically after login. Opening/reopening an agent or reconnecting reads state first, then automatically fetches bounded recent history while following live work. Use **Hämta senaste historik** to refresh/retry manually; an over-limit history read is omitted without disabling agent control, and saved sessions remain unchanged. If state/history retrieval fails, use `pis --server --diagnostics --agents 1` to test the dummy first. The GUI now shows fixed error codes/references and a bounded diagnostics panel; share only those lines or terminal lines prefixed `pis web diagnostic:`, never passwords or whole auth/state/log folders. See [start options, safe diagnostics, security and verification limits](docs/web-control.md).
 
+### Standalone server and independently registered agents (local laptop test)
+
+```sh
+pis --server --standalone
+```
+
+Log in at **http://127.0.0.1:43128**, expand **Registrera agent**, choose Pi or Dummy and create a key. It is displayed **once**. In another host terminal, register a local profile (paste the key at the hidden prompt), then run it:
+
+```sh
+pis --connect register laptop-app --server http://127.0.0.1:43128 --project my-app
+pis --connect run laptop-app
+# Token-free alternative: create a Dummy registration and use --dummy instead of --project my-app.
+```
+
+Repeat with distinct keys/profile names for more agents. The standalone server starts no local agents and keeps its registrations/login state **only in memory**. History is fetched from connected clients, not saved in a server database. Client keys are 0600 host-only files under `$PIS_HOME/web-agents`, outside the sandbox. After server restart, create new keys and re-register with `--replace`; normal network loss can reconnect without replaying prompts. Revoke in the GUI to invalidate a key; `pis --connect forget NAME` removes only its local copy. A server stop/revocation does not stop independent local work; Ctrl-C in each run terminal does. **Loopback only: LAN/TLS and a separate Podman server are not implemented in this step.** See [complete instructions, credential/security contracts and verification limits](docs/web-agents.md).
+
 The agent has a spinning work indicator and explicit idle/error/unknown labels. Each correlated tool call and its literal result share one card: dashed while running, blue when completed, red on reported failure; interrupted/missing results stay unknown. Idle is not a guarantee that the task succeeded.
 
 Assistant replies support basic Markdown: headings, emphasis, code, bullet/numbered lists, read-only task checkboxes, pipe tables and explicit `[label](https://...)` links. Links open in a new tab without opener/referrer access; images and raw HTML stay disabled. Task checkboxes are display-only, not controls for the agent.

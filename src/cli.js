@@ -20,6 +20,8 @@ Usage:
   pis --server --project NAME [--project OTHER] # experimental real Pi projects
   pis --server --diagnostics         # safe request metadata; no chat/auth payloads
   pis --server --help                # server startup options
+  pis --server --standalone          # empty in-memory registry, no local agents
+  pis --connect --help               # register/run separate local agents
   pis [--project ID_OR_NAME] [--agent pi|claude] [--fresh] [-- AGENT_ARGS...]
   pis [--project ID_OR_NAME] --wait-codex # wait for quota, resume saved Pi task
   pis [--project ID_OR_NAME] [--fresh] --auto-wait-codex [-- PI_ARGS...]
@@ -50,7 +52,7 @@ Usage:
   pis --logout openai|berget|mistral|custom
   pis --login-status
 
---server must be the first argument. It starts the host loopback web server;
+--server or --connect must be the first argument. It starts the host loopback web server;
 the server itself is NOT sandboxed. Real Pi agents retain their Podman sandbox.
 Without --project it starts only token-free dummies; real Pi prompts can spend
 model quota/API credits. Install optional web dependencies first (from checkout):

@@ -4,10 +4,28 @@
 set -euo pipefail
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+ENTRY="$ROOT/web/cli.js"
+MODE=(start)
+if [[ "${1:-}" == "--connect" ]]; then
+  shift
+  ENTRY="$ROOT/web/agent-cli.js"
+  MODE=()
+  if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+    printf '%s\n' \
+      'Usage: pis --connect register NAME --server http://127.0.0.1:43128 (--project PROJECT | --dummy) [--replace] [--key-stdin]' \
+      '       pis --connect run NAME [--diagnostics]' \
+      '       pis --connect forget NAME' \
+      'Create a matching registration in the web panel. Paste its key at the hidden prompt, never in command arguments.' \
+      'Host-private profiles under PIS_HOME/web-agents; keys never mounted into the sandbox. Loopback only, no TLS/LAN yet.' \
+      'Server restart requires a new registration and register --replace. run starts an agent; Ctrl-C stops it, not the server.'
+    exit 0
+  fi
+fi
 
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
   printf '%s\n' \
-    'Usage: ./start_server.sh [--project NAME (repeatable) | --agents 1..8] [--port PORT] [--password-stdin] [--diagnostics]' \
+    'Usage: ./start_server.sh [--standalone | --project NAME (repeatable) | --agents 1..8] [--port PORT] [--password-stdin] [--diagnostics]' \
+    '--standalone starts only the ephemeral server. Register separate agents in its web panel; use pis --connect --help.' \
     'Default: dummy-only demo, no model calls. --project starts real registered Pi sandboxes; prompts may cost tokens.' \
     '--diagnostics emits bounded safe request metadata; share only pis web diagnostic: lines, never passwords/state folders.' \
     'Empty password input generates a strong password shown once on stderr (visible in terminal/log captures).' \
@@ -29,15 +47,15 @@ compatible_node() {
 
 cd -- "$ROOT"
 if command -v node >/dev/null 2>&1 && compatible_node node; then
-  exec node "$ROOT/web/cli.js" start "$@"
+  exec node "$ENTRY" "${MODE[@]}" "$@"
 fi
 BUNDLED="${HOME:-}/.local/share/pi-node/current/bin/node"
 if [[ -x "$BUNDLED" ]] && compatible_node "$BUNDLED"; then
-  exec "$BUNDLED" "$ROOT/web/cli.js" start "$@"
+  exec "$BUNDLED" "$ENTRY" "${MODE[@]}" "$@"
 fi
 if ! command -v npm >/dev/null 2>&1; then
   printf '%s\n' 'Node >=22.19 or a working npm (for the Node 24 fallback) is required.' >&2
   exit 1
 fi
 printf '%s\n' 'Using npm-provided Node 24 (may download on first use; system Node unchanged).' >&2
-exec npm exec --yes --package=node@24 -- node "$ROOT/web/cli.js" start "$@"
+exec npm exec --yes --package=node@24 -- node "$ENTRY" "${MODE[@]}" "$@"

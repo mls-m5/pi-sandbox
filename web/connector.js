@@ -30,6 +30,13 @@ export function connectView({ view, origin, token, diagnostic = () => {} }) {
     ws.on('ping', () => { lastActivity = Date.now(); });
     const receiveBudget = budget(30, 1000);
     ws.on('error', () => {}); // Never log URLs, headers or arbitrary peer error text.
+    ws.on('unexpected-response', (_request, response) => {
+      response.resume();
+      if (response.statusCode === 401 || response.statusCode === 403) {
+        stopped = true; events.emit('rejected'); // New registration needed, not an endless auth retry loop.
+      }
+      ws.terminate();
+    });
     ws.on('open', () => {
       attempts = 0;
       send(ws, { v: 1, type: 'hello', generation: view.control.generation, seq: view.sequence, status: view.rpc.status });

@@ -7,7 +7,7 @@ import { diagnosticLine, requestFailure, resultCode, safeTrace } from './diagnos
 const byId = id => document.getElementById(id);
 const model = new ChatModel(), pending = new Map(), diagnosticLines = [];
 let socket, csrf, agents = [], selected, selectToken, selection = 0, connected = false, wantConnection = false;
-let reconnectTimer, retry = 0, syncTimer, syncing = false, syncAttempts = 0, mutation = false, drawing = false;
+let reconnectTimer, retry = 0, syncTimer, syncing = false, syncAttempts = 0, mutation = false, drawing = false, registering = false;
 const online = () => connected && agents.some(agent => agent.id === selected && agent.online && agent.generation === model.generation);
 function draw() {
   if (drawing) return;
@@ -35,6 +35,8 @@ function draw() {
     for (const id of ['send', 'quota', 'refill']) byId(id).disabled = !ready;
     byId('stop').disabled = !online() || mutation;
     byId('refresh').disabled = !online() || syncing;
+    byId('revoke-agent').disabled = !connected || !selected;
+    byId('register-submit').disabled = registering || !connected;
     const buttons = agents.map(agent => {
       const button = document.createElement('button'); button.type = 'button'; button.className = `agent-button${agent.id === selected ? ' selected' : ''}`;
       button.textContent = `${agent.label}\n${agent.online ? agent.status : startupText(agent.startup) || 'offline'} · ${agent.kind}`;
@@ -178,7 +180,7 @@ async function connect() {
     ws.onmessage = event => { if (ws === socket) { try { receive(JSON.parse(event.data)); } catch { ws.close(); } } };
     ws.onclose = () => {
       if (ws !== socket) return;
-      connected = false; model.status = 'unknown'; model.stateKnown = false; model.synced = false; model.note = 'Frånkopplad. Tillstånd och senaste historik hämtas efter återanslutning; inget meddelande skickas om.';
+      clearRegistration(); connected = false; model.status = 'unknown'; model.stateKnown = false; model.synced = false; model.note = 'Frånkopplad. Tillstånd och senaste historik hämtas efter återanslutning; inget meddelande skickas om.';
       failPending(); draw(); retryConnect();
     };
     ws.onerror = () => {};
@@ -188,7 +190,37 @@ function retryConnect() {
   clearTimeout(reconnectTimer);
   if (wantConnection) reconnectTimer = setTimeout(() => { void connect(); }, Math.min(10_000, 500 * 2 ** Math.min(retry++, 5)) + Math.random() * 200);
 }
+function clearRegistration() {
+  byId('registration-secret').value = '';
+  byId('registration-secret-label').hidden = true; byId('clear-registration').hidden = true;
+}
+async function registrationRequest(path, value) {
+  const result = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Pis-Web': '1', 'X-CSRF-Token': csrf }, body: JSON.stringify(value), cache: 'no-store', redirect: 'error' });
+  if (!result.ok) throw new Error('registration_failed');
+  return result.json();
+}
+byId('register-agent').addEventListener('submit', async event => {
+  event.preventDefault(); if (registering || !connected) return;
+  clearRegistration(); registering = true; const session = csrf; draw();
+  try {
+    const value = await registrationRequest('/agents', { label: byId('register-label').value, kind: byId('register-kind').value });
+    if (!wantConnection || !connected || csrf !== session) return;
+    byId('registration-secret').value = value.token;
+    byId('registration-secret-label').hidden = false; byId('clear-registration').hidden = false;
+    byId('register-note').textContent = 'Kopiera nyckeln nu. Den går inte att visa igen. Den ger servern kontroll över den anslutna agenten; välj rätt server och projekt.';
+  } catch { byId('register-note').textContent = 'Registreringen kunde inte bekräftas. Kontrollera agentlistan innan du skapar en ny; en nyckel kan ha skapats utan att svaret nådde fram.'; }
+  finally { registering = false; draw(); }
+});
+byId('clear-registration').addEventListener('click', clearRegistration);
+byId('revoke-agent').addEventListener('click', async () => {
+  const id = selected;
+  if (!id || !globalThis.confirm('Återkalla vald agents anslutningsnyckel? Agentprocessen stoppas inte, men webbanslutningen stängs.')) return;
+  clearRegistration();
+  try { await registrationRequest('/agents/revoke', { id }); byId('registration-action').textContent = 'Nyckeln är återkallad. Agenten kan fortfarande arbeta lokalt; den stoppades inte.'; }
+  catch { byId('registration-action').textContent = 'Återkallelsen kunde inte bekräftas. Kontrollera agentlistan.'; }
+});
 function showLogin() {
+  clearRegistration(); csrf = undefined;
   wantConnection = false; connected = false; clearTimeout(reconnectTimer); clearTimeout(syncTimer);
   socket?.close(); failPending(); selected = undefined; selection++; model.reset(null, 0);
   byId('workspace').hidden = true; byId('logout').hidden = true; byId('login').hidden = false;
@@ -228,7 +260,7 @@ byId('stop').addEventListener('click', async () => {
 });
 const startupTick = setInterval(() => { if (connected && agents.some(agent => !agent.online && agent.startup)) draw(); }, 1000);
 globalThis.addEventListener('pagehide', () => {
-  clearInterval(startupTick);
+  clearInterval(startupTick); clearRegistration();
   wantConnection = false; selection++; clearTimeout(reconnectTimer); clearTimeout(syncTimer); socket?.close(); failPending();
 });
 fetch('/session', { cache: 'no-store' }).then(response => { if (response.ok) showWorkspace(); }).catch(() => {});

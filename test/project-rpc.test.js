@@ -168,6 +168,36 @@ test('web CLI keeps the server alive with a visible failed agent when Podman sta
   assert.equal(fs.existsSync(f.lock), false);
 });
 
+test('independent registered agent CLI keeps Pi inside existing project boundary and never mounts its key', { skip: process.getuid() === 0 || !fs.existsSync(new URL('../web/node_modules/ws/package.json', import.meta.url)), timeout: 20000 }, async t => {
+  const f = await fixture(t);
+  const { startWebServer } = await import('../web/server.js');
+  const { hashPassword, randomKey } = await import('../web/common.js');
+  const password = randomKey(), server = await startWebServer({ port: 0, passwordHash: await hashPassword(password) });
+  t.after(() => server.close());
+  const headers = { Origin: server.origin, 'Content-Type': 'application/json', 'X-Pis-Web': '1' };
+  const login = await fetch(`${server.origin}/login`, { method: 'POST', headers, body: JSON.stringify({ password }) });
+  const cookie = login.headers.getSetCookie()[0].split(';')[0], csrf = (await login.json()).csrf;
+  const registrationResponse = await fetch(`${server.origin}/agents`, { method: 'POST', headers: { ...headers, Cookie: cookie, 'X-CSRF-Token': csrf }, body: JSON.stringify({ label: 'Independent Pi', kind: 'pi' }) });
+  assert.equal(registrationResponse.status, 201); const registration = await registrationResponse.json();
+  const cli = fileURLToPath(new URL('../web/agent-cli.js', import.meta.url));
+  const register = spawn(process.execPath, [cli, 'register', 'independent', '--server', server.origin, '--project', 'web-test', '--key-stdin'], { cwd: f.root, env: f.env, stdio: ['pipe', 'pipe', 'pipe'] });
+  let output = ''; register.stderr.on('data', data => { output += data; }); register.stdout.resume(); register.stdin.end(`${registration.token}\n`);
+  await once(register, 'close'); assert.equal(register.exitCode, 0); assert.equal(fs.existsSync(f.trace), false, 'Registration must not start Podman.');
+  const profile = path.join(f.store.root, 'web-agents', 'independent.json');
+  assert.equal(JSON.parse(fs.readFileSync(profile)).projectId, f.config.id);
+  const runner = spawn(process.execPath, [cli, 'run', 'independent'], { cwd: f.root, env: f.env, stdio: ['pipe', 'pipe', 'pipe'] });
+  t.after(() => { if (runner.exitCode === null) runner.kill('SIGKILL'); }); runner.stdin.end(); runner.stdout.resume(); runner.stderr.on('data', data => { output += data; });
+  for (let index = 0; index < 700 && !server.roster()[0]?.online && runner.exitCode === null; index++) await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(server.roster()[0]?.online, true); assert.ok(fs.existsSync(f.lock));
+  const calls = fs.readFileSync(f.trace, 'utf8').trim().split('\n').map(JSON.parse), run = calls.find(args => args[0] === 'run');
+  assert.ok(run.includes('--cap-drop=all')); assert.ok(!JSON.stringify(calls).includes(registration.token));
+  assert.ok(!run.some(argument => argument.includes('web-agents') || argument.includes('PIS_APT_SOCKET') || argument.includes('PIS_CODEX_AUTO_SOCKET')));
+  server.revokeAgent(registration.id);
+  await new Promise(resolve => setTimeout(resolve, 600)); assert.equal(runner.exitCode, null); assert.ok(fs.existsSync(f.lock), 'Revocation must not tear down local Pi.');
+  const closed = once(runner, 'close'); runner.kill('SIGTERM'); await closed;
+  assert.equal(runner.exitCode, 0); assert.equal(fs.existsSync(f.lock), false); assert.ok(!output.includes(registration.token));
+});
+
 test('project connector keeps wrapper and lock alive across network reconnect, then cleans up locally', { skip: process.getuid() === 0 || !fs.existsSync(new URL('../web/node_modules/ws/package.json', import.meta.url)), timeout: 15000 }, async t => {
   const f = await fixture(t);
   const { startWebServer } = await import('../web/server.js');

@@ -42,7 +42,7 @@ async function readPassword(piped) {
     input.setEncoding('utf8'); input.setRawMode(true); input.on('data', onData); input.once('end', onEnd); input.resume();
   });
 }
-const options = { port: 43128, agents: 2, piped: false, projects: [], diagnostics: false };
+const options = { port: 43128, agents: 2, piped: false, projects: [], diagnostics: false, standalone: false };
 const args = process.argv.slice(2), seen = new Set(), startupController = new AbortController();
 let server, connectors = [], stopping, startup, failedProjects = 0;
 async function stop() {
@@ -58,12 +58,13 @@ async function stop() {
 }
 try {
   const mode = args.shift();
-  if (!['demo', 'start'].includes(mode)) throw new Error('Usage: node web/cli.js start [--project NAME (repeatable) | --agents 1..8] [--port PORT] [--password-stdin] [--diagnostics]');
+  if (!['demo', 'start'].includes(mode)) throw new Error('Usage: node web/cli.js start [--standalone | --project NAME (repeatable) | --agents 1..8] [--port PORT] [--password-stdin] [--diagnostics]');
   while (args.length) {
     const flag = args.shift();
     if (seen.has(flag) && flag !== '--project') throw new Error('Duplicate option.');
     seen.add(flag);
-    if (flag === '--password-stdin') options.piped = true;
+    if (flag === '--standalone' && mode === 'start') options.standalone = true;
+    else if (flag === '--password-stdin') options.piped = true;
     else if (flag === '--diagnostics') options.diagnostics = true;
     else if (flag === '--project' && mode === 'start') {
       const selector = args.shift();
@@ -76,6 +77,7 @@ try {
     } else throw new Error('Unknown option.');
   }
   if (options.port < 1024 || options.port > 65535 || options.agents < 1 || options.agents > 8) throw new Error('Invalid local demo port/agent count.');
+  if (options.standalone && (options.projects.length || seen.has('--agents'))) throw new Error('Standalone mode does not start agents.');
   if (options.projects.length && seen.has('--agents')) throw new Error('Choose real projects or dummy agents, not both.');
   let projects = [];
   if (options.projects.length) {
@@ -88,7 +90,7 @@ try {
   let password = await readPassword(options.piped), generatedPassword;
   if (password === '') { password = randomKey(); generatedPassword = password; }
   const passwordHash = await hashPassword(password); password = undefined;
-  const agents = projects.length ? projects.map(project => ({ id: `pi-${project.id}`, label: project.label, kind: 'pi', project, token: randomKey() }))
+  const agents = options.standalone ? [] : projects.length ? projects.map(project => ({ id: `pi-${project.id}`, label: project.label, kind: 'pi', project, token: randomKey() }))
     : Array.from({ length: options.agents }, (_, index) => ({ id: `dummy-${index + 1}`, label: `Dummy ${index + 1}`, kind: 'dummy', token: randomKey() }));
   server = await startWebServer({ passwordHash, port: options.port, diagnostic, agents: agents.map(agent => ({ id: agent.id, label: agent.label, kind: agent.kind, tokenHash: digest(agent.token) })) });
   if (generatedPassword !== undefined) {
@@ -128,7 +130,8 @@ try {
   }
   if (!stopping && projects.length && connectors.length) console.error(`${connectors.length} Pi project connection(s) ready. Server och agentanslutningar är igång. Öppna ${server.origin}, logga in och välj projektet i listan.\nTerminalen ska nu stå kvar utan ny prompt: den håller servern igång, det är inte en väntande start.\nCtrl-C stänger server/agenter; containerstopp kan ta omkring en minut. Ej bekräftat stopp behåller projektlåset för kontroll på värden.`);
   if (!stopping && failedProjects) console.error(`Webbservern är igång; ${failedProjects} projekt kunde inte startas. Öppna ${server.origin} och välj agenten för felstatus. Ctrl-C stänger servern.`);
-  if (!stopping && !projects.length) console.error(`Lokal dummy-webb: ${server.origin}\nLogga in med lösenordet du nyss valde. ${options.agents} utgående dummy-anslutningar; inga modell-anrop.\nEndast loopback. Ctrl-C stänger server och dummies. Ingen konfiguration eller historik sparas.`);
+  if (!stopping && options.standalone) console.error(`Fristående lokal webbserver: ${server.origin}\nLogga in och skapa agentnycklar i webbpanelen. Registreringar och inloggningar finns bara i minnet och försvinner vid serveromstart.\nInga lokala agenter startas. Endast loopback; inte TLS/LAN eller en servercontainer. Ctrl-C stänger servern, inte självständiga agenter.`);
+  if (!stopping && !projects.length && !options.standalone) console.error(`Lokal dummy-webb: ${server.origin}\nLogga in med lösenordet du nyss valde. ${options.agents} utgående dummy-anslutningar; inga modell-anrop.\nEndast loopback. Ctrl-C stänger server och dummies. Ingen konfiguration eller historik sparas.`);
 } catch (error) {
   console.error(error.code === 'EADDRINUSE' ? `Webbservern kunde inte starta: port ${options.port} används redan. Välj --port 43129 eller stäng den andra servern.`
     : error.code === 'EACCES' ? 'Webbservern saknar behörighet att öppna den valda porten.'
