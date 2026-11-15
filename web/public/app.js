@@ -15,7 +15,7 @@ function draw() {
   requestAnimationFrame(() => {
     drawing = false;
     byId('diagnostics').textContent = diagnosticLines.join('\n') || 'Inga läsbegäranden ännu. Diagnostiken innehåller bara kommando, felkod och referens.';
-    byId('connection').textContent = connected ? 'Ansluten till lokal server' : 'Frånkopplad · inget skickas automatiskt';
+    byId('connection').textContent = connected ? 'Ansluten till lokal server' : 'Frånkopplad · inga meddelanden skickas om';
     const selectedAgent = agents.find(agent => agent.id === selected);
     byId('agent-title').textContent = selectedAgent?.label || 'Välj en agent';
     byId('mode-note').textContent = agents.some(agent => agent.kind === 'pi') ? 'Riktiga Pi-projekt · modell-anrop kan kosta · inga värdgodkännanden' : 'Bara dummy · inga modelltokens · inga värdgodkännanden';
@@ -94,9 +94,10 @@ async function synchronize({ history: loadHistory = false } = {}) {
       return;
     }
     if (!loadHistory) {
-      model.note = model.historyLoaded ? 'Livevy redo. Hämtad historik är en begränsad ögonblicksbild; läs igen vid behov.' : 'Livevy redo. Äldre historik läses bara om du väljer Hämta senaste historik.';
+      model.note = model.historyLoaded ? 'Livevy redo. Hämtad historik är en begränsad ögonblicksbild; läs igen vid behov.' : 'Livevy redo. Historik saknas; välj Hämta senaste historik för att försöka igen.';
       return;
     }
+    model.note = 'Hämtar senaste historik. Livehändelser visas under tiden…'; draw();
     const history = await command('history');
     if (version !== selection) return;
     if (history.data?.success !== true) {
@@ -134,8 +135,9 @@ function receive(value) {
     const previous = agents.find(agent => agent.id === selected);
     agents = value.agents.slice(0, 32);
     const current = agents.find(agent => agent.id === selected);
-    if (selected && !current) { selected = undefined; selection++; model.reset(null, 0); }
-    if (current?.online && (!previous?.online || current.generation !== model.generation)) choose(current.id);
+    if (selected && !current) { failPending(); selected = undefined; selection++; syncing = false; clearTimeout(syncTimer); model.reset(null, 0); }
+    if (!selected && agents.length) choose(agents[0].id);
+    else if (current?.online && (!previous?.online || current.generation !== model.generation)) choose(current.id);
     else if (current && !current.online) { model.status = 'offline'; model.stateKnown = false; model.synced = false; model.note = 'Agenten är offline. Pågående arbete kan ha fortsatt; inget skickas om.'; }
     draw(); return;
   }
@@ -143,7 +145,7 @@ function receive(value) {
   if (value.type === 'selected') {
     if (value.id !== selectToken) return;
     model.reset(value.generation, value.seq); model.status = value.status;
-    if (value.generation) void synchronize(); else { model.note = 'Agenten är offline.'; draw(); }
+    if (value.generation) void synchronize({ history: true }); else { model.note = 'Agenten är offline.'; draw(); }
   } else if (value.type === 'frame') {
     if (model.frame(value.frame)) {
       if (value.frame.event?.type === 'agent_start') syncAttempts = 0;
@@ -171,7 +173,7 @@ async function connect() {
     ws.onmessage = event => { if (ws === socket) { try { receive(JSON.parse(event.data)); } catch { ws.close(); } } };
     ws.onclose = () => {
       if (ws !== socket) return;
-      connected = false; model.status = 'unknown'; model.stateKnown = false; model.synced = false; model.note = 'Frånkopplad. Hämta ny historik efter återanslutning; inget kommando spelas upp igen.';
+      connected = false; model.status = 'unknown'; model.stateKnown = false; model.synced = false; model.note = 'Frånkopplad. Tillstånd och senaste historik hämtas efter återanslutning; inget meddelande skickas om.';
       failPending(); draw(); retryConnect();
     };
     ws.onerror = () => {};

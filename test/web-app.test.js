@@ -24,7 +24,7 @@ test('actual browser app module logs in, selects, chats, recovers dummy quota an
   const { startDummyConnector } = await import('../web/connector.js');
   const { default: WS } = await import('../web/node_modules/ws/wrapper.mjs');
   const password = 'browser-app-test-password-only', token = randomKey();
-  const server = await startWebServer({ port: 0, passwordHash: await hashPassword(password), agents: [{ id: 'dummy-1', label: 'Dummy 1', tokenHash: digest(token) }] });
+  const server = await startWebServer({ port: 0, passwordHash: await hashPassword(password), agents: [{ id: 'dummy-1', label: 'Dummy 1', tokenHash: digest(token) }, { id: 'dummy-2', label: 'Dummy 2', tokenHash: digest(randomKey()) }] });
   server.setStartup('dummy-1', 'preparing_image');
   let connector;
   const elements = new Map(), pageEvents = new Map();
@@ -51,14 +51,17 @@ test('actual browser app module logs in, selects, chats, recovers dummy quota an
     const setCookie = result.headers.getSetCookie()[0]; if (setCookie) cookie = setCookie.split(';')[0];
     return result;
   };
+  let browser;
+  const sent = [], historyReads = id => sent.filter(value => value.type === 'command' && value.agentId === id && value.command.action === 'history').length;
   globalThis.WebSocket = class extends WS {
-    constructor(url) { super(url, { headers: { Origin: server.origin, Cookie: cookie } }); }
+    constructor(url) { super(url, { headers: { Origin: server.origin, Cookie: cookie } }); browser = this; }
+    send(payload, ...args) { sent.push(JSON.parse(payload)); return super.send(payload, ...args); }
   };
   await import(`../web/public/app.js?test=${Date.now()}`);
   element('password').value = password; await element('login-form').dispatch('submit');
-  await until(() => element('agents').children.length === 1);
-  await element('agents').children[0].dispatch('click');
+  await until(() => element('agents').children.length === 2);
   await until(() => content(element('state')).includes('Förbereder sandbox-image'));
+  assert.equal(element('agent-title').textContent, 'Dummy 1', 'The first agent must open without a click, even while starting.');
   assert.equal(element('send').disabled, true);
   server.setStartup('dummy-1', 'engine_failed');
   await until(() => content(element('state')).includes('Podman-kontrollen misslyckades'));
@@ -70,7 +73,20 @@ test('actual browser app module logs in, selects, chats, recovers dummy quota an
   const native = connector.rpc.request.bind(connector.rpc), reads = [];
   connector.rpc.request = (type, ...args) => { reads.push(type); return native(type, ...args); };
   await until(() => !element('send').disabled);
-  assert.equal(reads.includes('get_messages'), false, 'Selecting an agent must not automatically read history.');
+  await until(() => !element('refresh').disabled);
+  assert.equal(historyReads('dummy-1'), 1, 'Opening the now-online agent must automatically read history once.');
+  await element('agents').children[1].dispatch('click');
+  await until(() => element('agent-title').textContent === 'Dummy 2');
+  assert.equal(element('send').disabled, true);
+  assert.equal(historyReads('dummy-2'), 0, 'Offline agents must not receive history requests.');
+  server.setStartup('dummy-2', 'preparing_image');
+  await until(() => content(element('state')).includes('Förbereder sandbox-image'));
+  assert.equal(element('agent-title').textContent, 'Dummy 2', 'Roster updates must preserve the manually selected agent.');
+  await element('agents').children[0].dispatch('click');
+  await until(() => !element('refresh').disabled && historyReads('dummy-1') === 2);
+  browser.terminate();
+  await until(() => !element('refresh').disabled && historyReads('dummy-1') === 3);
+  assert.equal(sent.filter(value => value.command?.action === 'prompt').length, 0, 'Reconnection must never send prompts.');
   const originalRequest = connector.rpc.request.bind(connector.rpc);
   const refresh = async () => { await until(() => !element('refresh').disabled); await element('refresh').dispatch('click'); };
   connector.rpc.request = (type, ...args) => type === 'get_state' ? Promise.reject(Object.assign(new Error('RAW_SECRET_ERROR_NOT_FOR_UI'), { code: 'rpc_unavailable' })) : originalRequest(type, ...args);
@@ -87,8 +103,12 @@ test('actual browser app module logs in, selects, chats, recovers dummy quota an
   connector.rpc.request = originalRequest;
   await refresh();
   await until(() => !element('send').disabled);
-  connector.rpc.request = (type, ...args) => type === 'get_messages' ? Promise.reject(Object.assign(new Error('too much history'), { code: 'rpc_history_limit' })) : originalRequest(type, ...args);
-  await refresh();
+  let rejectHistory;
+  connector.rpc.request = (type, ...args) => type === 'get_messages' ? new Promise((resolve, reject) => { rejectHistory = reject; }) : originalRequest(type, ...args);
+  await element('agents').children[0].dispatch('click');
+  await until(() => rejectHistory && !element('send').disabled);
+  assert.equal(element('refresh').disabled, true, 'State/live controls must be ready while automatic history is still pending.');
+  rejectHistory(Object.assign(new Error('too much history'), { code: 'rpc_history_limit' }));
   await until(() => content(element('sync-note')).includes('Historiken överskred läsgränsen'));
   await until(() => !element('send').disabled);
   assert.equal(connector.rpc.faulted, false);
@@ -113,6 +133,13 @@ test('actual browser app module logs in, selects, chats, recovers dummy quota an
   await until(() => !element('send').disabled);
   assert.equal((await connector.rpc.request('get_state')).data.resumes, 1);
   assert.equal(reads.filter(type => type === 'get_messages').length, historyReadsBefore, 'Settlement/quota continuation must not auto-fetch old history.');
+  await element('agents').children[1].dispatch('click');
+  await until(() => element('agent-title').textContent === 'Dummy 2');
+  assert.ok(!content(element('messages')).includes(hostile));
+  const beforeReopen = historyReads('dummy-1');
+  await element('agents').children[0].dispatch('click');
+  await until(() => !element('refresh').disabled && historyReads('dummy-1') === beforeReopen + 1 && content(element('messages')).includes(hostile));
+  assert.ok(content(element('messages')).includes('Lorem ipsum'), 'Reopening must restore actual saved messages without pressing refresh.');
   connector.rpc.emit('event', { type: 'message_end', message: { role: 'assistant', content: [{ type: 'text', text: '## Checklist\n- [x] Done\n- [ ] Pending\n\n| A | B |\n| --- | --- |\n| one | [Docs](https://example.org/) |' }] } });
   await until(() => nodes(element('messages')).some(node => node.tag === 'table'));
   const checkbox = nodes(element('messages')).find(node => node.tag === 'input' && node.type === 'checkbox');
