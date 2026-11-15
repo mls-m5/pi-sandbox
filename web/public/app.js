@@ -1,7 +1,7 @@
 import { ChatModel } from './view-model.js';
 import { renderChat, renderTools } from './render.js';
 import { handlePromptKey } from './keybindings.js';
-import { startupText } from './startup.js';
+import { startupText, startupFailure } from './startup.js';
 
 const byId = id => document.getElementById(id);
 const model = new ChatModel(), pending = new Map();
@@ -21,7 +21,9 @@ function draw() {
     for (const id of ['quota', 'refill']) byId(id).hidden = selectedAgent?.kind !== 'dummy';
     const starting = !selectedAgent?.online ? startupText(selectedAgent?.startup) : '';
     byId('state').textContent = starting || `${model.status}${model.quota ? ` · dummy-kvot: ${model.quota}` : ''}`;
-    byId('sync-note').textContent = starting ? 'Webbservern är igång. Agenten kan inte ta emot meddelanden förrän Pi och anslutningen är klara.' : model.note;
+    byId('sync-note').textContent = starting ? (startupFailure(selectedAgent?.startup?.phase)
+      ? 'Projektstarten misslyckades, men webbservern är igång. Kontrollera orsaken på värden; ingen automatisk omstart sker.'
+      : 'Webbservern är igång. Agenten kan inte ta emot meddelanden förrän Pi och anslutningen är klara.') : model.note;
     const ready = online() && model.status === 'idle' && model.synced && !mutation;
     for (const id of ['send', 'quota', 'refill']) byId(id).disabled = !ready;
     byId('stop').disabled = !online() || mutation;

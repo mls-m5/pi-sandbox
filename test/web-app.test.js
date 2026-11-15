@@ -59,6 +59,10 @@ test('actual browser app module logs in, selects, chats, recovers dummy quota an
   await element('agents').children[0].dispatch('click');
   await until(() => content(element('state')).includes('Förbereder sandbox-image'));
   assert.equal(element('send').disabled, true);
+  server.setStartup('dummy-1', 'engine_failed');
+  await until(() => content(element('state')).includes('Podman-kontrollen misslyckades'));
+  assert.ok(content(element('sync-note')).includes('Projektstarten misslyckades'));
+  assert.equal(element('send').disabled, true);
   server.setStartup('dummy-1', 'starting_container');
   await until(() => content(element('state')).includes('Startar container'));
   connector = await startDummyConnector({ origin: server.origin, token });

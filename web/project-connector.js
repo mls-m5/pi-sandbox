@@ -5,14 +5,16 @@ import { PiRpc, JsonlDecoder } from '../src/pi-rpc.js';
 import { PiView } from '../src/pi-view.js';
 import { ID_PATTERN } from '../src/config.js';
 import { connectView } from './connector.js';
-import { startupPhase } from './public/startup.js';
+import { startupPhase, startupFailure } from './public/startup.js';
 
 // Only the local host supplies a descriptor resolved from its registered Store.
 // The server/browser cannot supply paths, mounts, model args or executables.
 export async function startProjectConnector({ project, origin, token, signal, startupTimeoutMs = 600_000, onProgress = () => {} }) {
   if (!project || !ID_PATTERN.test(project.id) || !path.isAbsolute(project.root) || !path.isAbsolute(project.storeRoot)) throw new Error('Expected a locally registered project descriptor.');
   signal?.throwIfAborted();
-  onProgress('starting_wrapper');
+  let lastPhase;
+  const report = phase => { lastPhase = phase; onProgress(phase); };
+  report('starting_wrapper');
   const child = spawn(process.execPath, [fileURLToPath(new URL('../bin/pis-project-rpc.js', import.meta.url)), project.id], {
     cwd: project.root, stdio: ['pipe', 'pipe', 'pipe', 'pipe'],
     // Host credentials may be needed by the existing local provider proxy. They
@@ -21,7 +23,7 @@ export async function startProjectConnector({ project, origin, token, signal, st
   });
   const rpc = new PiRpc(child, { timeoutMs: startupTimeoutMs }), view = new PiView(rpc);
   const progress = new JsonlDecoder(record => {
-    if (record.type === 'startup' && startupPhase(record.phase) && Object.keys(record).length === 2) onProgress(record.phase);
+    if (record.type === 'startup' && startupPhase(record.phase) && Object.keys(record).length === 2) report(record.phase);
   }, () => {}, 512);
   child.stdio[3].on('data', chunk => progress.push(chunk));
   child.stdio[3].on('error', () => {});
@@ -51,7 +53,7 @@ export async function startProjectConnector({ project, origin, token, signal, st
     signal?.throwIfAborted();
     if (closing || !state.success) throw new Error('Project RPC initialization failed.');
     rpc.timeoutMs = 30_000;
-    onProgress('rpc_ready');
+    report('rpc_ready');
     network = connectView({ view, origin, token });
     rpc.once('closed', () => network.close());
     await new Promise((resolve, reject) => {
@@ -66,10 +68,19 @@ export async function startProjectConnector({ project, origin, token, signal, st
       signal?.addEventListener('abort', aborted, { once: true });
       if (signal?.aborted) aborted();
     });
-    onProgress('connected');
+    report('connected');
     return { network, view, rpc, close };
-  } catch {
-    await close().catch(() => {});
-    throw new Error('Project RPC did not become ready; inspect normal pis startup, configuration, locks and Podman on the host. No prompt was submitted by the connector.');
+  } catch (error) {
+    let cleanupError;
+    await close().catch(failure => { cleanupError = failure; });
+    if (signal?.aborted) throw Object.assign(new Error('Project startup cancelled.'), { code: 'STARTUP_CANCELLED' });
+    const failurePhase = startupFailure(lastPhase) ? lastPhase
+      : cleanupError?.code === 'rpc_shutdown_unconfirmed' ? 'cleanup_unconfirmed'
+      : lastPhase === 'rpc_ready' ? 'registration_failed'
+      : error.code === 'rpc_timeout_ambiguous' ? 'startup_timeout'
+      : ['rpc_invalid_record', 'rpc_record_too_large', 'rpc_response_mismatch', 'rpc_incomplete_record'].includes(error.code) ? 'rpc_failed'
+      : lastPhase === 'starting_container' ? 'pi_failed' : 'failed';
+    if (lastPhase !== failurePhase) report(failurePhase);
+    throw Object.assign(new Error('Project RPC startup failed; see its fixed host startup phase.'), { code: 'PROJECT_STARTUP_FAILED', phase: failurePhase });
   } finally { signal?.removeEventListener('abort', onAbort); }
 }

@@ -3,7 +3,7 @@ import { hashPassword, randomKey, digest } from './common.js';
 import { startWebServer } from './server.js';
 import { startDummyConnector } from './connector.js';
 import { startProjectConnector } from './project-connector.js';
-import { STARTUP_LABELS } from './public/startup.js';
+import { STARTUP_LABELS, startupFailure } from './public/startup.js';
 import { resolveWebProjects } from '../src/project-rpc.js';
 
 async function readPassword(piped) {
@@ -43,7 +43,7 @@ async function readPassword(piped) {
 }
 const options = { port: 43128, agents: 2, piped: false, projects: [] };
 const args = process.argv.slice(2), seen = new Set(), startupController = new AbortController();
-let server, connectors = [], stopping, startup;
+let server, connectors = [], stopping, startup, failedProjects = 0;
 async function stop() {
   return stopping ||= (async () => {
     const deadline = setTimeout(() => process.exit(1), options.projects.length ? 90_000 : 10_000); deadline.unref();
@@ -75,7 +75,11 @@ try {
   }
   if (options.port < 1024 || options.port > 65535 || options.agents < 1 || options.agents > 8) throw new Error('Invalid local demo port/agent count.');
   if (options.projects.length && seen.has('--agents')) throw new Error('Choose real projects or dummy agents, not both.');
-  const projects = options.projects.length ? resolveWebProjects(options.projects) : [];
+  let projects = [];
+  if (options.projects.length) {
+    try { projects = resolveWebProjects(options.projects); }
+    catch { throw Object.assign(new Error('Cannot select local Pi projects.'), { code: 'WEB_PROJECT_SELECTION' }); }
+  }
   if (projects.length) console.error('EXPERIMENTAL: Starting real registered Pi sandboxes. Saved sessions/configured extensions and browser prompts may use model quota or incur API costs. Git/apt host approvals and quota-auto are unavailable.');
   let password = await readPassword(options.piped);
   const passwordHash = await hashPassword(password); password = undefined;
@@ -99,13 +103,27 @@ try {
     startup = agent.project ? startProjectConnector({ origin: server.origin, token: agent.token, project: agent.project, signal: startupController.signal, onProgress })
       : startDummyConnector({ origin: server.origin, token: agent.token });
     let connector;
-    try { connector = await startup; } finally { clearInterval(heartbeat); }
+    try { connector = await startup; }
+    catch (error) {
+      if (!agent.project) throw error;
+      startup = undefined;
+      if (stopping) break;
+      failedProjects++;
+      const failurePhase = startupFailure(error.phase) ? error.phase : 'failed';
+      if (phase !== failurePhase) onProgress(failurePhase);
+      console.error(`pis web: ${agent.id} kunde inte startas. ${STARTUP_LABELS[failurePhase]}.\nWebbservern förblir igång på ${server.origin}; felet visas i agentlistan. Ingen automatisk omstart eller omsändning görs. Rätta orsaken på värden och starta om webbkommandot när det är säkert.`);
+      continue;
+    } finally { clearInterval(heartbeat); }
     if (stopping) { await connector.close(); break; }
     connectors.push(connector); startup = undefined;
   }
-  if (!stopping && projects.length) console.error(`${projects.length} Pi project connection(s) ready. Server och agentanslutningar är igång. Öppna ${server.origin}, logga in och välj projektet i listan.\nTerminalen ska nu stå kvar utan ny prompt: den håller servern igång, det är inte en väntande start.\nCtrl-C stänger server/agenter; containerstopp kan ta omkring en minut. Ej bekräftat stopp behåller projektlåset för kontroll på värden.`);
+  if (!stopping && projects.length && connectors.length) console.error(`${connectors.length} Pi project connection(s) ready. Server och agentanslutningar är igång. Öppna ${server.origin}, logga in och välj projektet i listan.\nTerminalen ska nu stå kvar utan ny prompt: den håller servern igång, det är inte en väntande start.\nCtrl-C stänger server/agenter; containerstopp kan ta omkring en minut. Ej bekräftat stopp behåller projektlåset för kontroll på värden.`);
+  if (!stopping && failedProjects) console.error(`Webbservern är igång; ${failedProjects} projekt kunde inte startas. Öppna ${server.origin} och välj agenten för felstatus. Ctrl-C stänger servern.`);
   if (!stopping && !projects.length) console.error(`Lokal dummy-webb: ${server.origin}\nLogga in med lösenordet du nyss valde. ${options.agents} utgående dummy-anslutningar; inga modell-anrop.\nEndast loopback. Ctrl-C stänger server och dummies. Ingen konfiguration eller historik sparas.`);
 } catch (error) {
-  console.error(['EADDRINUSE', 'EACCES'].includes(error.code) ? 'Could not bind the local demo port.' : error.message?.startsWith('Usage:') ? error.message : 'Local web demo could not start. Check dependency installation, options and password length.');
+  console.error(error.code === 'EADDRINUSE' ? `Webbservern kunde inte starta: port ${options.port} används redan. Välj --port 43129 eller stäng den andra servern.`
+    : error.code === 'EACCES' ? 'Webbservern saknar behörighet att öppna den valda porten.'
+    : error.code === 'WEB_PROJECT_SELECTION' ? 'Kan inte välja registrerat Pi-projekt. Kör pis --list och pis --project NAMN --check på värden; Claude, okända/dubbla projekt och ogiltig konfiguration stöds inte här.'
+    : error.message?.startsWith('Usage:') ? error.message : 'Webbservern kunde inte starta. Kontrollera alternativ, web-beroenden och att lösenordet är minst 20 tecken. Inga råa fel eller inloggningsuppgifter skrivs ut.');
   process.exitCode = 1; await stop();
 }

@@ -8,6 +8,7 @@ import { spawn } from 'node:child_process';
 import net from 'node:net';
 import { once } from 'node:events';
 import { Store } from '../src/store.js';
+import { defaults } from '../src/config.js';
 import { resolveWebProjects } from '../src/project-rpc.js';
 import { PiRpc } from '../src/pi-rpc.js';
 import { withLock } from '../src/util.js';
@@ -28,11 +29,17 @@ async function fixture(t) {
   fs.writeFileSync(path.join(bin, 'podman'), `#!${process.execPath}
 const fs = require('fs'), args = process.argv.slice(2);
 fs.appendFileSync(${JSON.stringify(trace)}, JSON.stringify(args) + '\\n');
+if (args[0] === 'info' && process.env.TEST_ENGINE_FAIL === '1') { console.error('private diagnostic MUST_NOT_LEAK'); process.exit(2); }
 if (args[0] === 'info') console.log(JSON.stringify({host:{security:{rootless:true,selinuxEnabled:false},serviceIsRemote:false}}));
-if (args[0] === 'image' && process.env.TEST_BUILD === '1') process.exitCode = 1;
-if (args[0] === 'build') console.log('fake build diagnostics, not protocol');
+if (args[0] === 'image' && (process.env.TEST_BUILD === '1' || process.env.TEST_BUILD_FAIL === '1')) process.exitCode = 1;
+if (args[0] === 'build') { console.log('fake build diagnostics, not protocol'); if (process.env.TEST_BUILD_FAIL === '1') process.exit(3); }
 if (args[0] === 'container') process.exitCode = process.env.TEST_UNKNOWN_CONTAINER === '1' ? 0 : 1;
-if (args[0] === 'run') import(${JSON.stringify(fake)});
+if (args[0] === 'run') {
+  if (process.env.TEST_PI_FAIL === '1') process.exit(4);
+  else if (process.env.TEST_STALL === '1') setInterval(() => {}, 1000);
+  else if (process.env.TEST_BAD_RPC === '1') console.log('MUST_NOT_LEAK not a protocol record');
+  else import(${JSON.stringify(fake)});
+}
 `, { mode: 0o700 });
   const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, PIS_HOME: store.root, PIS_AUTO_UPDATE: '0', PIS_AUTO_PRUNE: '0' };
   const start = (extra = {}) => {
@@ -124,6 +131,41 @@ test('web CLI starts an explicitly selected registered project and shuts down wi
   assert.equal((await fetch(`http://127.0.0.1:${port}/`)).status, 200);
   const closed = once(child, 'close'); child.kill('SIGTERM'); await closed;
   assert.equal(child.exitCode, 0); assert.equal(fs.existsSync(f.lock), false);
+});
+
+test('project startup failures report fixed specific phases without exposing stderr or raw RPC', { skip: process.getuid() === 0 || !fs.existsSync(new URL('../web/node_modules/ws/package.json', import.meta.url)), timeout: 20000 }, async t => {
+  const { startProjectConnector } = await import('../web/project-connector.js');
+  const keys = ['PATH', 'PIS_AUTO_UPDATE', 'PIS_AUTO_PRUNE', 'TEST_ENGINE_FAIL', 'TEST_BUILD_FAIL', 'TEST_PI_FAIL', 'TEST_STALL', 'TEST_BAD_RPC'];
+  const saved = Object.fromEntries(keys.map(key => [key, process.env[key]]));
+  t.after(() => { for (const key of keys) { if (saved[key] === undefined) delete process.env[key]; else process.env[key] = saved[key]; } });
+  for (const [flag, expected] of [['TEST_ENGINE_FAIL', 'engine_failed'], ['TEST_BUILD_FAIL', 'image_failed'], ['TEST_PI_FAIL', 'pi_failed'], ['TEST_STALL', 'startup_timeout'], ['TEST_BAD_RPC', 'rpc_failed'], ['PROXY', 'proxy_failed']]) {
+    const f = await fixture(t);
+    for (const key of keys) delete process.env[key];
+    for (const key of ['PATH', 'PIS_AUTO_UPDATE', 'PIS_AUTO_PRUNE']) process.env[key] = f.env[key];
+    if (flag === 'PROXY') { f.config.credentials = defaults(f.config.id, f.root).credentials; f.store.write(f.config); }
+    else process.env[flag] = '1';
+    const phases = [];
+    await assert.rejects(startProjectConnector({ project: resolveWebProjects(['web-test'], f.store)[0], origin: 'http://127.0.0.1:43128', token: 'a'.repeat(43), startupTimeoutMs: flag === 'TEST_STALL' ? 250 : 3000, onProgress: phase => phases.push(phase) }), error => {
+      assert.equal(error.code, 'PROJECT_STARTUP_FAILED'); assert.equal(error.phase, expected); return true;
+    });
+    assert.equal(phases.at(-1), expected); assert.ok(!JSON.stringify(phases).includes('MUST_NOT_LEAK'));
+    assert.equal(fs.existsSync(f.lock), false);
+  }
+});
+
+test('web CLI keeps the server alive with a visible failed agent when Podman startup fails', { skip: process.getuid() === 0 || !fs.existsSync(new URL('../web/node_modules/ws/package.json', import.meta.url)), timeout: 15000 }, async t => {
+  const f = await fixture(t), reservation = net.createServer();
+  await new Promise(resolve => reservation.listen(0, '127.0.0.1', resolve));
+  const port = reservation.address().port; await new Promise(resolve => reservation.close(resolve));
+  const child = spawn(process.execPath, [fileURLToPath(new URL('../web/cli.js', import.meta.url)), 'start', '--project', 'web-test', '--port', String(port), '--password-stdin'], { cwd: f.root, env: { ...f.env, TEST_ENGINE_FAIL: '1' }, stdio: ['pipe', 'pipe', 'pipe'] });
+  t.after(() => { if (child.exitCode === null) child.kill('SIGKILL'); });
+  let output = ''; child.stderr.on('data', chunk => { output += chunk; }); child.stdout.resume(); child.stdin.end('temporary-failed-project-password\n');
+  for (let i = 0; i < 500 && !output.includes('projekt kunde inte startas') && child.exitCode === null; i++) await new Promise(resolve => setTimeout(resolve, 10));
+  assert.match(output, /Podman-kontrollen misslyckades/); assert.match(output, /Webbservern är igång/);
+  assert.ok(!output.includes('MUST_NOT_LEAK')); assert.ok(!output.includes('connection(s) ready'));
+  assert.equal(child.exitCode, null); assert.equal((await fetch(`http://127.0.0.1:${port}/`)).status, 200);
+  const closed = once(child, 'close'); child.kill('SIGTERM'); await closed;
+  assert.equal(fs.existsSync(f.lock), false);
 });
 
 test('project connector keeps wrapper and lock alive across network reconnect, then cleans up locally', { skip: process.getuid() === 0 || !fs.existsSync(new URL('../web/node_modules/ws/package.json', import.meta.url)), timeout: 15000 }, async t => {
