@@ -23,7 +23,9 @@ Host diagnostics confirmed a real Pi project starts/answers state/registers succ
 
 The web UI now defaults to **state plus live events**, with history read only through **Hämta senaste historik**. State readiness and displayed-history completeness are separate; history failure alone must not prevent valid idle prompt/stop control. The requested native history reader retains at most 100 messages/1 MiB of raw recent bodies before existing 256 KiB projected-view limits. It uses a separate bounded streaming path; an over-limit history read drains to LF and rejects only that read with `rpc_history_limit`. Ordinary malformed/unsolicited/oversized non-history records still fault closed. Full native history may still traverse the pipe when explicitly requested; there is no native paging command or full session-file reader. Saved session/context/compaction policy are unchanged. See [the detailed parser limits](pi-rpc.md).
 
-Confirm the corrected large-history behavior on the host before calling the original host scenario fixed end-to-end. No need to reset auth, delete transcripts, recreate a project or increase record caps without bounds.
+The user reports the updated web flow now works. This is useful host feedback, not exhaustive verification of every giant-history edge case or production container lifecycle. No need to reset auth, delete transcripts, recreate a project or increase record caps without bounds.
+
+Assistant reply text now has a bounded, textContent-only Markdown subset (headings/emphasis/code); user/thinking/tool content stays literal. Raw HTML, active links/images, remote highlighting and arbitrary attributes remain disabled. The implementation/security contract is in docs/web-control.md; formatting tests run without model calls.
 
 ## Development checks
 
@@ -36,7 +38,7 @@ npm run test:storage      # separate, disk-heavy legacy/new image benchmark
 ```
 
 - Ordinary checks use fakes/local sockets/subprocesses, with **no live/paid model calls**. Without optional `web/node_modules/ws`, web transport/CLI tests explicitly skip; pure helpers and core checks remain available.
-- Latest ordinary result for the history change: **275 tests, 264 passed, 11 skipped** with the optional web dependency installed. Keep this number current only when reporting a fresh check, not as a permanent coverage guarantee.
+- Latest ordinary result after basic Markdown: **281 tests, 270 passed, 11 skipped** with the optional web dependency installed. Keep this number current only when reporting a fresh check, not as a permanent coverage guarantee.
 - The isolated no-model RPC state/history/EOF probe passed against installed **Pi 1.5.0** after this parser change, with no network attempts. Earlier probes ran 1.5.2; source image pin is still 1.5.0. The probe does not exercise giant real session records or container lifecycle.
 - Full rootless Podman image/storage/update/project RPC tests were **not run in the development sandbox**. The new storage layout has unit/fake-engine tests and an opt-in host benchmark, **no measured physical saving** yet. Read its free-space guard/cleanup limits before running it.
 - App tests run the actual browser module through real local HTTP/WebSockets in a DOM shim, not a graphical browser. Host reports confirm some real browser/agent flows; full CSP/cookies/layout/accessibility/mobile and crash/long-running lifecycle still need verification.

@@ -1,4 +1,7 @@
-// All dynamic strings are untrusted. No HTML/Markdown, links or terminal parsing.
+import { renderMarkdown } from './markdown.js';
+
+// Dynamic strings remain untrusted. Only the bounded Markdown subset creates
+// fixed DOM elements; raw HTML, links, images and terminal parsing stay disabled.
 export function renderChat(document, root, model) {
   const nodes = [];
   for (const message of [...model.messages, ...(model.partial ? [model.partial] : [])]) {
@@ -8,7 +11,11 @@ export function renderChat(document, root, model) {
     for (const block of message.content) {
       if (!block) continue;
       const pre = document.createElement('pre');
-      if (block.type === 'text' || block.type === 'thinking') {
+      if (block.type === 'text' && message.role === 'assistant') {
+        article.append(renderMarkdown(document, block.text));
+        if (block.truncated) { const note = document.createElement('small'); note.textContent = '[förkortat]'; article.append(note); }
+        continue;
+      } else if (block.type === 'text' || block.type === 'thinking') {
         pre.textContent = `${block.type === 'thinking' ? 'Synlig thinking: ' : ''}${block.text}${block.truncated ? '\n[förkortat]' : ''}`;
       } else if (block.type === 'tool_call') pre.textContent = `[Verktygsanrop: ${block.name}; argument utelämnade]`;
       else pre.textContent = `[Utelämnat: ${block.kind || 'innehåll'}]`;

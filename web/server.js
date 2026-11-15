@@ -9,6 +9,7 @@ import { budget, digest, exact, generationValid, idValid, object, randomKey, sen
 
 const assets = new Map([
   ['/', ['index.html', 'text/html; charset=utf-8']], ['/app.js', ['app.js', 'text/javascript; charset=utf-8']],
+  ['/markdown.js', ['markdown.js', 'text/javascript; charset=utf-8']],
   ['/view-model.js', ['view-model.js', 'text/javascript; charset=utf-8']], ['/render.js', ['render.js', 'text/javascript; charset=utf-8']],
   ['/diagnostics.js', ['diagnostics.js', 'text/javascript; charset=utf-8']],
   ['/startup.js', ['startup.js', 'text/javascript; charset=utf-8']],

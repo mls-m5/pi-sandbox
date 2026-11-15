@@ -82,13 +82,14 @@ test('hostile model/tool content is rendered only as plain text, never HTML, lin
   const root = new Element('div'); renderChat(document, root, model);
   assert.ok(allText(root).includes(hostile));
   assert.equal(root.children[0].tag, 'article');
-  assert.equal(root.children[0].children[1].tag, 'pre');
-  assert.equal(root.children[0].children[1].textContent, hostile);
+  assert.equal(root.children[0].children[1].tag, 'div');
+  assert.equal(allText(root.children[0].children[1]), hostile);
   renderTools(document, root, [{ name: hostile, state: 'klar', text: hostile }]);
   assert.ok(allText(root).includes(hostile));
   const app = fs.readFileSync(new URL('../web/public/app.js', import.meta.url), 'utf8');
   const render = fs.readFileSync(new URL('../web/public/render.js', import.meta.url), 'utf8');
-  for (const source of [app, render]) assert.doesNotMatch(source, /innerHTML|outerHTML|insertAdjacentHTML|localStorage|sessionStorage|eval\(/);
+  const markdown = fs.readFileSync(new URL('../web/public/markdown.js', import.meta.url), 'utf8');
+  for (const source of [app, render, markdown]) assert.doesNotMatch(source, /innerHTML|outerHTML|insertAdjacentHTML|localStorage|sessionStorage|eval\(/);
 });
 
 test('browser-side models are bounded even with hostile DTOs, endless deltas and tool updates', () => {
