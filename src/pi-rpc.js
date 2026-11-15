@@ -1,68 +1,22 @@
 import { EventEmitter } from 'node:events';
 import { createHash, randomUUID } from 'node:crypto';
+import { RpcHistoryDecoder } from './rpc-history.js';
+export { JsonlDecoder } from './jsonl.js';
 
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const failure = code => Object.assign(new Error(code), { code });
 
-// Byte framing avoids splitting Unicode separators or decoding partial UTF-8 characters.
-export class JsonlDecoder {
-  constructor(onRecord, onFault, maxBytes = 4 * 1024 * 1024) {
-    this.onRecord = onRecord;
-    this.onFault = onFault;
-    this.maxBytes = maxBytes;
-    this.buffer = null;
-    this.bytes = 0;
-    this.failed = false;
-  }
-
-  push(chunk) {
-    if (this.failed) return; // The stream owner keeps draining even after a fault.
-    let start = 0;
-    while (start < chunk.length) {
-      const lf = chunk.indexOf(10, start);
-      const end = lf < 0 ? chunk.length : lf;
-      const part = chunk.subarray(start, end);
-      if (this.bytes + part.length > this.maxBytes) return this.fail('rpc_record_too_large');
-      this.buffer ??= Buffer.allocUnsafe(this.maxBytes);
-      part.copy(this.buffer, this.bytes);
-      this.bytes += part.length;
-      if (lf < 0) return;
-      let line = this.buffer.subarray(0, this.bytes);
-      this.bytes = 0;
-      if (line.at(-1) === 13) line = line.subarray(0, -1);
-      try {
-        const record = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(line));
-        if (!object(record) || typeof record.type !== 'string') throw failure('invalid');
-        this.onRecord(record);
-      } catch {
-        return this.fail('rpc_invalid_record');
-      }
-      start = lf + 1;
-    }
-  }
-
-  end() {
-    if (!this.failed && this.bytes) this.fail('rpc_incomplete_record');
-  }
-
-  fail(code) {
-    this.failed = true;
-    this.buffer = null;
-    this.bytes = 0;
-    this.onFault(code);
-  }
-}
-
 // This is an internal local-pipe API, NOT an authenticated network endpoint.
 // The caller owns spawning, project locks, signals and final process cleanup.
 export class PiRpc extends EventEmitter {
-  constructor(child, { maxRecordBytes, maxPending = 16, maxWriteBytes = 256 * 1024, timeoutMs = 30_000 } = {}) {
+  constructor(child, { maxRecordBytes, maxPending = 16, maxWriteBytes = 256 * 1024, timeoutMs = 30_000, historyLimits } = {}) {
     super();
     this.child = child;
     this.maxPending = maxPending;
     this.maxWriteBytes = maxWriteBytes;
     this.timeoutMs = timeoutMs;
     this.pending = new Map();
+    this.historyReads = new Set(); // Bounded read IDs also recognize late, timed-out history responses.
     this.queue = [];
     this.writeBytes = 0;
     this.writing = false;
@@ -71,7 +25,15 @@ export class PiRpc extends EventEmitter {
     this.closed = false;
     this.faulted = false;
     this.stopping = false;
-    this.decoder = new JsonlDecoder(record => this.record(record), code => this.fault(code), maxRecordBytes);
+    this.decoder = new RpcHistoryDecoder({
+      onRecord: record => this.record(record), onFault: code => this.fault(code), maxRecordBytes, limits: historyLimits,
+      isHistoryRequest: id => this.historyReads.has(id),
+      onHistoryLimit: (id, code) => {
+        const entry = this.pending.get(id);
+        if (entry?.type !== 'get_messages') return;
+        this.pending.delete(id); clearTimeout(entry.timer); entry.reject(failure(code));
+      },
+    });
     child.stdout.on('data', chunk => this.decoder.push(chunk));
     child.stdout.on('end', () => { this.decoder.end(); if (!this.stopping) this.fault('rpc_stdout_closed'); });
     child.stdout.on('error', () => this.fault('rpc_stdout_error'));
@@ -169,6 +131,14 @@ export class PiRpc extends EventEmitter {
     if (this.closed || this.faulted || this.stopping) return Promise.reject(failure('rpc_unavailable'));
     if (this.pending.size >= this.maxPending) return Promise.reject(failure('rpc_pending_limit'));
     const id = randomUUID();
+    if (type === 'get_messages') {
+      for (const old of this.historyReads) {
+        if (this.historyReads.size < 64) break;
+        if (!this.pending.has(old)) this.historyReads.delete(old);
+      }
+      if (this.historyReads.size >= 64) return Promise.reject(failure('rpc_pending_limit'));
+      this.historyReads.add(id);
+    }
     return new Promise((resolve, reject) => {
       let line;
       const timer = setTimeout(() => {

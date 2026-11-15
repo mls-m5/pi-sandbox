@@ -5,7 +5,7 @@ const codes = new Set([
   'pi_command_rejected', 'control_failed', 'view_detached', 'control_invalid_command', 'control_invalid_prompt',
   'control_stale_generation', 'control_id_conflict', 'control_id_limit', 'control_mutation_pending', 'control_not_idle',
   'rpc_unavailable', 'rpc_pending_limit', 'rpc_write_limit', 'rpc_timeout_ambiguous', 'rpc_response_mismatch',
-  'rpc_invalid_record', 'rpc_record_too_large', 'rpc_incomplete_record', 'rpc_stdout_closed', 'rpc_stdout_error',
+  'rpc_invalid_record', 'rpc_record_too_large', 'rpc_history_limit', 'rpc_incomplete_record', 'rpc_stdout_closed', 'rpc_stdout_error',
   'rpc_stdin_error', 'rpc_write_failed', 'rpc_process_error', 'rpc_process_closed', 'rpc_invalid_dialog',
   'rpc_dialog_cancel_failed', 'rpc_shutting_down',
 ]);
@@ -26,6 +26,7 @@ export function requestFailure(action, result) {
     pi_command_rejected: 'Pi avvisade kommandot. Råa fel döljs av säkerhetsskäl.',
     outcome_unknown: 'Ingen säker bekräftelse kom fram. Arbete spelas inte upp automatiskt.',
     rpc_timeout_ambiguous: 'Det lokala RPC-svaret nådde tidsgränsen. Arbete spelas inte upp automatiskt.',
+    rpc_history_limit: 'Historiken nådde läsgränsen och utelämnades. Agentanslutningen fungerar fortfarande; sessionen ändras inte.',
     rpc_record_too_large: 'Ett native RPC-record överskred storleksgränsen. Ingen obunden historikhämtning tillåts.',
     invalid_state_reply: 'Tillståndssvaret saknar förväntade fält; inget ledigt tillstånd antas.',
   };

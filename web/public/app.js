@@ -26,7 +26,7 @@ function draw() {
     byId('sync-note').textContent = starting ? (startupFailure(selectedAgent?.startup?.phase)
       ? 'Projektstarten misslyckades, men webbservern är igång. Kontrollera orsaken på värden; ingen automatisk omstart sker.'
       : 'Webbservern är igång. Agenten kan inte ta emot meddelanden förrän Pi och anslutningen är klara.') : model.note;
-    const ready = online() && model.status === 'idle' && model.synced && !mutation;
+    const ready = online() && model.status === 'idle' && model.stateKnown && !mutation;
     for (const id of ['send', 'quota', 'refill']) byId(id).disabled = !ready;
     byId('stop').disabled = !online() || mutation;
     byId('refresh').disabled = !online() || syncing;
@@ -71,26 +71,40 @@ function scheduleSync() {
   clearTimeout(syncTimer);
   if (syncAttempts < 3) syncTimer = setTimeout(() => { void synchronize(); }, 200);
 }
-async function synchronize() {
+async function synchronize({ history: loadHistory = false } = {}) {
   if (!online() || syncing) return;
   const version = selection;
   syncing = true; syncAttempts++; draw();
   try {
     const state = await command('state');
     if (version !== selection) return;
-    if (state.data?.success !== true) { model.synced = false; model.status = 'unknown'; model.note = requestFailure('state', state); return; }
+    if (state.data?.success !== true) { model.stateKnown = false; model.synced = false; model.status = 'unknown'; model.note = requestFailure('state', state); return; }
     const value = state.data.state;
     if (typeof value?.isStreaming !== 'boolean' || typeof value?.isCompacting !== 'boolean' || !Number.isSafeInteger(value?.pendingMessageCount) || value.pendingMessageCount < 0) {
-      model.synced = false; model.status = 'unknown';
+      model.stateKnown = false; model.synced = false; model.status = 'unknown';
       const invalid = { ...state, data: { success: false, error: 'invalid_state_reply' } };
       diagnosticLines.push(diagnosticLine('state', invalid)); diagnosticLines.splice(0, Math.max(0, diagnosticLines.length - 20));
       model.note = requestFailure('state', invalid); return;
     }
-    model.status = state.data.state?.isStreaming || state.data.state?.isCompacting || state.data.state?.pendingMessageCount > 0 ? 'working' : 'idle';
+    if (state.stable === true && state.endSeq === model.seq) {
+      model.status = value.isStreaming || value.isCompacting || value.pendingMessageCount > 0 ? 'working' : 'idle';
+      model.stateKnown = true;
+    } else if (!loadHistory) {
+      model.note = 'Tillståndet ändrades under kontrollen. Visar live; kontrollera igen vid behov.';
+      return;
+    }
+    if (!loadHistory) {
+      model.note = model.historyLoaded ? 'Livevy redo. Hämtad historik är en begränsad ögonblicksbild; läs igen vid behov.' : 'Livevy redo. Äldre historik läses bara om du väljer Hämta senaste historik.';
+      return;
+    }
     const history = await command('history');
     if (version !== selection) return;
-    if (history.data?.success !== true) { model.synced = false; model.note = requestFailure('history', history); return; }
-    if (!model.snapshot(history) && model.status === 'idle') scheduleSync();
+    if (history.data?.success !== true) {
+      model.synced = false;
+      model.note = resultCode(history) === 'rpc_history_limit' ? 'Historiken överskred läsgränsen och utelämnades. Livevy och agentkontroll fortsätter; sparad session är orörd.' : requestFailure('history', history);
+      return;
+    }
+    model.snapshot(history);
   } finally { if (version === selection) { syncing = false; draw(); } }
 }
 function choose(id) {
@@ -101,7 +115,7 @@ function choose(id) {
   socket.send(JSON.stringify({ v: 1, type: 'select', agentId: id, id: selectToken })); draw();
 }
 async function submit(message, clearDraft = false) {
-  if (!online() || model.status !== 'idle' || !model.synced || mutation || !message.trim()) return;
+  if (!online() || model.status !== 'idle' || !model.stateKnown || mutation || !message.trim()) return;
   const version = selection;
   mutation = true; draw();
   const result = await command('prompt', { message });
@@ -122,7 +136,7 @@ function receive(value) {
     const current = agents.find(agent => agent.id === selected);
     if (selected && !current) { selected = undefined; selection++; model.reset(null, 0); }
     if (current?.online && (!previous?.online || current.generation !== model.generation)) choose(current.id);
-    else if (current && !current.online) { model.status = 'offline'; model.synced = false; model.note = 'Agenten är offline. Pågående arbete kan ha fortsatt; inget skickas om.'; }
+    else if (current && !current.online) { model.status = 'offline'; model.stateKnown = false; model.synced = false; model.note = 'Agenten är offline. Pågående arbete kan ha fortsatt; inget skickas om.'; }
     draw(); return;
   }
   if (value.agentId !== selected) return;
@@ -157,7 +171,7 @@ async function connect() {
     ws.onmessage = event => { if (ws === socket) { try { receive(JSON.parse(event.data)); } catch { ws.close(); } } };
     ws.onclose = () => {
       if (ws !== socket) return;
-      connected = false; model.status = 'unknown'; model.synced = false; model.note = 'Frånkopplad. Hämta ny historik efter återanslutning; inget kommando spelas upp igen.';
+      connected = false; model.status = 'unknown'; model.stateKnown = false; model.synced = false; model.note = 'Frånkopplad. Hämta ny historik efter återanslutning; inget kommando spelas upp igen.';
       failPending(); draw(); retryConnect();
     };
     ws.onerror = () => {};
@@ -196,7 +210,7 @@ byId('prompt-form').addEventListener('submit', event => { event.preventDefault()
 byId('prompt').addEventListener('keydown', event => { handlePromptKey(event, () => { void submit(byId('prompt').value, true); }); });
 byId('quota').addEventListener('click', () => { void submit('/dummy quota 5'); });
 byId('refill').addEventListener('click', () => { void submit('/dummy refill'); });
-byId('refresh').addEventListener('click', () => { syncAttempts = 0; void synchronize(); });
+byId('refresh').addEventListener('click', () => { syncAttempts = 0; void synchronize({ history: true }); });
 byId('stop').addEventListener('click', async () => {
   if (!online() || mutation) return;
   const version = selection; mutation = true; draw();

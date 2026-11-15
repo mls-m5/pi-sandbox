@@ -79,7 +79,7 @@ export function projectMessage(source) {
   return result;
 }
 
-export function projectHistory(source) {
+export function projectHistory(source, window) {
   const valid = Array.isArray(source);
   const messages = valid ? source : [];
   const result = { messages: [], totalMessages: messages.length, omittedMessages: 0, truncated: !valid };
@@ -96,6 +96,14 @@ export function projectHistory(source) {
   result.messages.reverse();
   result.omittedMessages = messages.length - result.messages.length;
   result.truncated ||= result.omittedMessages > 0;
+  if (valid && window?.truncated === true && Number.isSafeInteger(window.totalMessages) && window.totalMessages >= messages.length &&
+      window.omittedMessages === window.totalMessages - messages.length && Number.isSafeInteger(window.omittedMessageBodies) && window.omittedMessageBodies >= 0 && window.omittedMessageBodies <= messages.length) {
+    for (const message of result.messages) message.index += window.omittedMessages;
+    result.totalMessages = window.totalMessages;
+    result.omittedMessages = window.totalMessages - result.messages.length;
+    result.omittedMessageBodies = window.omittedMessageBodies;
+    result.truncated = true;
+  }
   return result;
 }
 
@@ -147,7 +155,7 @@ export function projectEvent(source) {
   return null;
 }
 
-const errors = new Set(['view_detached', 'control_invalid_command', 'control_invalid_prompt', 'control_stale_generation', 'control_id_conflict', 'control_id_limit', 'control_mutation_pending', 'control_not_idle', 'rpc_unavailable', 'rpc_pending_limit', 'rpc_write_limit', 'rpc_timeout_ambiguous', 'rpc_response_mismatch', 'rpc_invalid_record', 'rpc_record_too_large', 'rpc_incomplete_record', 'rpc_stdout_closed', 'rpc_stdout_error', 'rpc_stdin_error', 'rpc_write_failed', 'rpc_process_error', 'rpc_process_closed', 'rpc_invalid_dialog', 'rpc_dialog_cancel_failed', 'rpc_shutting_down']);
+const errors = new Set(['view_detached', 'control_invalid_command', 'control_invalid_prompt', 'control_stale_generation', 'control_id_conflict', 'control_id_limit', 'control_mutation_pending', 'control_not_idle', 'rpc_unavailable', 'rpc_pending_limit', 'rpc_write_limit', 'rpc_timeout_ambiguous', 'rpc_response_mismatch', 'rpc_invalid_record', 'rpc_record_too_large', 'rpc_history_limit', 'rpc_incomplete_record', 'rpc_stdout_closed', 'rpc_stdout_error', 'rpc_stdin_error', 'rpc_write_failed', 'rpc_process_error', 'rpc_process_closed', 'rpc_invalid_dialog', 'rpc_dialog_cancel_failed', 'rpc_shutting_down']);
 
 // In-memory projection boundary for a future authenticated transport. No queue,
 // replay, persistence, network I/O or process lifecycle control lives here.
@@ -191,7 +199,7 @@ export class PiView extends EventEmitter {
       if (response.duplicate === true) data = { duplicate: true };
       else if (response.success !== true) data = { success: false, error: 'pi_command_rejected' };
       else if (command.action === 'state') data = { success: true, state: projectState(response.data) };
-      else if (command.action === 'history') data = { success: true, history: projectHistory(response.data?.messages) };
+      else if (command.action === 'history') data = { success: true, history: projectHistory(response.data?.messages, response.data?.historyWindow) };
       else if (command.action === 'prompt') {
         const disposition = response.data?.disposition;
         data = { success: true, disposition: ['started', 'queued', 'handled'].includes(disposition) ? disposition : 'unknown' };

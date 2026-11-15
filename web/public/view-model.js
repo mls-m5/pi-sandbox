@@ -16,7 +16,7 @@ export class ChatModel {
   constructor() { this.reset(null, 0); }
   reset(generation, seq) {
     this.generation = generation; this.seq = seq; this.status = 'unknown'; this.messages = []; this.partial = null;
-    this.tools = []; this.quota = ''; this.synced = false; this.note = 'Hämtar historik…';
+    this.tools = []; this.quota = ''; this.synced = false; this.stateKnown = false; this.historyLoaded = false; this.note = 'Hämtar agentens tillstånd · historik läses vid behov.';
   }
   trim() {
     let chars = this.messages.reduce((sum, message) => sum + message.content.reduce((n, block) => n + (block.text?.length || 0), 0), 0);
@@ -26,13 +26,13 @@ export class ChatModel {
   }
   frame(frame) {
     if (frame?.generation !== this.generation || !Number.isSafeInteger(frame.seq) || frame.seq <= this.seq) return false;
-    if (frame.seq !== this.seq + 1) { this.synced = false; this.note = 'Uppdateringar saknas. Hämta historiken igen.'; }
+    if (frame.seq !== this.seq + 1) { this.synced = false; this.stateKnown = false; this.note = 'Uppdateringar saknas. Uppdatera tillståndet eller hämta historiken igen.'; }
     this.seq = frame.seq;
     const event = frame.event || {};
-    if (event.type === 'status' && ['unknown', 'idle', 'working', 'offline'].includes(event.status)) this.status = event.status;
-    if (event.type === 'agent_start') this.status = 'working';
-    if (event.type === 'agent_settled') this.status = 'idle';
-    if (event.type === 'runtime_fault') { this.status = 'unknown'; this.synced = false; this.note = 'Agentens RPC behöver lokal kontroll.'; }
+    if (event.type === 'status' && ['unknown', 'idle', 'working', 'offline'].includes(event.status)) { this.status = event.status; this.stateKnown = ['idle', 'working'].includes(event.status); }
+    if (event.type === 'agent_start') { this.status = 'working'; this.stateKnown = true; }
+    if (event.type === 'agent_settled') { this.status = 'idle'; this.stateKnown = true; }
+    if (event.type === 'runtime_fault') { this.status = 'unknown'; this.stateKnown = false; this.synced = false; this.note = 'Agentens RPC behöver lokal kontroll.'; }
     if (event.type === 'dummy_status') this.quota = text(event.state, 32);
     if (event.type === 'message_start' && event.message?.role === 'assistant') this.partial = { role: 'assistant', content: [] };
     if (event.type === 'message_update') {
@@ -60,11 +60,11 @@ export class ChatModel {
   }
   snapshot(result) {
     if (result?.generation !== this.generation || result.stable !== true || result.endSeq !== this.seq || !Array.isArray(result.data?.history?.messages)) {
-      this.synced = false; this.note = 'Historiken ändrades under hämtningen. Visar live; synkar igen när agenten vilar.'; return false;
+      this.synced = false; this.note = 'Historiken ändrades under hämtningen. Visar live; hämta senaste historiken igen vid behov när agenten vilar.'; return false;
     }
     this.messages = result.data.history.messages.slice(-100).map(cleanMessage); this.trim();
     if (this.status !== 'working') this.partial = null;
-    this.synced = true;
+    this.synced = true; this.historyLoaded = true;
     this.note = result.data.history.truncated ? 'Begränsad historik: äldre innehåll eller bilagor har utelämnats.' : 'Historik hämtad från agenten.';
     return true;
   }
