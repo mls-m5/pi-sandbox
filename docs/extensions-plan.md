@@ -48,6 +48,18 @@ pis --show                 # Full effective project configuration
 
 Use `"extensions": []` to opt out. Missing fields receive the current default (`pi-web-access`); explicit existing arrays are never appended to. Removing one entry keeps it removed, including on later configuration loads. Changing the program's defaults does not upgrade explicitly stored package versions.
 
+## Requested future default: subagents
+
+The user wants `npm:pi-subagents` available to all Pi agents/sessions launched through pis, based on successful use during the maintainability refactor. This is a requested future default, **not implemented**; no current project configuration is changed by this note. The requested package source is:
+
+```json
+{
+  "extensions": ["npm:pi-subagents"]
+}
+```
+
+This is a package-source example, not a request to replace existing extension arrays. Before implementation, select/verify a compatible version, review how existing projects opt in without overwriting explicit choices (including `extensions: []`), and test extension/skill availability plus child launch behavior within the existing sandbox, credential and project-lock boundaries. Availability must not automatically launch workers or authorize model spending; preserve explicit delegation consent and applicable Luna-only worker policy. This concerns Pi sessions, not the separate Claude Code mode.
+
 ## Supported specifications
 
 - `npm:package-name`
