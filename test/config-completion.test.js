@@ -20,6 +20,8 @@ test('configuration completion adds source defaults, hints and contextual fields
   assert.deepEqual(completeConfig(config), config);
   const direct = completeConfig({ ...old, credentials: { env: ['SOME_API_KEY'] }, extensions: [] });
   assert.deepEqual(direct.extensions, []);
+  const custom = completeConfig({ ...old, extensions: ['npm:custom@1.0.0'] });
+  assert.deepEqual(custom.extensions, ['npm:custom@1.0.0']);
   assert.deepEqual(direct.credentials, { env: ['SOME_API_KEY'] });
   assert.throws(() => validate(direct, { paths: false }), /Direct credential forwarding/);
   assert.ok(!('direct' in config.examples.credentials));

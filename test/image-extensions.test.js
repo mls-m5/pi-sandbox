@@ -22,13 +22,19 @@ test('startup progress is opt-in, timed and absent from protocol output by defau
 
 test('image startup loads installed package directories without remote install requests', () => {
   const command = imageCommand(['pi', '--continue', '-p', 'hello'], extensions, {});
-  assert.deepEqual(command.slice(0, 3), ['/usr/local/bin/pis-pi-real', '--extension', extensions[0].path]);
-  assert.equal(command.filter(value => value === '--extension').length, 1);
+  assert.deepEqual(extensions.map(entry => entry.source), ['npm:pi-web-access@0.40.0', 'npm:pi-subagents@0.88.1']);
+  assert.deepEqual(command.slice(0, 7), ['/usr/local/bin/pis-pi-real', '--extension', extensions[0].path, '--extension', extensions[1].path, '--skill', `${extensions[1].path}/skills`]);
+  assert.equal(command.filter(value => value === '--extension').length, 2);
   assert.deepEqual(command.slice(-3), ['--continue', '-p', 'hello']);
-  assert.deepEqual(imageCommand(['pi', '--continue'], extensions, { PIS_APT_SOCKET: '/pis/apt/request.sock' }), ['/usr/local/bin/pis-pi-real', '--extension', extensions[0].path, '--extension', '/opt/pis/request-apt.mjs', '--continue']);
+  assert.deepEqual(imageCommand(['pi', '--continue'], extensions, { PIS_APT_SOCKET: '/pis/apt/request.sock' }), ['/usr/local/bin/pis-pi-real', '--extension', extensions[0].path, '--extension', extensions[1].path, '--skill', `${extensions[1].path}/skills`, '--extension', '/opt/pis/request-apt.mjs', '--continue']);
   assert.deepEqual(imageCommand(['pi', '--no-extensions'], extensions, { PIS_APT_SOCKET: '/pis/apt/request.sock' }), ['/usr/local/bin/pis-pi-real', '--no-extensions']);
   assert.deepEqual(imageCommand(['pi', '-ne', '-e', '/project/probe.ts'], extensions, {}), ['/usr/local/bin/pis-pi-real', '-ne', '-e', '/project/probe.ts']);
+  assert.deepEqual(imageCommand(['pi', '--no-skills', '--'], extensions, {}), ['/usr/local/bin/pis-pi-real', '--extension', extensions[0].path, '--extension', extensions[1].path, '--no-skills', '--']);
+  assert.deepEqual(imageCommand(['pi', '-ns', 'prompt'], extensions, {}), ['/usr/local/bin/pis-pi-real', '--extension', extensions[0].path, '--extension', extensions[1].path, '-ns', 'prompt']);
+  assert.deepEqual(imageCommand(['pi', '--', '--no-skills'], extensions, {}), ['/usr/local/bin/pis-pi-real', '--extension', extensions[0].path, '--extension', extensions[1].path, '--skill', `${extensions[1].path}/skills`, '--', '--no-skills']);
   assert.deepEqual(imageCommand(['pi', 'install', 'npm:foo'], extensions, {}), ['/usr/local/bin/pis-pi-real', 'install', 'npm:foo']);
+  assert.deepEqual(imageCommand(['pi', 'auth', 'check'], extensions, {}), ['/usr/local/bin/pis-pi-real', 'auth', 'check']);
+  assert.deepEqual(imageCommand(['pi', '--continue'], [], {}), ['/usr/local/bin/pis-pi-real', '--continue']);
   assert.deepEqual(imageCommand(['bash', '-i'], extensions, {}), ['bash', '-i']);
 });
 
@@ -66,6 +72,7 @@ test('image context contains only generated build files and install specs affect
   const plan = imagePlan(config);
   assert.deepEqual(Object.keys(plan.files).sort(), ['Containerfile', 'codex-auto.mjs', 'extensions.json', 'fetch-bridge.mjs', 'image-entry.mjs', 'pi-launcher', 'probe-policy.json', 'request-apt.mjs', 'update-probe.mjs']);
   assert.match(plan.content, /NPM_CONFIG_IGNORE_SCRIPTS=true pi install 'npm:pi-web-access@0\.40\.0'/);
+  assert.match(plan.content, /NPM_CONFIG_IGNORE_SCRIPTS=true pi install 'npm:pi-subagents@0\.88\.1'/);
   assert.match(plan.content, /'build-essential'/);
   assert.match(plan.content, /'python3'/);
   assert.ok(!Object.values(plan.files).join('').includes(config.root));

@@ -33,7 +33,9 @@ async function fixture(t, all = false) {
   const base = fs.mkdtempSync('/tmp/pis-updates-test-'); t.after(() => fs.rmSync(base, { recursive: true, force: true }));
   const root = path.join(base, 'project'); fs.mkdirSync(root);
   const store = new Store(path.join(base, 'storage')), original = await store.register(root);
-  const config = structuredClone(original); config.updates = { enabled: true, includePinnedExtensions: all };
+  const config = structuredClone(original);
+  config.extensions = ['npm:pi-web-access@0.40.0'];
+  config.updates = { enabled: true, includePinnedExtensions: all };
   await store.save(config, original);
   return { base, store, config };
 }

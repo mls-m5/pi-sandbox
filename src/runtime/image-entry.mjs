@@ -25,9 +25,13 @@ export function imageCommand(command, extensions, env = process.env) {
   const end = args.indexOf('--');
   const options = end === -1 ? args : args.slice(0, end);
   if (options.includes('--no-extensions') || options.includes('-ne')) return command;
+  const subagents = extensions.find((entry) => entry.name === 'pi-subagents');
   return [
     command[0],
     ...extensions.flatMap((entry) => ['--extension', entry.path]),
+    ...(subagents && !options.includes('--no-skills') && !options.includes('-ns')
+      ? ['--skill', `${subagents.path}/skills`]
+      : []),
     ...(env.PIS_APT_SOCKET ? ['--extension', '/opt/pis/request-apt.mjs'] : []),
     ...(env.PIS_CODEX_AUTO_SOCKET ? ['--extension', '/opt/pis/codex-auto.mjs'] : []),
     ...args,

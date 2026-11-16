@@ -127,7 +127,11 @@ test('real Codex Pi provider: host refresh, synthetic JWT, compressed SSE fallba
   assert.ok(extensionReport.tools.includes('web_search'));
   assert.ok(received.some(request => request.body?.tools?.some(tool => tool.type === 'web_search')));
   assert.ok(received.some(request => request.body?.input?.some?.(item => item.type === 'function_call_output' && JSON.stringify(item).includes('Codex proxy works'))));
-  assert.deepEqual(extensionReport.packages.map(pkg => pkg.version), ['0.40.0']);
+  assert.deepEqual(extensionReport.packages, [
+    { source: 'npm:pi-web-access@0.40.0', version: '0.40.0' },
+    { source: 'npm:pi-subagents@0.88.1', version: '0.88.1' },
+  ]);
+  assert.ok(extensionReport.tools.includes('subagent') || extensionReport.tools.includes('subagents_enable'));
   assert.equal(received.length, 5);
   for (const request of received) {
     assert.ok(['/backend-api/codex/responses', '/backend-api/wham/usage'].includes(request.url));

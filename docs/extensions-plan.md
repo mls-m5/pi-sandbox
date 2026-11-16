@@ -24,17 +24,18 @@ This is a fragment: retain the rest of `project.json`. Run `pis --edit`, save, a
 
 The build runs Pi's own installer inside Podman with `PI_CODING_AGENT_DIR=/opt/pis/agent`. npm lifecycle scripts are disabled. No source package installation, extension factory, or npm script is executed by the host wrapper. Runtime provider credentials and host Pi configuration are not supplied to the build.
 
-Installed resources remain in the image under `/opt/pis`. An image-owned bootstrap supplies their local package roots to Pi's extension loader, so package manifests and Pi's API aliases work normally without runtime installation. Only extensions are activated through these arguments, not a package's skills/prompts/themes. The `pi` command inside `pis --bash` uses the same bootstrap.
+Installed resources remain in the image under `/opt/pis`. An image-owned bootstrap supplies their local package roots to Pi's extension loader, so package manifests and Pi's API aliases work normally without runtime installation. Extensions are activated through these arguments; configured `pi-subagents` additionally gets its packaged skills directory explicitly forwarded. Other packages' skills and all package prompts/themes remain excluded. The `pi` command inside `pis --bash` uses the same bootstrap.
 
 Packages are executable trusted code. They run with Pi's container permissions, not as host plugins. Package source/version pinning is not an approval or security boundary against malicious package code.
 
 ## Defaults and inventory
 
-The default image source is:
+The default image sources are:
 
 | Source | Purpose |
 | --- | --- |
 | `npm:pi-web-access@0.40.0` | Web search, source checking, content fetching, and stored-result retrieval |
+| `npm:pi-subagents@0.88.1` | Explicitly invoked Pi child-agent delegation and workflows |
 
 The former `pi-usage-bar-focus` package is intentionally not a default because its Codex percentage display is unreliable. Quota display is provided by the host-side `gnome-codex-usage/` extension instead.
 
@@ -46,19 +47,15 @@ pis -- list                # Image sources, then additional sandbox-state packag
 pis --show                 # Full effective project configuration
 ```
 
-Use `"extensions": []` to opt out. Missing fields receive the current default (`pi-web-access`); explicit existing arrays are never appended to. Removing one entry keeps it removed, including on later configuration loads. Changing the program's defaults does not upgrade explicitly stored package versions.
+Use `"extensions": []` to opt out. Missing fields receive the current defaults (`pi-web-access` and `pi-subagents`); explicit existing arrays are never appended to. Removing one entry keeps it removed, including on later configuration loads. Changing the program's defaults does not upgrade explicitly stored package versions.
 
-## Requested future default: subagents
+### Pi subagents
 
-The user wants `npm:pi-subagents` available to all Pi agents/sessions launched through pis, based on successful use during the maintainability refactor. This is a requested future default, **not implemented**; no current project configuration is changed by this note. The requested package source is:
+New projects and configurations with a missing `extensions` field include `npm:pi-subagents@0.88.1`. The package declares Pi >=1.2; the image Pi baseline is 1.5.0. On startup the bootstrap loads only its extension entry point and forwards its packaged `skills/` directory as an explicit `--skill` resource. It does not load package prompts or themes. `--no-skills`/`-ns` suppresses that skill forwarding, while `--no-extensions`/`-ne` suppresses all baked resources. The package itself does not automatically launch children; delegation remains a model/tool decision and does not authorize spending or change the parent model.
 
-```json
-{
-  "extensions": ["npm:pi-subagents"]
-}
-```
+Existing project arrays are not migrated or appended to, including `extensions: []`. To opt an existing project in, use `pis --edit` and add `"npm:pi-subagents@0.88.1"` to its existing `extensions` array, then save and launch/rebuild. Do not replace other selected packages unintentionally. Configuration edits change the image fingerprint; changes to the runtime bootstrap also affect the fingerprint, so the next start may rebuild even for projects with older explicit arrays.
 
-This is a package-source example, not a request to replace existing extension arrays. Before implementation, select/verify a compatible version, review how existing projects opt in without overwriting explicit choices (including `extensions: []`), and test extension/skill availability plus child launch behavior within the existing sandbox, credential and project-lock boundaries. Availability must not automatically launch workers or authorize model spending; preserve explicit delegation consent and applicable Luna-only worker policy. This concerns Pi sessions, not the separate Claude Code mode.
+Pi's npm child resolver selects the Pi package root from the actual Pi CLI entry point (rather than the `pi` wrapper), and the image wrapper resolves foreground `pi` launches directly to `/usr/local/bin/pis-pi-real`. The npm Pi child/peer-SDK execution paths have been inspected, but foreground/background execution has not been validated in a real image/container. Do not infer standalone Pi behavior from this npm setup. No host state, credentials, or Podman access is added for children. This availability change applies to Pi sessions only, not Claude Code mode.
 
 ## Supported specifications
 
