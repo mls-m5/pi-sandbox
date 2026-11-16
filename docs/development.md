@@ -39,8 +39,6 @@ API-key providers now use login-only credential sourcing: `pis --login openai|be
 
 Terminal editing/secret input is shared in `src/terminal-input.js`, with caller policy in API login and `web/secret-input.js`. No secret echo or credential-source change; admin empty input still requests generation and agent keys still require exactly 43 characters. Raw mode is restored and cancellation/error/signal listeners are removed; split UTF-8 chunks are decoded correctly. API key input is bounded at the existing 4096-byte credential limit, other API prompt input at 64 KiB. See the maintenance checklist/tests before adding another raw-mode input loop.
 
-This repository's `.pi/settings.json` scopes terminal model cycling to `openai-codex/gpt-6.1-sol` and `openai-codex/gpt-6-luna`, with Luna's per-model thinking set to low; no default model/provider or authentication is replaced. Use `/reload`, then `/model` or Ctrl+P in terminal Pi. Both IDs and the settings loader were checked against installed Pi 1.5.2 without network/model calls; provider-side quota/cost/speed are not benchmarked. This is manual same-session switching, not an automatic subagent or model router. Respect any explicit host proxy model allowlist; this file does not bypass it.
-
 ## Development checks
 
 ```sh
@@ -61,6 +59,8 @@ npm run test:storage      # separate, disk-heavy legacy/new image benchmark
 - Real-account exhaustion/refill/automatic continuation and complete Pi TUI approval/rebuild/resume/selected-branch behavior remain broader host gates. The user reported actual account switching working, but do not manufacture provider-wide certification from it.
 
 ## Remaining requested work / priorities
+
+**Requested Luna worker delegation, not manual model cycling:** the user wants the main agent to launch a cheaper worker or route work automatically. A mistakenly added manual Sol/Luna cycling configuration was removed. Worker delegation/model routing is not implemented; design an explicit bounded opt-in preserving sandbox/credential/project-lock boundaries, paid-call consent and review of worker results before enabling it.
 
 **Approved incremental readability cleanup:** [maintainability-plan.md](maintainability-plan.md) tracks formatting, automatic checks, shared terminal input, status logic, test helpers and later responsibility/documentation splits. The user approved one-time formatting of runtime/image sources too; resulting fingerprints can trigger next-start rebuilds. Keep behavior refactors in separate commits and do not mix this with deferred infrastructure features.
 
