@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { defaults } from '../src/config.js';
-import { piCommand, interactiveOutput, imagePlan, launchArgs, podmanEnvironment, CONTAINER_HOME, PI_VERSION } from '../src/container.js';
+import { piCommand, interactiveOutput, imagePlan, containerfile, BASE_IMAGE, launchArgs, podmanEnvironment, CONTAINER_HOME, PI_VERSION } from '../src/container.js';
+import * as planner from '../src/image-plan.js';
 
 const config = { ...defaults('abc12', '/work/project', 'app'), credentials: { env: [] } };
 const store = { projectDir: id => `/storage/projects/${id}` };
@@ -36,6 +37,13 @@ test('one-shot Pi tasks launched from a terminal do not wait for piped stdin EOF
   assert.ok(invocation(piCommand(['--mode', 'rpc'])).includes('--interactive'));
   assert.ok(invocation(['cat']).includes('--interactive'));
   assert.ok(launchArgs(store, config, piCommand(['-p', 'hello']), { cwd: config.root, image: 'image', tty: false, stdinIsTTY: false }).args.includes('--interactive'));
+});
+
+test('container API retains the extracted planner exports', () => {
+  assert.equal(imagePlan, planner.imagePlan);
+  assert.equal(containerfile, planner.containerfile);
+  assert.equal(BASE_IMAGE, planner.BASE_IMAGE);
+  assert.equal(PI_VERSION, planner.PI_VERSION);
 });
 
 test('only image configuration affects image fingerprint', () => {
