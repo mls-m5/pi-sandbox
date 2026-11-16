@@ -10,6 +10,7 @@ const sha = (value) => /^[a-f0-9]{40}$/.test(value);
 export function publicGithubUrl(value) {
   return (
     typeof value === 'string' &&
+    !/\s/.test(value) &&
     /^https:\/\/github\.com\/[A-Za-z0-9_-]+\/[A-Za-z0-9_.-]+(?:\.git)?$/.test(value) &&
     !value.endsWith('/..') &&
     !value.endsWith('/.')

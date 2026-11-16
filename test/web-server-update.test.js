@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { spawn } from 'node:child_process';
+import { spawn, execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { once } from 'node:events';
 import { createServerUpdater, publicGithubUrl } from '../web/server-update.js';
 import { hashPassword, randomKey } from '../web/common.js';
@@ -28,7 +29,7 @@ function fixture(t, options = {}) {
 async function finish(updater) { for (let i = 0; i < 100; i++) { const status = updater.status(); if (['current', 'failed', 'restarting'].includes(status.phase)) return status; await new Promise(resolve => setImmediate(resolve)); } throw new Error('update deadline'); }
 test('only public exact HTTPS GitHub repository sources are allowed', () => {
   assert.ok(publicGithubUrl('https://github.com/example/pis.git'));
-  for (const url of ['git@github.com:x/y', 'https://user:secret@github.com/x/y', 'https://github.com/x/y?token=x', 'https://github.com/x/y/../z', 'http://github.com/x/y', 'https://evil.invalid/x/y', 'https://github.com:443/x/y', 'https://github.com/x/y\nother']) assert.equal(publicGithubUrl(url), false);
+  for (const url of ['git@github.com:x/y', 'https://user:secret@github.com/x/y', 'https://github.com/x/y?token=x', 'https://github.com/x/y/../z', 'http://github.com/x/y', 'https://evil.invalid/x/y', 'https://github.com:443/x/y', 'https://github.com/x/y\nother', 'https://github.com/x/y\n']) assert.equal(publicGithubUrl(url), false);
 });
 test('explicit update uses isolated fetch ref, validates and fast-forwards before one restart', async t => {
   const f = fixture(t); assert.ok(f.updater.start()); assert.equal(f.updater.start(), false);
@@ -59,6 +60,26 @@ test('server update requires browser authentication, Origin, CSRF and explicit c
   assert.equal(starts, 0);
   assert.equal((await post('/server/update', { confirm: true }, credentials)).status, 202); assert.equal(starts, 1);
 });
+test('real local Git fast-forward and syntax checks activate without executing candidate code', { timeout: 15000 }, async t => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'pis-real-update-')); t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const upstream = path.join(directory, 'upstream'), root = path.join(directory, 'installation'); fs.mkdirSync(upstream);
+  const exec = promisify(execFile);
+  const git = async (cwd, args) => (await exec('/usr/bin/git', ['-c', 'core.hooksPath=/dev/null', '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', ...args], { cwd, env: { PATH: '/usr/bin:/bin', HOME: directory, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', LC_ALL: 'C' } })).stdout.trim();
+  await git(upstream, ['init', '-b', 'main']); fs.writeFileSync(path.join(upstream, 'app.js'), 'export const version = 1;\n'); await git(upstream, ['add', '.']); await git(upstream, ['commit', '-m', 'initial']);
+  await git(directory, ['clone', upstream, root]); await git(root, ['config', 'remote.origin.url', 'https://github.com/example/pis.git']);
+  fs.writeFileSync(path.join(upstream, 'app.js'), 'throw new Error("candidate must never execute during validation");\nexport const version = 2;\n'); await git(upstream, ['add', '.']); await git(upstream, ['commit', '-m', 'candidate']);
+  const expected = await git(upstream, ['rev-parse', 'HEAD']); let restarted = 0, cleanup;
+  const cleaned = new Promise(resolve => { cleanup = resolve; });
+  const updater = createServerUpdater({ root, enabled: true, restart: async () => { restarted++; }, run: async args => {
+    const local = [...args]; if (local[0] === 'fetch') local[local.indexOf('--') + 1] = upstream; // Local fixture replaces public network only.
+    const output = await git(root, local); if (local[0] === 'update-ref') cleanup(); return output;
+  } });
+  updater.start();
+  for (let i = 0; i < 500 && !['failed', 'restarting'].includes(updater.status().phase); i++) await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(updater.status().phase, 'restarting'); assert.equal(restarted, 1); await cleaned;
+  assert.equal(await git(root, ['rev-parse', 'HEAD']), expected); assert.equal(await git(root, ['status', '--porcelain']), '');
+});
+
 test('supervisor retains only password hash over explicit restart and does not restart ordinary exits', { timeout: 10000 }, async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pis-supervisor-')); t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.copyFileSync(new URL('../web/supervisor.js', import.meta.url), path.join(root, 'supervisor.mjs'));
