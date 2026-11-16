@@ -426,6 +426,10 @@ The standalone server starts no local agents and automatically saves agent IDs/l
 
 The form sends a normal prompt while idle and **steer** while the agent works. Under **Meddelandekö**, queue editable local steer/follow-up drafts, then explicitly deliver them. **Hämta tillbaka Pi-kön** confirms and clears the whole remaining native queue into drafts for editing; already-delivered instructions cannot be recalled. Unknown deliveries are never resent automatically. Drafts belong to that agent/runtime and are lost on logout/page close. See [queue behavior and limits](docs/web-control.md#steering-and-editable-message-queues).
 
+The header reports the selected agent's last-known **remaining context percentage** when native stats support it; otherwise **okänd**. This is context capacity, not subscription quota. Subagent tool cards distinguish a completed invocation from still-unconfirmed asynchronous work.
+
+Standalone launched through `pis --server --standalone` now has **Serverunderhåll → Uppdatera och starta om servern**. It requires admin confirmation, a clean installation checkout, public HTTPS GitHub origin and a fast-forward; dependency/supervisor changes stay manual. Independent agents are not stopped. Reload and log in again after restart; save local drafts first. No automatic rollback or interval checks; see [limits and recovery](docs/web-control.md#manual-server-update-from-the-gui).
+
 The agent has a spinning work indicator and explicit idle/error/unknown labels. Each correlated tool call and its literal result share one card: dashed while running, blue when completed, red on reported failure; interrupted/missing results stay unknown. Idle is not a guarantee that the task succeeded.
 
 Assistant replies support basic Markdown: headings, emphasis, code, bullet/numbered lists, read-only task checkboxes, pipe tables and explicit `[label](https://...)` links. Links open in a new tab without opener/referrer access; images and raw HTML stay disabled. Task checkboxes are display-only, not controls for the agent.

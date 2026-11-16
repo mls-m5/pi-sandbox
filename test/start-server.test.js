@@ -29,7 +29,7 @@ function fixture(t, { installed = true, node, bundled, npm = true } = {}) {
 test('server launcher prefers compatible PATH Node and preserves paths/arguments/exit status', t => {
   const f = fixture(t, { node: true, bundled: true });
   assert.equal(f.run(['--port', '43129', '--project', 'my-app', '--project', 'other-app']).status, 17);
-  assert.deepEqual(f.recorded(), ['path-node', path.join(f.root, 'web/cli.js'), 'start', '--port', '43129', '--project', 'my-app', '--project', 'other-app']);
+  assert.deepEqual(f.recorded(), ['path-node', path.join(f.root, 'web/supervisor.js'), 'start', '--port', '43129', '--project', 'my-app', '--project', 'other-app']);
 });
 
 test('server launcher uses a compatible bundled Node when PATH Node is too old', t => {
@@ -42,7 +42,7 @@ test('server launcher falls back to npm Node 24 without installing/changing a de
   const f = fixture(t, { node: false, bundled: false });
   const result = f.run(['--password-stdin']);
   assert.equal(result.status, 17);
-  assert.deepEqual(f.recorded(), ['npm', 'exec', '--yes', '--package=node@24', '--', 'node', path.join(f.root, 'web/cli.js'), 'start', '--password-stdin']);
+  assert.deepEqual(f.recorded(), ['npm', 'exec', '--yes', '--package=node@24', '--', 'node', path.join(f.root, 'web/supervisor.js'), 'start', '--password-stdin']);
   assert.match(result.stderr, /may download/);
 });
 

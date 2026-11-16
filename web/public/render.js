@@ -28,9 +28,12 @@ export function renderActivity(document, root, status, label) {
 function toolCard(document, tool) {
   const state = ['running', 'succeeded', 'failed'].includes(tool.state) ? tool.state : 'unknown';
   const card = document.createElement('section');
-  card.className = `tool-card tool-${state}`;
+  const delegated = tool.name === 'subagent';
+  card.className = `tool-card tool-${state}${delegated ? ' tool-delegation' : ''}`;
   const title = document.createElement('strong');
-  title.textContent = `Verktygsanrop: ${tool.name || 'okänt verktyg'}`;
+  title.textContent = delegated
+    ? 'Subagenter · delegeringsanrop'
+    : `Verktygsanrop: ${tool.name || 'okänt verktyg'}`;
   const status = document.createElement('div');
   renderActivity(
     document,
@@ -43,9 +46,13 @@ function toolCard(document, tool) {
           ? 'failed'
           : 'unknown',
     state === 'running'
-      ? 'Kör…'
+      ? delegated
+        ? 'Delegeringsanrop pågår…'
+        : 'Kör…'
       : state === 'succeeded'
-        ? 'Klart'
+        ? delegated
+          ? 'Anrop besvarat · underagentens arbetsstatus är inte bekräftad'
+          : 'Klart'
         : state === 'failed'
           ? 'Misslyckades'
           : 'Status okänd · resultat inte bekräftat',
@@ -59,6 +66,12 @@ function toolCard(document, tool) {
         ? 'Inget bekräftat resultat tillgängligt.'
         : 'Inget textresultat.');
   card.append(title, status, output);
+  if (delegated) {
+    const note = document.createElement('small');
+    note.textContent =
+      'Asynkront arbete kan fortsätta efter svaret. Detta visar verktygsanropet, inte en fullständig lista över underagenter eller deras kontext/kvot.';
+    card.append(note);
+  }
   if (tool.truncated) {
     const note = document.createElement('small');
     note.textContent = '[Resultatet är förkortat eller innehåll har utelämnats]';

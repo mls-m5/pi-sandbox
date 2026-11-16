@@ -4,7 +4,7 @@
 set -euo pipefail
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
-ENTRY="$ROOT/web/cli.js"
+ENTRY="$ROOT/web/supervisor.js"
 MODE=(start)
 if [[ "${1:-}" == "--connect" ]]; then
   shift
@@ -36,7 +36,7 @@ if [[ "${1:-}" == "--connect" ]]; then
       'Advanced GUI keys use --enrollment-key (hidden input) or --key-stdin. The default no longer asks for a GUI key.' \
       'Legacy register/run commands remain available for direct agent keys. Never put keys in command arguments.' \
       'Host-private profiles under PIS_HOME/web-agents; keys never mounted into the sandbox. Direct HTTP remains loopback-only.' \
-      'After server restart repeat connect with a fresh approved code. Ctrl-C stops the local agent, not the server.'
+      'Standalone restart retains registrations with the same storage/port. Ctrl-C stops the local agent, not the server.'
     exit 0
   fi
 fi

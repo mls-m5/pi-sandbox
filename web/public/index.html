@@ -63,6 +63,11 @@
             Nyckeln rensas när den används.
           </p>
         </details>
+        <details>
+          <summary>Serverunderhåll</summary>
+          <button id="server-update" type="button" disabled>Uppdatera och starta om servern</button>
+          <p id="server-update-note" role="status"></p>
+        </details>
         <button id="revoke-agent" type="button" disabled>Återkalla vald agentnyckel</button>
         <p id="registration-action" role="status"></p>
       </aside>
@@ -72,6 +77,11 @@
           <button id="refresh" disabled>Hämta senaste historik</button>
         </div>
         <p id="state" role="status"></p>
+        <small
+          id="context-usage"
+          title="Senast rapporterat kontextutrymme för vald agent och modell. Inte abonnemangskvot eller garanterad plats för nästa svar."
+          >Kontext: okänd</small
+        >
         <p id="sync-note"></p>
         <div class="chat-details">
           <details>

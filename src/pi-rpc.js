@@ -175,6 +175,7 @@ export class PiRpc extends EventEmitter {
     if (
       ![
         'get_state',
+        'get_session_stats',
         'get_messages',
         'prompt',
         'steer',
@@ -255,7 +256,7 @@ export function validateControlCommand(value) {
     value.generation.length > 64 ||
     typeof value.id !== 'string' ||
     !/^[A-Za-z0-9_-]{1,64}$/.test(value.id) ||
-    !['state', 'history', 'prompt', 'steer', 'follow_up', 'take_queue', 'stop'].includes(
+    !['state', 'stats', 'history', 'prompt', 'steer', 'follow_up', 'take_queue', 'stop'].includes(
       value.action,
     )
   )
@@ -307,6 +308,7 @@ export class PiControl {
     if (this.seen.size >= this.maxCommands) throw failure('control_id_limit');
     this.seen.set(command.id, hash);
     if (command.action === 'state') return this.rpc.request('get_state');
+    if (command.action === 'stats') return this.rpc.request('get_session_stats');
     if (command.action === 'history') return this.rpc.request('get_messages');
     if (this.mutating) throw failure('control_mutation_pending');
     if (command.action === 'prompt' && this.rpc.status !== 'idle')

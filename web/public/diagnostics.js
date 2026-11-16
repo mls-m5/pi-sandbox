@@ -51,7 +51,9 @@ export const safeTrace = (trace) =>
     ? trace.replaceAll('-', '').slice(0, 12)
     : 'none';
 export const safeAction = (action) =>
-  ['state', 'history', 'prompt', 'steer', 'follow_up', 'take_queue', 'stop'].includes(action)
+  ['state', 'stats', 'history', 'prompt', 'steer', 'follow_up', 'take_queue', 'stop'].includes(
+    action,
+  )
     ? action
     : 'unknown';
 export function resultCode(result) {

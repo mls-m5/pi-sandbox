@@ -5,7 +5,7 @@
 ## Local API and ownership
 
 - `PiRpc(child, options)` attaches to an already-created child with piped stdin/stdout/stderr. The trusted caller chooses the executable, project and environment and owns project locks, signals and final process cleanup. No remote executable/path selection is provided.
-- `request()` admits only `get_state`, `get_messages`, `prompt`, `steer`, `follow_up`, `clear_queue`, `abort`. It resolves the correlated native response, including `success: false`; this is acceptance/command handling, not task completion. This low-level API is for trusted local callers only.
+- `request()` admits only `get_state`, `get_session_stats`, `get_messages`, `prompt`, `steer`, `follow_up`, `clear_queue`, `abort`. It resolves the correlated native response, including `success: false`; this is acceptance/command handling, not task completion. This low-level API is for trusted local callers only.
 - `event` emits parsed **untrusted native records**, synchronously, without retaining a transcript. A future network layer must project/filter these records, bound its own queues and never block local consumption while disconnected. Native responses/events can contain sensitive code, paths, images and secrets; they are not network-safe DTOs.
 - `status` is `unknown` initially, then `idle`/`working` based on a current state snapshot and lifecycle events; only `agent_settled`, not `agent_end`, signals idle after automatic work. `offline` requires process failure/close, not merely stdout EOF. Idle does not mean the goal is complete.
 - Blocking extension `select`/`confirm`/`input`/`editor` requests are automatically cancelled and reported through `dialog_cancelled` with only the method. Other UI records remain untrusted events. This is not host approval; no Git/apt action is added.
@@ -27,6 +27,7 @@ A timeout is an **ambiguous outcome**, not an instruction to retry. Timed-out wr
 Allowed actions:
 
 - `state`: native `get_state`.
+- `stats`: read-only native `get_session_stats`. Projection returns only `contextUsage` (bounded numeric contextWindow/tokens/percent or null); excludes cumulative tokens, cost, session paths and arbitrary metadata. Missing model/window or null post-compaction usage is unknown, never fabricated remaining subscription quota. It uses ordinary framing/correlation/snapshot/tombstone rules and no model turn.
 - `history`: native `get_messages`.
 - `prompt`: nonblank text, maximum 64 KiB UTF-8; no images, native streamingBehavior option or extra fields. Requires known idle state; callers cannot silently convert a busy prompt into a queue mutation. A mutation reservation prevents concurrent double submission before acceptance. Prompt text may still invoke installed extension commands: this is sandbox control, not an extension security boundary.
 - `steer` / `follow_up`: the same strict bounded text schema, but require known working state. They call only the corresponding native Pi command with `message`; unknown/offline/idle states are refused. Steer is delivered at Pi's next safe tool/LLM boundary; follow-up waits until the current work/steering is done. Native input handlers/skill/template expansion still apply. Native acceptance (`queued`/`handled`/unknown disposition) is not completion or proof that text remains queued.

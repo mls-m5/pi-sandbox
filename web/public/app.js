@@ -8,6 +8,7 @@ import { createEnrollmentUI } from './enrollment-ui.js';
 import { createPendingCommands } from './pending-commands.js';
 import { createPairingUI } from './pairing-ui.js';
 import { createMessageQueue } from './message-queue.js';
+import { createServerUpdateUI } from './server-update.js';
 
 const byId = (id) => document.getElementById(id);
 const model = new ChatModel(),
@@ -28,7 +29,8 @@ let reconnectTimer,
   syncAttempts = 0,
   mutation = false,
   drawing = false,
-  nativeQueue = null;
+  nativeQueue = null,
+  contextUsage = null;
 const online = () =>
   connected &&
   agents.some(
@@ -41,6 +43,10 @@ const enrollment = createEnrollmentUI({
   getSession: () => csrf,
   getSelected: () => selected,
   draw: () => draw(),
+});
+const serverUpdate = createServerUpdateUI({
+  document,
+  getSession: () => (wantConnection ? csrf : null),
 });
 const pairing = createPairingUI({
   document,
@@ -86,6 +92,11 @@ function draw() {
       : 'Frånkopplad · inga meddelanden skickas om';
     const selectedAgent = agents.find((agent) => agent.id === selected);
     byId('agent-title').textContent = selectedAgent?.label || 'Välj en agent';
+    const remaining = contextUsage?.generation === model.generation ? contextUsage.percent : null;
+    byId('context-usage').textContent =
+      online() && model.stateKnown && typeof remaining === 'number'
+        ? `Kontext: ${Math.max(0, 100 - remaining).toFixed(1)} % kvar · senast rapporterat`
+        : 'Kontext: okänd';
     byId('mode-note').textContent = agents.some((agent) => agent.kind === 'pi')
       ? 'Riktiga Pi-projekt · modell-anrop kan kosta · inga värdgodkännanden'
       : 'Bara dummy · inga modelltokens · inga värdgodkännanden';
@@ -113,6 +124,7 @@ function draw() {
         ? `Senast rapporterad Pi-kö: ${nativeQueue.steer} steer, ${nativeQueue.followUp} uppföljningar. Kan redan ha levererats.`
         : 'Pi-kön är inte läst. Hämta tillbaka kvarvarande kö för att redigera; detta tömmer Pi-kön.';
     messageQueue.draw();
+    serverUpdate.draw();
     byId('stop').disabled = !online() || mutation;
     byId('refresh').disabled = !online() || syncing;
     byId('revoke-agent').disabled = !connected || !selected;
@@ -213,6 +225,7 @@ async function synchronize({ history: loadHistory = false } = {}) {
       model.note = 'Tillståndet ändrades under kontrollen. Visar live; kontrollera igen vid behov.';
       return;
     }
+    void refreshContext(version);
     if (!loadHistory) {
       model.note = model.historyLoaded
         ? 'Livevy redo. Hämtad historik är en begränsad ögonblicksbild; läs igen vid behov.'
@@ -239,6 +252,26 @@ async function synchronize({ history: loadHistory = false } = {}) {
     }
   }
 }
+async function refreshContext(version) {
+  const generation = model.generation;
+  const result = await command('stats');
+  if (version !== selection || generation !== model.generation) return;
+  const usage = result.data?.contextUsage;
+  contextUsage =
+    result.data?.success === true &&
+    result.stable === true &&
+    result.endSeq === model.seq &&
+    Number.isSafeInteger(usage?.contextWindow) &&
+    usage.contextWindow > 0 &&
+    Number.isSafeInteger(usage.tokens) &&
+    usage.tokens >= 0 &&
+    typeof usage.percent === 'number' &&
+    Number.isFinite(usage.percent) &&
+    usage.percent >= 0
+      ? { ...usage, generation }
+      : null;
+  draw();
+}
 function choose(id) {
   if (!connected) return;
   failPending();
@@ -251,6 +284,7 @@ function choose(id) {
   clearTimeout(syncTimer);
   model.reset(null, 0);
   nativeQueue = null;
+  contextUsage = null;
   byId('command-note').textContent = '';
   socket.send(JSON.stringify({ v: 1, type: 'select', agentId: id, id: selectToken }));
   draw();
@@ -315,6 +349,7 @@ function receive(value) {
   if (value.type === 'selected') {
     if (value.id !== selectToken) return;
     model.reset(value.generation, value.seq);
+    contextUsage = null;
     model.status = value.status;
     if (value.generation) void synchronize({ history: true });
     else {
@@ -330,6 +365,12 @@ function receive(value) {
             ? { steer: event.steeringCount, followUp: event.followUpCount }
             : null;
       }
+      if (
+        ['auto_compaction_start', 'auto_compaction_end', 'runtime_fault'].includes(
+          value.frame.event?.type,
+        )
+      )
+        contextUsage = null;
       if (value.frame.event?.type === 'agent_start') syncAttempts = 0;
       if (value.frame.event?.type === 'agent_settled') scheduleSync();
       draw();
@@ -404,6 +445,7 @@ function showLogin() {
   enrollment.clear();
   pairing.clear();
   messageQueue.clear();
+  serverUpdate.clear();
   nativeQueue = null;
   csrf = undefined;
   wantConnection = false;
@@ -517,6 +559,7 @@ globalThis.addEventListener('pagehide', () => {
   enrollment.clear();
   pairing.clear();
   messageQueue.clear();
+  serverUpdate.clear();
   wantConnection = false;
   selection++;
   clearTimeout(reconnectTimer);

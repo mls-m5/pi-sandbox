@@ -181,6 +181,22 @@ export function projectHistory(source, window) {
   return result;
 }
 
+export function projectContextUsage(source) {
+  const usage = source?.contextUsage;
+  if (!object(usage) || !Number.isSafeInteger(usage.contextWindow) || usage.contextWindow <= 0)
+    return null;
+  const tokens = Number.isSafeInteger(usage.tokens) && usage.tokens >= 0 ? usage.tokens : null;
+  // Null after compaction must stay unknown, never be presented as an empty window.
+  const percent =
+    tokens !== null &&
+    typeof usage.percent === 'number' &&
+    Number.isFinite(usage.percent) &&
+    usage.percent >= 0
+      ? usage.percent
+      : null;
+  return { contextWindow: usage.contextWindow, tokens, percent };
+}
+
 export function projectState(source) {
   const state = object(source) ? source : {};
   const result = {};
@@ -419,6 +435,8 @@ export class PiView extends EventEmitter {
       else if (response.success !== true) data = { success: false, error: 'pi_command_rejected' };
       else if (command.action === 'state')
         data = { success: true, state: projectState(response.data) };
+      else if (command.action === 'stats')
+        data = { success: true, contextUsage: projectContextUsage(response.data) };
       else if (command.action === 'history')
         data = {
           success: true,

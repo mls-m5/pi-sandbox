@@ -160,6 +160,18 @@ test('tool call, live updates and final result share one card, including failed 
   assert.equal(cards(root)[0].className, 'tool-card tool-succeeded');
 });
 
+test('subagent tool completion describes an acknowledged call, not completion of asynchronous children', () => {
+  const model = new ChatModel(); model.reset(generation, 0); model.status = 'working'; model.stateKnown = true;
+  model.frame(frame(1, { type: 'tool_execution_start', toolCallId: 'delegation', toolName: 'subagent' }));
+  const root = new Element('div'); renderChat(document, root, model);
+  assert.match(allText(root), /Subagenter/); assert.match(allText(root), /Delegeringsanrop pågår/);
+  model.frame(frame(2, { type: 'tool_execution_end', toolCallId: 'delegation', result: message('toolResult', '<script>async run started</script>') }));
+  renderChat(document, root, model);
+  assert.match(allText(root), /underagentens arbetsstatus är inte bekräftad/);
+  assert.match(allText(root), /Asynkront arbete kan fortsätta/);
+  assert.ok(!descendants(root).some(node => node.tag === 'script'));
+});
+
 test('interrupted/missed tool completion stays unknown, never falsely successful or indefinitely spinning', () => {
   const model = new ChatModel(); model.reset(generation, 0);
   model.frame(frame(1, { type: 'agent_start' }));

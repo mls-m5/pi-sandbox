@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { spawn } from 'node:child_process';
 import { PiRpc, PiControl } from '../src/pi-rpc.js';
-import { VIEW_LIMITS, viewText, projectMessage, projectHistory, projectState, projectEvent, PiView } from '../src/pi-view.js';
+import { VIEW_LIMITS, viewText, projectMessage, projectHistory, projectState, projectContextUsage, projectEvent, PiView } from '../src/pi-view.js';
 
 const bytes = value => Buffer.byteLength(JSON.stringify(value));
 const secret = 'SECRET_NOT_FOR_VIEW';
@@ -92,6 +92,13 @@ test('bounded history keeps the newest contiguous suffix with explicit omission/
   assert.equal(huge.omittedMessages, 1000 - huge.messages.length);
   assert.equal(projectHistory(null).truncated, true);
   assert.deepEqual(projectHistory([]), { messages: [], totalMessages: 0, omittedMessages: 0, truncated: false });
+});
+
+test('context projection keeps only current window estimates and preserves unknown after compaction', () => {
+  assert.deepEqual(projectContextUsage({ contextUsage: { tokens: 60000, contextWindow: 200000, percent: 30, apiKey: 'secret' }, cost: 999, sessionFile: 'secret' }), { tokens: 60000, contextWindow: 200000, percent: 30 });
+  assert.deepEqual(projectContextUsage({ contextUsage: { tokens: null, contextWindow: 200000, percent: 0 } }), { tokens: null, contextWindow: 200000, percent: null });
+  for (const value of [undefined, {}, { contextUsage: { contextWindow: -1 } }, { contextUsage: { contextWindow: Infinity } }]) assert.equal(projectContextUsage(value), null);
+  assert.equal(projectContextUsage({ contextUsage: { tokens: 123, contextWindow: 200, percent: NaN } }).percent, null);
 });
 
 test('state projection excludes host/session paths and raw model connection configuration', () => {

@@ -51,7 +51,7 @@ Usage:
   pis --server --project NAME [--project OTHER] # experimental real Pi projects
   pis --server --diagnostics         # safe request metadata; no chat/auth payloads
   pis --server --help                # server startup options
-  pis --server --standalone          # empty in-memory registry, no local agents
+  pis --server --standalone          # private persistent registry, no local agents
   pis --connect                     # request code approval for this local project
   pis --connect --help               # saved server/overrides and advanced commands
   pis --forward ssh://[USER@]HOST    # Browser link via SSH; defaults 22/43128

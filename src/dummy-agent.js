@@ -253,7 +253,9 @@ export async function createDummyAgent(
       response(false, undefined, 'Unsupported dummy command fields.');
       return;
     }
-    if (record.type === 'get_state') {
+    if (record.type === 'get_session_stats') {
+      response(true, {}); // Dummy has no model/context window; never invent a percentage.
+    } else if (record.type === 'get_state') {
       response(true, {
         sessionId,
         sessionName: 'Offline dummy (no tokens)',

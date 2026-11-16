@@ -8,6 +8,8 @@ import { resolveWebProjects } from '../src/project-rpc.js';
 import { createDiagnostics } from './diagnostics.js';
 import { Store } from '../src/store.js';
 import { openRegistrationStore } from './registration-store.js';
+import { createServerUpdater } from './server-update.js';
+import { fileURLToPath } from 'node:url';
 
 import { readAdminPassword } from './secret-input.js';
 const options = {
@@ -39,6 +41,7 @@ async function stop() {
       ]);
       await server?.close();
       registrationStore?.close();
+      if (process.connected) process.disconnect();
       if (results.some((result) => result.status === 'rejected')) process.exitCode = 1;
     } finally {
       clearTimeout(deadline);
@@ -94,14 +97,30 @@ try {
     console.error(
       'Säker diagnostik aktiverad: dela bara rader med prefixet "pis web diagnostic:". Dela inte lösenordsraden, hela logg-/state-mappar eller råa nätverkssvar.',
     );
-  let password = await readAdminPassword({ piped: options.piped }),
+  let inheritedHash;
+  if (process.send) {
+    inheritedHash = await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('Supervisor unavailable.')), 5000);
+      process.once('message', (message) => {
+        clearTimeout(timer);
+        if (message?.type !== 'supervisor_config') reject(new Error('Supervisor unavailable.'));
+        else resolve(message.passwordHash);
+      });
+      process.send({ type: 'supervisor_ready' });
+    });
+    process.on('disconnect', () => {
+      void stop();
+    });
+  }
+  let password = inheritedHash ? undefined : await readAdminPassword({ piped: options.piped }),
     generatedPassword;
   if (password === '') {
     password = randomKey();
     generatedPassword = password;
   }
-  const passwordHash = await hashPassword(password);
+  const passwordHash = inheritedHash || (await hashPassword(password));
   password = undefined;
+  if (process.send) process.send({ type: 'password_hash', passwordHash });
   const agents = options.standalone
     ? []
     : projects.length
@@ -127,7 +146,18 @@ try {
       });
     }
   }
+  const updater = createServerUpdater({
+    root: fileURLToPath(new URL('../', import.meta.url)),
+    enabled: options.standalone && Boolean(process.send),
+    restart: async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      if (stopping || !process.connected) throw new Error('Supervisor unavailable.');
+      process.send({ type: 'restart_server' });
+      await stop();
+    },
+  });
   server = await startWebServer({
+    updater,
     passwordHash,
     port: options.port,
     diagnostic,

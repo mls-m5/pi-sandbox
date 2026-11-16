@@ -27,6 +27,7 @@ const assets = new Map([
   ['/', ['index.html', 'text/html; charset=utf-8']],
   ['/app.js', ['app.js', 'text/javascript; charset=utf-8']],
   ['/message-queue.js', ['message-queue.js', 'text/javascript; charset=utf-8']],
+  ['/server-update.js', ['server-update.js', 'text/javascript; charset=utf-8']],
   ['/pairing-ui.js', ['pairing-ui.js', 'text/javascript; charset=utf-8']],
   ['/activity.js', ['activity.js', 'text/javascript; charset=utf-8']],
   ['/pending-commands.js', ['pending-commands.js', 'text/javascript; charset=utf-8']],
@@ -52,6 +53,7 @@ export async function startWebServer({
   pairingMs = PAIRING_MS,
   diagnostic = () => {},
   saveRegistrations = () => {},
+  updater,
 } = {}) {
   if (!/^[a-f0-9]{64}$/.test(passwordHash?.salt) || !/^[a-f0-9]{128}$/.test(passwordHash?.hash))
     throw new Error('Invalid admin password hash.');
@@ -208,6 +210,38 @@ export async function startWebServer({
         res,
         session ? 200 : 401,
         session ? { csrf: session.csrf } : { error: 'login_required' },
+      );
+      return;
+    }
+    if (['GET', 'POST'].includes(req.method) && req.url === '/server/update') {
+      const session = sessionFor(req);
+      if (
+        !session ||
+        req.headers.authorization ||
+        (req.method === 'POST' &&
+          (req.headers.origin !== origin || req.headers['x-csrf-token'] !== session.csrf))
+      ) {
+        json(res, 403, { error: 'invalid_session' });
+        return;
+      }
+      if (req.method === 'GET') {
+        json(res, 200, updater?.status() || { phase: 'unavailable' });
+        return;
+      }
+      const value = await body(req);
+      if (!exact(value, ['confirm']) || value.confirm !== true) {
+        json(res, 400, { error: 'update_confirmation_required' });
+        return;
+      }
+      if (!sessionFor(req) || sessionFor(req).key !== session.key) {
+        json(res, 403, { error: 'invalid_session' });
+        return;
+      }
+      const accepted = updater?.start() === true;
+      json(
+        res,
+        accepted ? 202 : 409,
+        accepted ? { phase: 'checking' } : { error: 'update_unavailable_or_busy' },
       );
       return;
     }

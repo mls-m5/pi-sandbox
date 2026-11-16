@@ -77,7 +77,7 @@ test('actual browser app module logs in, selects, chats, recovers dummy quota an
   await until(() => content(element('state')).includes('Startar container'));
   connector = await startDummyConnector({ origin: server.origin, token });
   const native = connector.rpc.request.bind(connector.rpc), reads = [];
-  connector.rpc.request = (type, ...args) => { reads.push(type); return native(type, ...args); };
+  connector.rpc.request = (type, ...args) => { reads.push(type); if (type === 'get_session_stats') return Promise.resolve({ success: true, data: { contextUsage: { tokens: 60000, contextWindow: 200000, percent: 30 }, sessionFile: 'DO_NOT_PROJECT' } }); return native(type, ...args); };
   await until(() => !element('send').disabled);
   await until(() => !element('refresh').disabled);
   assert.equal(historyReads('dummy-1'), 1, 'Opening the now-online agent must automatically read history once.');
@@ -132,6 +132,8 @@ test('actual browser app module logs in, selects, chats, recovers dummy quota an
   await until(() => content(element('messages')).includes('Lorem ipsum'));
   assert.ok(content(element('messages')).includes(hostile));
   await until(() => !element('quota').disabled); // Send is now also enabled for steer while working.
+  await until(() => element('context-usage').textContent.includes('70.0 % kvar'));
+  assert.ok(!element('context-usage').textContent.includes('DO_NOT_PROJECT'));
   // Use a short timed episode through the actual input handler (button uses 5s).
   element('prompt').value = '/dummy quota 1'; await element('prompt-form').dispatch('submit');
   await until(() => content(element('state')).includes('waiting'));
