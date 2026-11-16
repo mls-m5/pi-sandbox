@@ -54,6 +54,8 @@ Usage:
   pis --server --standalone          # empty in-memory registry, no local agents
   pis --connect                     # request code approval for this local project
   pis --connect --help               # saved server/overrides and advanced commands
+  pis --forward ssh://[USER@]HOST    # Browser link via SSH; defaults 22/43128
+  pis --forward --help              # Ports, known hosts and shutdown details
   pis [--project ID_OR_NAME] [--agent pi|claude] [--fresh] [-- AGENT_ARGS...]
   pis [--project ID_OR_NAME] --wait-codex # wait for quota, resume saved Pi task
   pis [--project ID_OR_NAME] [--fresh] --auto-wait-codex [-- PI_ARGS...]

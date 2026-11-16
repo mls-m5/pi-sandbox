@@ -53,9 +53,29 @@ Install OpenSSH on the client host and establish key-based login plus an indepen
 
 Each connector owns one `ssh -N -L` process for enrollment/preflight/runtime. Forwarding listens on a private Unix socket in a 0700 temporary directory, not a public or guessed local TCP port. HTTP/WS continue to use the remote server's canonical loopback origin over that socket, so exact Host/Origin gates remain unchanged. The saved private profile retains only the SSH destination and machine credential, never a temporary port/socket. `run PROFILE` reopens its own tunnel; different clients can connect simultaneously without TCP port clashes. No host keys, SSH agents or host home directories are mounted into Pi containers.
 
-Shutdown/failure/cancellation closes the owned tunnel and removes its temporary socket when process exit is confirmed. No raw SSH stderr is logged. If the tunnel dies during existing work, local runtime work is not silently replayed or reenrolled; the existing connector sees a disconnect. Stop it explicitly and reconnect after resolving SSH. There is no automatic tunnel replacement, password login, autossh daemon, public HTTP/TLS listener or agent-to-agent bridge. Browser/admin access is separate: open the UI on the server host or use your own verified SSH browser-port forward; this command forwards the connector only.
+Shutdown/failure/cancellation closes the owned tunnel and removes its temporary socket when process exit is confirmed. No raw SSH stderr is logged. If the tunnel dies during existing work, local runtime work is not silently replayed or reenrolled; the existing connector sees a disconnect. Stop it explicitly and reconnect after resolving SSH. There is no automatic tunnel replacement, password login, autossh daemon, public HTTP/TLS listener or agent-to-agent bridge. Browser/admin access is separate: `--connect` forwards the connector only. Use `pis --forward` below to open the web interface locally.
 
 Tests use a fake SSH executable and actual private socket relay, HTTP/WS, pairing and dummy CLI processes. They cover argument validation, strict-key options, one-tunnel lifecycle, scope checks, private profiles and shutdown cleanup. **Actual OpenSSH host-key/authentication behavior and two-computer deployment were not tested in this sandbox (SSH executable unavailable).** Do not interpret these tests as production deployment certification.
+
+## Open the browser UI through SSH
+
+```sh
+pis --forward ssh://alice@server.example
+# Open the printed link: http://127.0.0.1:43128/
+```
+
+This is independent of agent enrollment and creates no project/profile/default-server configuration. It binds **only 127.0.0.1:43128**, opens its own strict-key SSH transport, then prints the browser link. Keep the terminal open. Ctrl-C closes this forward and its connections, not the remote server or agents. It launches no browser automatically, and never reconnects/replays after tunnel failure. Requires Node >=22.19 on PATH (unlike `--server`/`--connect`, no npm Node fallback).
+
+SSH defaults to 22 and the remote pis port to 43128; username is optional. Override with the same address syntax:
+
+```sh
+pis --forward ssh://alice@server.example:2222/43129
+# Open http://127.0.0.1:43129/
+```
+
+**The local browser port equals the remote pis port**, preserving the exact Host/Origin, cookies, CSP and WebSocket checks without proxy header rewriting. A busy local port fails clearly before opening SSH; there is no hidden random-port fallback. Close another forward/local server using that port, or deliberately run the remote server on another port and specify the matching `/PIS_PORT`. Multiple agent connector tunnels do not use these browser TCP ports and can coexist normally. For one remote server, a single browser forward can serve multiple tabs (bounded to 32 simultaneous TCP connections); do not start one browser forward per agent.
+
+Other users/processes on the client machine can access a loopback TCP listener; the server's normal authenticated administrator login is still required. The listener is not exposed to LAN/public interfaces. All SSH key/known-host/config limitations described above apply. Fake SSH plus actual local TCP/Unix HTTP and WebSocket tests verify forwarding/link/port-conflict/cleanup behavior; real OpenSSH and graphical-browser testing remain host gates.
 
 ### Overrides and token-free check
 

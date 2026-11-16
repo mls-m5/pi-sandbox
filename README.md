@@ -390,6 +390,15 @@ The launcher selects a compatible local/bundled Node or uses npm-provided Node 2
 
 Choose a hidden temporary password of at least 20 characters, or press Enter to generate one and display it once in the terminal (warning: visible in terminal/log captures), then open **http://127.0.0.1:43128**. Select either dummy agent to try streaming chat, history, tools, stop and the **Simulera kvotstopp 5 s** button. For real projects you can open the URL as soon as the server announces it: terminal/GUI startup stages show whether it is checking Podman, preparing an image, starting Pi/extensions or waiting for agent registration. Once connections are ready the terminal stays open to run the server; it is not a stalled startup. The server binds loopback only; all demo credentials/history are memory-only and reset on exit. This does not launch Pi/Podman or spend model tokens. Experimental real Pi projects can be selected explicitly with `./start_server.sh --project NAME` (use `pis --list` for existing names/IDs); their prompts can spend quota/credits. This path has fake-Podman tests but has not been validated with real containers here. Git/apt web approvals, production quota-auto in RPC and Internet deployment remain unsupported. The first agent opens automatically after login. Opening/reopening an agent or reconnecting reads state first, then automatically fetches bounded recent history while following live work. Use **Hämta senaste historik** to refresh/retry manually; an over-limit history read is omitted without disabling agent control, and saved sessions remain unchanged. If state/history retrieval fails, use `pis --server --diagnostics --agents 1` to test the dummy first. The GUI now shows fixed error codes/references and a bounded diagnostics panel; share only those lines or terminal lines prefixed `pis web diagnostic:`, never passwords or whole auth/state/log folders. See [start options, safe diagnostics, security and verification limits](docs/web-control.md).
 
+### Browser access through SSH
+
+```sh
+pis --forward ssh://alice@server.example
+# Open the printed link: http://127.0.0.1:43128/
+```
+
+Defaults are SSH **22**, remote/local pis port **43128**. Keep the terminal open; Ctrl-C closes only this forward. A busy port fails instead of choosing a random one. For custom ports: `pis --forward ssh://alice@server.example:2222/43129` prints `http://127.0.0.1:43129/` (local and remote pis ports must match for Host/Origin checks). One browser forward serves multiple tabs/agents; separate `--connect` tunnels use private sockets and do not clash with it. Requires Node >=22.19 and OpenSSH/key login/verified known host on the client host; no automatic browser launch or password/key acceptance. Use the normal server admin login. See [setup, local-access limits and verification gaps](docs/web-agents.md#open-the-browser-ui-through-ssh).
+
 ### Standalone server and independently registered agents (local laptop test)
 
 ```sh

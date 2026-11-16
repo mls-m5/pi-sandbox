@@ -17,6 +17,11 @@ async function start() {
       `Node.js 22.19 or newer is required; found ${process.versions.node} (${process.execPath}). Put a compatible Node on PATH, then run pis again.`,
     );
   }
+  if (process.argv[2] === '--forward') {
+    const { forwardMain } = await import('../src/forward-command.js');
+    process.exitCode = await forwardMain();
+    return;
+  }
   // Check the runtime before loading modules that use newer Node built-ins.
   const { main } = await import('../src/cli.js');
   process.exitCode = await main();

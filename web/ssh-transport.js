@@ -21,6 +21,10 @@ export async function openServerTransport(
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'pis-ssh-'));
   fs.chmodSync(directory, 0o700);
   const socketPath = path.join(directory, 'forward');
+  let resolveClosed;
+  const closed = new Promise((resolve) => {
+    resolveClosed = resolve;
+  });
   let child,
     exited = false,
     failed = false,
@@ -91,9 +95,11 @@ export async function openServerTransport(
     child.once('error', () => {
       failed = true;
       exited = true;
+      resolveClosed();
     });
     child.once('exit', () => {
       exited = true;
+      resolveClosed();
     });
     signal?.addEventListener('abort', aborted, { once: true });
     const deadline = Date.now() + timeoutMs;
@@ -142,6 +148,7 @@ export async function openServerTransport(
       });
     return {
       origin: target.origin,
+      closed,
       fetchImpl,
       createConnection: () => net.connect({ path: socketPath }),
       close: async () => {
