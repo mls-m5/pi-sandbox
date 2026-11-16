@@ -7,7 +7,11 @@ function report(phase) {
   lastPhase = phase;
   if (process.env.PIS_WEB_PROGRESS !== '1') return;
   // Dedicated host-only fd, not stderr, RPC stdout or a container mount.
-  try { fs.writeSync(3, `${JSON.stringify({ type: 'startup', phase })}\n`); } catch { /* Parent may have stopped reading. */ }
+  try {
+    fs.writeSync(3, `${JSON.stringify({ type: 'startup', phase })}\n`);
+  } catch {
+    /* Parent may have stopped reading. */
+  }
 }
 async function main() {
   const [major, minor] = process.versions.node.split('.').map(Number);
@@ -18,11 +22,22 @@ async function main() {
   const { runProjectRpc } = await import('../src/project-rpc.js');
   process.exitCode = await runProjectRpc(new Store(), process.argv[2], { startupProgress: report });
 }
-main().catch(error => {
-  const phase = error.code === 'PIS_LOCKED' ? 'project_busy' : error.code === 'PIS_CONTAINER_UNKNOWN' ? 'cleanup_unconfirmed'
-    : ({ checking_engine: 'engine_failed', preparing_image: 'image_failed', preparing_proxy: 'proxy_failed', starting_container: 'pi_failed' }[lastPhase] || 'failed');
+main().catch((error) => {
+  const phase =
+    error.code === 'PIS_LOCKED'
+      ? 'project_busy'
+      : error.code === 'PIS_CONTAINER_UNKNOWN'
+        ? 'cleanup_unconfirmed'
+        : {
+            checking_engine: 'engine_failed',
+            preparing_image: 'image_failed',
+            preparing_proxy: 'proxy_failed',
+            starting_container: 'pi_failed',
+          }[lastPhase] || 'failed';
   report(phase);
   // Diagnostics stay on the host-side stderr pipe, never in protocol stdout.
-  console.error(`pis project RPC: ${error.code === 'PIS_CONTAINER_UNKNOWN' ? 'shutdown unconfirmed; project lock retained. Inspect on host before pis --unlock.' : 'startup/runtime failed; inspect project configuration and normal pis startup on the host.'}`);
+  console.error(
+    `pis project RPC: ${error.code === 'PIS_CONTAINER_UNKNOWN' ? 'shutdown unconfirmed; project lock retained. Inspect on host before pis --unlock.' : 'startup/runtime failed; inspect project configuration and normal pis startup on the host.'}`,
+  );
   process.exitCode = 1;
 });

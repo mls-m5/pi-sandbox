@@ -3,13 +3,22 @@ import { createHash, randomUUID } from 'node:crypto';
 import { RpcHistoryDecoder } from './rpc-history.js';
 export { JsonlDecoder } from './jsonl.js';
 
-const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
-const failure = code => Object.assign(new Error(code), { code });
+const object = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
+const failure = (code) => Object.assign(new Error(code), { code });
 
 // This is an internal local-pipe API, NOT an authenticated network endpoint.
 // The caller owns spawning, project locks, signals and final process cleanup.
 export class PiRpc extends EventEmitter {
-  constructor(child, { maxRecordBytes, maxPending = 16, maxWriteBytes = 256 * 1024, timeoutMs = 30_000, historyLimits } = {}) {
+  constructor(
+    child,
+    {
+      maxRecordBytes,
+      maxPending = 16,
+      maxWriteBytes = 256 * 1024,
+      timeoutMs = 30_000,
+      historyLimits,
+    } = {},
+  ) {
     super();
     this.child = child;
     this.maxPending = maxPending;
@@ -26,16 +35,24 @@ export class PiRpc extends EventEmitter {
     this.faulted = false;
     this.stopping = false;
     this.decoder = new RpcHistoryDecoder({
-      onRecord: record => this.record(record), onFault: code => this.fault(code), maxRecordBytes, limits: historyLimits,
-      isHistoryRequest: id => this.historyReads.has(id),
+      onRecord: (record) => this.record(record),
+      onFault: (code) => this.fault(code),
+      maxRecordBytes,
+      limits: historyLimits,
+      isHistoryRequest: (id) => this.historyReads.has(id),
       onHistoryLimit: (id, code) => {
         const entry = this.pending.get(id);
         if (entry?.type !== 'get_messages') return;
-        this.pending.delete(id); clearTimeout(entry.timer); entry.reject(failure(code));
+        this.pending.delete(id);
+        clearTimeout(entry.timer);
+        entry.reject(failure(code));
       },
     });
-    child.stdout.on('data', chunk => this.decoder.push(chunk));
-    child.stdout.on('end', () => { this.decoder.end(); if (!this.stopping) this.fault('rpc_stdout_closed'); });
+    child.stdout.on('data', (chunk) => this.decoder.push(chunk));
+    child.stdout.on('end', () => {
+      this.decoder.end();
+      if (!this.stopping) this.fault('rpc_stdout_closed');
+    });
     child.stdout.on('error', () => this.fault('rpc_stdout_error'));
     // Diagnostics may contain secrets. Drain, but do not retain/forward them.
     child.stderr?.resume();
@@ -47,7 +64,10 @@ export class PiRpc extends EventEmitter {
 
   setStatus(status) {
     this.revision++;
-    if (status !== this.status) { this.status = status; this.emit('status', status); }
+    if (status !== this.status) {
+      this.status = status;
+      this.emit('status', status);
+    }
   }
 
   fault(code) {
@@ -59,7 +79,10 @@ export class PiRpc extends EventEmitter {
   }
 
   rejectPending(code) {
-    for (const entry of this.pending.values()) { clearTimeout(entry.timer); entry.reject(failure(code)); }
+    for (const entry of this.pending.values()) {
+      clearTimeout(entry.timer);
+      entry.reject(failure(code));
+    }
     this.pending.clear();
     this.queue = [];
     this.writeBytes = 0;
@@ -78,25 +101,47 @@ export class PiRpc extends EventEmitter {
     if (record.type === 'response') {
       const entry = this.pending.get(record.id);
       if (!entry) return; // Late/unsolicited response must never resolve another command.
-      if (record.command !== entry.type || typeof record.success !== 'boolean') return this.fault('rpc_response_mismatch');
+      if (record.command !== entry.type || typeof record.success !== 'boolean')
+        return this.fault('rpc_response_mismatch');
       this.pending.delete(record.id);
       clearTimeout(entry.timer);
       if (entry.type === 'get_state' && record.success && this.revision === entry.revision) {
         const state = record.data;
-        if (object(state) && typeof state.isStreaming === 'boolean' && typeof state.isCompacting === 'boolean' && Number.isInteger(state.pendingMessageCount)) {
-          this.setStatus(state.isStreaming || state.isCompacting || state.pendingMessageCount > 0 ? 'working' : 'idle');
+        if (
+          object(state) &&
+          typeof state.isStreaming === 'boolean' &&
+          typeof state.isCompacting === 'boolean' &&
+          Number.isInteger(state.pendingMessageCount)
+        ) {
+          this.setStatus(
+            state.isStreaming || state.isCompacting || state.pendingMessageCount > 0
+              ? 'working'
+              : 'idle',
+          );
         }
       }
       entry.resolve(record);
       return;
     }
-    if (record.type === 'agent_start' || record.type === 'compaction_start' || record.type === 'auto_retry_start') this.setStatus('working');
+    if (
+      record.type === 'agent_start' ||
+      record.type === 'compaction_start' ||
+      record.type === 'auto_retry_start'
+    )
+      this.setStatus('working');
     if (record.type === 'agent_settled') this.setStatus('idle');
     // agent_end is deliberately NOT interpreted as idle.
-    if (record.type === 'extension_ui_request' && ['select', 'confirm', 'input', 'editor'].includes(record.method)) {
-      if (typeof record.id !== 'string' || record.id.length > 256) return this.fault('rpc_invalid_dialog');
-      try { this.enqueue({ type: 'extension_ui_response', id: record.id, cancelled: true }); }
-      catch { return this.fault('rpc_dialog_cancel_failed'); }
+    if (
+      record.type === 'extension_ui_request' &&
+      ['select', 'confirm', 'input', 'editor'].includes(record.method)
+    ) {
+      if (typeof record.id !== 'string' || record.id.length > 256)
+        return this.fault('rpc_invalid_dialog');
+      try {
+        this.enqueue({ type: 'extension_ui_response', id: record.id, cancelled: true });
+      } catch {
+        return this.fault('rpc_dialog_cancel_failed');
+      }
       this.emit('dialog_cancelled', { method: record.method });
       return;
     }
@@ -118,7 +163,7 @@ export class PiRpc extends EventEmitter {
     this.writing = true;
     const line = this.queue.shift();
     // Only one write in flight; its callback waits for the Writable to consume it.
-    this.child.stdin.write(line, error => {
+    this.child.stdin.write(line, (error) => {
       this.writing = false;
       this.writeBytes = Math.max(0, this.writeBytes - line.length);
       if (error) this.fault('rpc_write_failed');
@@ -127,8 +172,10 @@ export class PiRpc extends EventEmitter {
   }
 
   request(type, fields = {}) {
-    if (!['get_state', 'get_messages', 'prompt', 'clear_queue', 'abort'].includes(type)) return Promise.reject(failure('rpc_command_forbidden'));
-    if (this.closed || this.faulted || this.stopping) return Promise.reject(failure('rpc_unavailable'));
+    if (!['get_state', 'get_messages', 'prompt', 'clear_queue', 'abort'].includes(type))
+      return Promise.reject(failure('rpc_command_forbidden'));
+    if (this.closed || this.faulted || this.stopping)
+      return Promise.reject(failure('rpc_unavailable'));
     if (this.pending.size >= this.maxPending) return Promise.reject(failure('rpc_pending_limit'));
     const id = randomUUID();
     if (type === 'get_messages') {
@@ -152,8 +199,13 @@ export class PiRpc extends EventEmitter {
         reject(failure('rpc_timeout_ambiguous')); // Never retry an ambiguous mutation.
       }, this.timeoutMs);
       this.pending.set(id, { type, resolve, reject, timer, revision: this.revision });
-      try { line = this.enqueue({ ...fields, type, id }); }
-      catch (error) { clearTimeout(timer); this.pending.delete(id); reject(error); }
+      try {
+        line = this.enqueue({ ...fields, type, id });
+      } catch (error) {
+        clearTimeout(timer);
+        this.pending.delete(id);
+        reject(error);
+      }
     });
   }
 
@@ -162,27 +214,63 @@ export class PiRpc extends EventEmitter {
     if (this.closed) return;
     this.stopping = true;
     this.rejectPending('rpc_shutting_down');
-    const done = new Promise(resolve => this.once('closed', resolve));
+    const done = new Promise((resolve) => this.once('closed', resolve));
     this.child.stdin.end();
     const terminate = setTimeout(() => this.child.kill('SIGTERM'), graceMs);
     const kill = setTimeout(() => this.child.kill('SIGKILL'), graceMs + killMs);
     let deadline;
     try {
-      await Promise.race([done, new Promise((_, reject) => {
-        deadline = setTimeout(() => reject(failure('rpc_shutdown_unconfirmed')), graceMs + killMs + 1000);
-      })]);
-    } finally { clearTimeout(terminate); clearTimeout(kill); clearTimeout(deadline); }
+      await Promise.race([
+        done,
+        new Promise((_, reject) => {
+          deadline = setTimeout(
+            () => reject(failure('rpc_shutdown_unconfirmed')),
+            graceMs + killMs + 1000,
+          );
+        }),
+      ]);
+    } finally {
+      clearTimeout(terminate);
+      clearTimeout(kill);
+      clearTimeout(deadline);
+    }
   }
 }
 
 export function validateControlCommand(value) {
-  if (!object(value) || value.v !== 1 || typeof value.generation !== 'string' || value.generation.length > 64 ||
-      typeof value.id !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(value.id) ||
-      !['state', 'history', 'prompt', 'stop'].includes(value.action)) throw failure('control_invalid_command');
-  const keys = ['v', 'generation', 'id', 'action', ...(value.action === 'prompt' ? ['message'] : [])];
-  if (Object.keys(value).some(key => !keys.includes(key))) throw failure('control_invalid_command');
-  if (value.action === 'prompt' && (typeof value.message !== 'string' || !value.message.trim() || Buffer.byteLength(value.message) > 64 * 1024)) throw failure('control_invalid_prompt');
-  return { v: 1, generation: value.generation, id: value.id, action: value.action, ...(value.action === 'prompt' ? { message: value.message } : {}) };
+  if (
+    !object(value) ||
+    value.v !== 1 ||
+    typeof value.generation !== 'string' ||
+    value.generation.length > 64 ||
+    typeof value.id !== 'string' ||
+    !/^[A-Za-z0-9_-]{1,64}$/.test(value.id) ||
+    !['state', 'history', 'prompt', 'stop'].includes(value.action)
+  )
+    throw failure('control_invalid_command');
+  const keys = [
+    'v',
+    'generation',
+    'id',
+    'action',
+    ...(value.action === 'prompt' ? ['message'] : []),
+  ];
+  if (Object.keys(value).some((key) => !keys.includes(key)))
+    throw failure('control_invalid_command');
+  if (
+    value.action === 'prompt' &&
+    (typeof value.message !== 'string' ||
+      !value.message.trim() ||
+      Buffer.byteLength(value.message) > 64 * 1024)
+  )
+    throw failure('control_invalid_prompt');
+  return {
+    v: 1,
+    generation: value.generation,
+    id: value.id,
+    action: value.action,
+    ...(value.action === 'prompt' ? { message: value.message } : {}),
+  };
 }
 
 // Deduplication survives network reconnects for this runtime, without retaining transcripts.
@@ -209,7 +297,8 @@ export class PiControl {
     if (command.action === 'state') return this.rpc.request('get_state');
     if (command.action === 'history') return this.rpc.request('get_messages');
     if (this.mutating) throw failure('control_mutation_pending');
-    if (command.action === 'prompt' && this.rpc.status !== 'idle') throw failure('control_not_idle');
+    if (command.action === 'prompt' && this.rpc.status !== 'idle')
+      throw failure('control_not_idle');
     this.mutating = true;
     try {
       if (command.action === 'stop') {
@@ -225,6 +314,8 @@ export class PiControl {
     } catch (error) {
       if (!this.rpc.closed && !this.rpc.faulted) this.rpc.setStatus('unknown');
       throw error;
-    } finally { this.mutating = false; }
+    } finally {
+      this.mutating = false;
+    }
   }
 }

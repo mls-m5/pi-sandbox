@@ -10,13 +10,21 @@ export function assert(condition, message) {
 
 export function within(parent, child) {
   const relative = path.relative(parent, child);
-  return relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative));
+  return (
+    relative === '' ||
+    (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative))
+  );
 }
 
-export function overlap(a, b) { return within(a, b) || within(b, a); }
+export function overlap(a, b) {
+  return within(a, b) || within(b, a);
+}
 
 export function directory(input) {
-  assert(typeof input === 'string' && path.isAbsolute(input), `Expected an absolute directory: ${input}`);
+  assert(
+    typeof input === 'string' && path.isAbsolute(input),
+    `Expected an absolute directory: ${input}`,
+  );
   const resolved = fs.realpathSync(input);
   assert(fs.statSync(resolved).isDirectory(), `Not a directory: ${input}`);
   return resolved;
@@ -46,7 +54,8 @@ function stripJsonComments(text) {
   let quoted = false;
   let escaped = false;
   for (let i = 0; i < text.length; i += 1) {
-    const char = text[i], next = text[i + 1];
+    const char = text[i],
+      next = text[i + 1];
     if (quoted) {
       output += char;
       if (escaped) escaped = false;
@@ -54,7 +63,11 @@ function stripJsonComments(text) {
       else if (char === '"') quoted = false;
       continue;
     }
-    if (char === '"') { quoted = true; output += char; continue; }
+    if (char === '"') {
+      quoted = true;
+      output += char;
+      continue;
+    }
     if (char === '/' && next === '/') {
       while (i < text.length && text[i] !== '\n') i += 1;
       if (i < text.length) output += '\n';
@@ -74,8 +87,11 @@ function stripJsonComments(text) {
 }
 
 export function readJson(file) {
-  try { return JSON.parse(stripJsonComments(fs.readFileSync(file, 'utf8'))); }
-  catch (error) { throw new Error(`Cannot read JSON at ${file}: ${error.message}`); }
+  try {
+    return JSON.parse(stripJsonComments(fs.readFileSync(file, 'utf8')));
+  } catch (error) {
+    throw new Error(`Cannot read JSON at ${file}: ${error.message}`);
+  }
 }
 
 export function processIdentity(pid = process.pid) {
@@ -84,43 +100,93 @@ export function processIdentity(pid = process.pid) {
     const bootId = fs.readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim();
     if (/^[a-f0-9-]{36}$/.test(bootId)) result.bootId = bootId;
     const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
-    const startTime = stat.slice(stat.lastIndexOf(')') + 2).trim().split(/\s+/)[19];
+    const startTime = stat
+      .slice(stat.lastIndexOf(')') + 2)
+      .trim()
+      .split(/\s+/)[19];
     if (/^\d{1,32}$/.test(startTime)) result.startTime = startTime;
-  } catch { /* Legacy/PID-only locks remain conservatively recoverable. */ }
+  } catch {
+    /* Legacy/PID-only locks remain conservatively recoverable. */
+  }
   return result;
 }
 
 export function lockOwnerState(record, { kill = process.kill, identity = processIdentity } = {}) {
   const current = identity(record.pid);
   if (record.bootId && current.bootId && record.bootId !== current.bootId) return 'dead';
-  if (record.bootId && record.bootId === current.bootId && record.startTime && current.startTime && record.startTime !== current.startTime) return 'dead';
-  try { kill(record.pid, 0); return 'alive'; }
-  catch (error) { return error.code === 'ESRCH' ? 'dead' : 'unknown'; }
+  if (
+    record.bootId &&
+    record.bootId === current.bootId &&
+    record.startTime &&
+    current.startTime &&
+    record.startTime !== current.startTime
+  )
+    return 'dead';
+  try {
+    kill(record.pid, 0);
+    return 'alive';
+  } catch (error) {
+    return error.code === 'ESRCH' ? 'dead' : 'unknown';
+  }
 }
 
 function removeOwnLock(file, snapshot) {
   try {
     const current = fs.lstatSync(file);
     if (current.dev === snapshot.dev && current.ino === snapshot.ino) fs.unlinkSync(file);
-  } catch (error) { if (error.code !== 'ENOENT') throw error; }
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
 }
 
 export async function withLock(file, action, { retainOnError = () => false } = {}) {
   // Recovery is explicit and serialized by a kernel flock, never based on age.
   let fd, snapshot;
   try {
-    fd = fs.openSync(file, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, 0o600);
+    fd = fs.openSync(
+      file,
+      fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW,
+      0o600,
+    );
     snapshot = fs.fstatSync(fd);
-    fs.writeFileSync(fd, JSON.stringify({ version: 1, pid: process.pid, nonce: randomBytes(16).toString('hex'), ...processIdentity() }));
+    fs.writeFileSync(
+      fd,
+      JSON.stringify({
+        version: 1,
+        pid: process.pid,
+        nonce: randomBytes(16).toString('hex'),
+        ...processIdentity(),
+      }),
+    );
   } catch (error) {
-    if (fd !== undefined) { try { if (snapshot) removeOwnLock(file, snapshot); } finally { fs.closeSync(fd); } }
+    if (fd !== undefined) {
+      try {
+        if (snapshot) removeOwnLock(file, snapshot);
+      } finally {
+        fs.closeSync(fd);
+      }
+    }
     if (error.code !== 'EEXIST') throw error;
-    throw Object.assign(new Error(`Resource is busy (${file}). On the host, run pis --unlock --dry-run to inspect stale locks, then pis --unlock to recover them. Live or unverifiable owners are never removed.`), { code: 'PIS_LOCKED' });
+    throw Object.assign(
+      new Error(
+        `Resource is busy (${file}). On the host, run pis --unlock --dry-run to inspect stale locks, then pis --unlock to recover them. Live or unverifiable owners are never removed.`,
+      ),
+      { code: 'PIS_LOCKED' },
+    );
   }
   let retain = false;
-  try { return await action(); }
-  catch (error) { retain = retainOnError(error) === true; throw error; }
-  finally { try { if (!retain) removeOwnLock(file, snapshot); } finally { fs.closeSync(fd); } }
+  try {
+    return await action();
+  } catch (error) {
+    retain = retainOnError(error) === true;
+    throw error;
+  } finally {
+    try {
+      if (!retain) removeOwnLock(file, snapshot);
+    } finally {
+      fs.closeSync(fd);
+    }
+  }
 }
 
 export function run(program, args, options = {}) {
@@ -130,7 +196,7 @@ export function run(program, args, options = {}) {
     const signals = ['SIGINT', 'SIGTERM', 'SIGHUP'];
     let shutdownTimer;
     let terminationSignal;
-    const handlers = signals.map(signal => {
+    const handlers = signals.map((signal) => {
       const handler = () => {
         child.kill(signal);
         // Ctrl-C may be handled by an interactive application. Termination must
@@ -148,10 +214,17 @@ export function run(program, args, options = {}) {
       clearTimeout(shutdownTimer);
       handlers.forEach(([signal, handler]) => process.off(signal, handler));
     };
-    child.once('error', error => { cleanup(); reject(new Error(`Cannot start ${program}: ${error.message}`)); });
+    child.once('error', (error) => {
+      cleanup();
+      reject(new Error(`Cannot start ${program}: ${error.message}`));
+    });
     child.once('exit', (code, signal) => {
       cleanup();
-      resolve(terminationSignal ? 128 + os.constants.signals[terminationSignal] : code ?? (128 + (os.constants.signals[signal] || 1)));
+      resolve(
+        terminationSignal
+          ? 128 + os.constants.signals[terminationSignal]
+          : (code ?? 128 + (os.constants.signals[signal] || 1)),
+      );
     });
   });
 }
@@ -159,14 +232,34 @@ export function run(program, args, options = {}) {
 // Shell-like quoting for editor command configuration, without evaluating shell syntax.
 export function splitCommand(text) {
   const words = [];
-  let word = '', quote = '', escaped = false, started = false;
+  let word = '',
+    quote = '',
+    escaped = false,
+    started = false;
   for (const char of text) {
-    if (escaped) { word += char; escaped = false; started = true; }
-    else if (char === '\\' && quote !== "'") { escaped = true; started = true; }
-    else if (quote) { if (char === quote) quote = ''; else word += char; }
-    else if (char === '"' || char === "'") { quote = char; started = true; }
-    else if (/\s/.test(char)) { if (started) { words.push(word); word = ''; started = false; } }
-    else { word += char; started = true; }
+    if (escaped) {
+      word += char;
+      escaped = false;
+      started = true;
+    } else if (char === '\\' && quote !== "'") {
+      escaped = true;
+      started = true;
+    } else if (quote) {
+      if (char === quote) quote = '';
+      else word += char;
+    } else if (char === '"' || char === "'") {
+      quote = char;
+      started = true;
+    } else if (/\s/.test(char)) {
+      if (started) {
+        words.push(word);
+        word = '';
+        started = false;
+      }
+    } else {
+      word += char;
+      started = true;
+    }
   }
   assert(!quote && !escaped, 'Unterminated quoting in editor command.');
   if (started) words.push(word);

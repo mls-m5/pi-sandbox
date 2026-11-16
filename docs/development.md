@@ -57,6 +57,8 @@ npm run test:storage      # separate, disk-heavy legacy/new image benchmark
 
 ## Remaining requested work / priorities
 
+**Approved incremental readability cleanup:** [maintainability-plan.md](maintainability-plan.md) tracks formatting, automatic checks, shared terminal input, status logic, test helpers and later responsibility/documentation splits. The user approved one-time formatting of runtime/image sources too; resulting fingerprints can trigger next-start rebuilds. Keep behavior refactors in separate commits and do not mix this with deferred infrastructure features.
+
 **Deferred at the user's request until their tokens refill:** [shared program image with separate agent containers](shared-base-image-plan.md). Manage common installed packages through an explicit host edit workflow (suggested `pis --edit-base`, not implemented), retain separate project state/mounts/containers, and review migration/global approval scope before changes. Record only for now; wait for the user to resume rather than starting builds or automatic work.
 
 1. Host verification of bounded automatic history on opening agent views and experimental real-project web lifecycle. Preserve fixed safe diagnostics; never request auth/state folders or HARs to debug routine failures.

@@ -10,18 +10,33 @@ import { validateHostGitRequest } from './git-push.js';
 const MAX_BYTES = 4096;
 
 export function validateAptProposal(data, config, store) {
-  if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('Invalid apt proposal.');
+  if (!data || typeof data !== 'object' || Array.isArray(data))
+    throw new Error('Invalid apt proposal.');
   const { type, packages, reason } = data;
-  if (type !== 'apt-packages' || Object.keys(data).some(key => !['type', 'packages', 'reason'].includes(key))) throw new Error('Unsupported host action.');
-  if (!Array.isArray(packages) || packages.length < 1 || packages.length > 10 ||
-      packages.some(pkg => typeof pkg !== 'string' || !/^[a-z0-9][a-z0-9+.-]{0,79}$/.test(pkg)) ||
-      new Set(packages).size !== packages.length ||
-      typeof reason !== 'string' || reason.trim().length < 1 || reason.length > 500 || /[\x00-\x1f\x7f-\x9f\u2028\u2029\u202a-\u202e\u2066-\u2069]/.test(reason)) {
+  if (
+    type !== 'apt-packages' ||
+    Object.keys(data).some((key) => !['type', 'packages', 'reason'].includes(key))
+  )
+    throw new Error('Unsupported host action.');
+  if (
+    !Array.isArray(packages) ||
+    packages.length < 1 ||
+    packages.length > 10 ||
+    packages.some((pkg) => typeof pkg !== 'string' || !/^[a-z0-9][a-z0-9+.-]{0,79}$/.test(pkg)) ||
+    new Set(packages).size !== packages.length ||
+    typeof reason !== 'string' ||
+    reason.trim().length < 1 ||
+    reason.length > 500 ||
+    /[\x00-\x1f\x7f-\x9f\u2028\u2029\u202a-\u202e\u2066-\u2069]/.test(reason)
+  ) {
     throw new Error('Invalid apt proposal.');
   }
-  const proposed = packages.filter(pkg => !config.image.packages.includes(pkg));
+  const proposed = packages.filter((pkg) => !config.image.packages.includes(pkg));
   if (!proposed.length) throw new Error('Packages already configured.');
-  validate({ ...config, image: { ...config.image, packages: [...config.image.packages, ...proposed] } }, { storage: store.root, identity: config, paths: false });
+  validate(
+    { ...config, image: { ...config.image, packages: [...config.image.packages, ...proposed] } },
+    { storage: store.root, identity: config, paths: false },
+  );
   return { type: 'apt-packages', packages: proposed, reason: reason.trim() };
 }
 
@@ -32,24 +47,33 @@ export async function startAptRequestServer(config, store) {
   const socketPath = path.join(directory, 'request.sock');
   let proposal;
   const peers = new Set();
-  const server = net.createServer(socket => {
+  const server = net.createServer((socket) => {
     peers.add(socket);
     socket.setTimeout(5000, () => socket.destroy());
     let data = '';
     let handled = false;
     socket.setEncoding('utf8');
-    socket.on('data', chunk => {
+    socket.on('data', (chunk) => {
       if (handled) return;
       data += chunk;
-      if (Buffer.byteLength(data) > MAX_BYTES) { socket.destroy(); return; }
+      if (Buffer.byteLength(data) > MAX_BYTES) {
+        socket.destroy();
+        return;
+      }
       if (!data.includes('\n')) return;
       handled = true;
       try {
-        if (proposal || data.indexOf('\n') !== data.length - 1) throw new Error('Only one proposal is allowed.');
+        if (proposal || data.indexOf('\n') !== data.length - 1)
+          throw new Error('Only one proposal is allowed.');
         const request = JSON.parse(data.slice(0, -1));
-        proposal = request?.type === 'git-command' ? validateHostGitRequest(request) : validateAptProposal(request, config, store);
+        proposal =
+          request?.type === 'git-command'
+            ? validateHostGitRequest(request)
+            : validateAptProposal(request, config, store);
         socket.end('{"ok":true}\n');
-      } catch { socket.end('{"ok":false}\n'); }
+      } catch {
+        socket.end('{"ok":false}\n');
+      }
     });
     socket.once('close', () => peers.delete(socket));
     socket.on('error', () => {});
@@ -58,53 +82,71 @@ export async function startAptRequestServer(config, store) {
   try {
     await new Promise((resolve, reject) => {
       server.once('error', reject);
-      server.listen(socketPath, () => { server.off('error', reject); resolve(); });
+      server.listen(socketPath, () => {
+        server.off('error', reject);
+        resolve();
+      });
     });
     fs.chmodSync(socketPath, 0o600);
-  } catch (error) { fs.rmSync(directory, { recursive: true, force: true }); throw error; }
+  } catch (error) {
+    fs.rmSync(directory, { recursive: true, force: true });
+    throw error;
+  }
   return {
     directory,
-    get proposal() { return proposal; },
+    get proposal() {
+      return proposal;
+    },
     async close() {
       for (const peer of peers) peer.destroy();
-      await new Promise(resolve => server.close(resolve));
+      await new Promise((resolve) => server.close(resolve));
       fs.rmSync(directory, { recursive: true, force: true });
     },
   };
 }
 
 export function formatAptApproval(proposal, code, { columns = 80, color = false } = {}) {
-  const style = (text, ansi) => color ? `\x1b[${ansi}m${text}\x1b[0m` : text;
+  const style = (text, ansi) => (color ? `\x1b[${ansi}m${text}\x1b[0m` : text);
   const width = Number.isFinite(columns) ? Math.max(1, Math.min(500, Math.floor(columns))) : 80;
   const rule = style('─'.repeat(width), '31');
   return {
-    text: `\n${rule}\n${style('pis · Package installation approval', '1')}\n\n`
-      + `${style('Debian packages:', '1')} ${style(proposal.packages.join(', '), '33')}\n\n`
-      + `${style('Reason supplied by the sandbox (untrusted):', '2')}\n  ${proposal.reason}\n\n`
-      + 'Approval saves the package list, rebuilds the image and restarts Pi.\n'
-      + `${style('The agent is notified after the build and continues the task (uses model tokens).', '2')}\n`
-      + `${rule}\n`,
+    text:
+      `\n${rule}\n${style('pis · Package installation approval', '1')}\n\n` +
+      `${style('Debian packages:', '1')} ${style(proposal.packages.join(', '), '33')}\n\n` +
+      `${style('Reason supplied by the sandbox (untrusted):', '2')}\n  ${proposal.reason}\n\n` +
+      'Approval saves the package list, rebuilds the image and restarts Pi.\n' +
+      `${style('The agent is notified after the build and continues the task (uses model tokens).', '2')}\n` +
+      `${rule}\n`,
     prompt: `Type ${style(code, '1;36')} to approve ${style('(Enter or any other answer declines)', '2')}: `,
   };
 }
 
-export async function approveAptProposal(proposal, { input = process.stdin, output = process.stderr } = {}) {
+export async function approveAptProposal(
+  proposal,
+  { input = process.stdin, output = process.stderr } = {},
+) {
   const code = String(randomInt(10, 100));
   const formatted = formatAptApproval(proposal, code, {
     columns: output.columns,
-    color: Boolean(output.isTTY) && process.env.NO_COLOR === undefined && process.env.TERM !== 'dumb',
+    color:
+      Boolean(output.isTTY) && process.env.NO_COLOR === undefined && process.env.TERM !== 'dumb',
   });
   output.write(formatted.text);
   const prompt = createInterface({ input, output });
   try {
     const answer = await prompt.question(formatted.prompt);
     return answer.trim() === code;
-  } finally { prompt.close(); }
+  } finally {
+    prompt.close();
+  }
 }
 
 export async function applyAptProposal(store, original, proposal) {
   // save() re-reads the current config under the registry lock and refuses stale drafts.
-  const updated = { ...original, image: { ...original.image, packages: [...original.image.packages, ...proposal.packages] } };
+  const updated = {
+    ...original,
+    image: { ...original.image, packages: [...original.image.packages, ...proposal.packages] },
+  };
   validateAptProposal(proposal, original, store);
   await store.save(updated, original);
   return updated;

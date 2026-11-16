@@ -1,14 +1,107 @@
 <!doctype html>
-<html lang="sv"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>pis · lokal kontroll</title><link rel="stylesheet" href="/style.css"><script type="module" src="/app.js"></script></head>
-<body>
-<header><h1>pis <span>lokal kontroll</span></h1><p id="mode-note">Lokala agenter · inga värdgodkännanden</p><button id="logout" hidden>Logga ut</button></header>
-<section id="login"><h2>Logga in</h2><form id="login-form"><label>Lösenord <input id="password" type="password" autocomplete="current-password" required maxlength="1024"></label><button>Logga in</button></form><p id="login-note" role="status"></p></section>
-<main id="workspace" hidden>
-<aside><h2>Agenter</h2><p id="connection" role="status">Ansluter…</p><div id="agents"></div><details><summary>Anslut ny agent</summary><form id="register-agent"><button id="register-submit">Skapa anslutningsnyckel</button></form><p id="register-note" role="status"></p><label id="registration-secret-label" hidden>Engångsnyckel · giltig i 10 minuter<textarea id="registration-secret" readonly rows="3" autocomplete="off" spellcheck="false"></textarea></label><button id="clear-registration" type="button" hidden>Dölj och rensa nyckeln</button><p>Kör pis --connect PROJEKT --server ADRESS i en värdterminal. Klistra nyckeln i den dolda frågan. Agenten namnges och visas först när registreringen lyckas. Nyckeln rensas när den används.</p></details><button id="revoke-agent" type="button" disabled>Återkalla vald agentnyckel</button><p id="registration-action" role="status"></p></aside>
-<section class="chat"><div class="toolbar"><h2 id="agent-title">Välj en agent</h2><button id="refresh" disabled>Hämta senaste historik</button></div><p id="state" role="status"></p><p id="sync-note"></p><div id="messages" aria-label="Konversation"></div><details><summary>Senaste verktygshändelser</summary><div id="tools"></div></details>
-<details><summary>Anslutningsdiagnostik · utan chattinnehåll</summary><pre id="diagnostics"></pre><p>Dela bara kommando, kod och referens här. Skicka inte logg-/state-mappar, lösenord eller råa nätverkssvar.</p></details>
-<form id="prompt-form"><label>Meddelande<textarea id="prompt" rows="3" maxlength="64000" aria-describedby="prompt-help" placeholder="Skriv till dummy-agenten…"></textarea></label><small id="prompt-help">Enter skickar · Shift+Enter ger ny rad.</small><div class="actions"><button id="send" disabled>Skicka</button><button id="stop" type="button" disabled>Stoppa</button></div></form>
-<div class="actions"><button id="quota" disabled>Simulera kvotstopp 5 s</button><button id="refill" disabled>Fyll på dummy-kvot</button></div><p id="command-note" role="status"></p>
-</section></main>
-<footer>Lokal testversion. Innehåll från agenter är opålitlig text. Ingen publik serverkonfiguration stöds ännu. Riktiga Pi-projekt kan använda modellkvot; bara dummyn är tokenfri.</footer>
-</body></html>
+<html lang="sv">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>pis · lokal kontroll</title>
+    <link rel="stylesheet" href="/style.css" />
+    <script type="module" src="/app.js"></script>
+  </head>
+  <body>
+    <header>
+      <h1>pis <span>lokal kontroll</span></h1>
+      <p id="mode-note">Lokala agenter · inga värdgodkännanden</p>
+      <button id="logout" hidden>Logga ut</button>
+    </header>
+    <section id="login">
+      <h2>Logga in</h2>
+      <form id="login-form">
+        <label
+          >Lösenord
+          <input
+            id="password"
+            type="password"
+            autocomplete="current-password"
+            required
+            maxlength="1024" /></label
+        ><button>Logga in</button>
+      </form>
+      <p id="login-note" role="status"></p>
+    </section>
+    <main id="workspace" hidden>
+      <aside>
+        <h2>Agenter</h2>
+        <p id="connection" role="status">Ansluter…</p>
+        <div id="agents"></div>
+        <details>
+          <summary>Anslut ny agent</summary>
+          <form id="register-agent">
+            <button id="register-submit">Skapa anslutningsnyckel</button>
+          </form>
+          <p id="register-note" role="status"></p>
+          <label id="registration-secret-label" hidden
+            >Engångsnyckel · giltig i 10 minuter<textarea
+              id="registration-secret"
+              readonly
+              rows="3"
+              autocomplete="off"
+              spellcheck="false"
+            ></textarea></label
+          ><button id="clear-registration" type="button" hidden>Dölj och rensa nyckeln</button>
+          <p>
+            Kör pis --connect PROJEKT --server ADRESS i en värdterminal. Klistra nyckeln i den dolda
+            frågan. Agenten namnges och visas först när registreringen lyckas. Nyckeln rensas när
+            den används.
+          </p>
+        </details>
+        <button id="revoke-agent" type="button" disabled>Återkalla vald agentnyckel</button>
+        <p id="registration-action" role="status"></p>
+      </aside>
+      <section class="chat">
+        <div class="toolbar">
+          <h2 id="agent-title">Välj en agent</h2>
+          <button id="refresh" disabled>Hämta senaste historik</button>
+        </div>
+        <p id="state" role="status"></p>
+        <p id="sync-note"></p>
+        <div id="messages" aria-label="Konversation"></div>
+        <details>
+          <summary>Senaste verktygshändelser</summary>
+          <div id="tools"></div>
+        </details>
+        <details>
+          <summary>Anslutningsdiagnostik · utan chattinnehåll</summary>
+          <pre id="diagnostics"></pre>
+          <p>
+            Dela bara kommando, kod och referens här. Skicka inte logg-/state-mappar, lösenord eller
+            råa nätverkssvar.
+          </p>
+        </details>
+        <form id="prompt-form">
+          <label
+            >Meddelande<textarea
+              id="prompt"
+              rows="3"
+              maxlength="64000"
+              aria-describedby="prompt-help"
+              placeholder="Skriv till dummy-agenten…"
+            ></textarea></label
+          ><small id="prompt-help">Enter skickar · Shift+Enter ger ny rad.</small>
+          <div class="actions">
+            <button id="send" disabled>Skicka</button
+            ><button id="stop" type="button" disabled>Stoppa</button>
+          </div>
+        </form>
+        <div class="actions">
+          <button id="quota" disabled>Simulera kvotstopp 5 s</button
+          ><button id="refill" disabled>Fyll på dummy-kvot</button>
+        </div>
+        <p id="command-note" role="status"></p>
+      </section>
+    </main>
+    <footer>
+      Lokal testversion. Innehåll från agenter är opålitlig text. Ingen publik serverkonfiguration
+      stöds ännu. Riktiga Pi-projekt kan använda modellkvot; bara dummyn är tokenfri.
+    </footer>
+  </body>
+</html>

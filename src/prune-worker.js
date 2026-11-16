@@ -8,7 +8,8 @@ process.umask(0o077);
 try {
   const store = new Store(process.argv[2]);
   const result = await pruneImages(store, { automatic: true });
-  if (!result.throttled) writeJson(path.join(store.root, 'prune-report.json'), { time: Date.now(), ...result });
+  if (!result.throttled)
+    writeJson(path.join(store.root, 'prune-report.json'), { time: Date.now(), ...result });
 } catch {
   // A busy cleaner or transient Podman failure is retried after a later build.
   process.exitCode = 1;

@@ -129,9 +129,9 @@ test('activity has a spinner only during work/wait, text labels and reduced-moti
   renderActivity(document, root, 'working', 'first'); const spinner = root.children[0];
   renderActivity(document, root, 'working', 'next delta'); assert.equal(root.children[0], spinner, 'Agent spinner must not restart on every text delta.');
   const css = fs.readFileSync(new URL('../web/public/style.css', import.meta.url), 'utf8');
-  assert.match(css, /prefers-reduced-motion:reduce/);
-  assert.match(css, /tool-succeeded\{border-style:solid;border-color:#70b5ff/);
-  assert.match(css, /tool-failed\{border-style:solid;border-color:#ff8d95/);
+  assert.match(css, /prefers-reduced-motion:\s*reduce/);
+  assert.match(css, /tool-succeeded\s*\{\s*border-style:\s*solid;\s*border-color:\s*#70b5ff/);
+  assert.match(css, /tool-failed\s*\{\s*border-style:\s*solid;\s*border-color:\s*#ff8d95/);
 });
 
 test('tool call, live updates and final result share one card, including failed historical results', () => {

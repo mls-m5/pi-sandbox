@@ -8,116 +8,272 @@ import { HINTS, SCHEMA_REFERENCE } from './config-schema.js';
 
 export const ID_PATTERN = /^[a-z0-9]{5}$/;
 export const NAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/;
-const RESERVED = ['/etc', '/usr', '/bin', '/sbin', '/lib', '/lib64', '/proc', '/sys', '/dev', '/run', '/root', '/pis', '/opt/pis'];
+const RESERVED = [
+  '/etc',
+  '/usr',
+  '/bin',
+  '/sbin',
+  '/lib',
+  '/lib64',
+  '/proc',
+  '/sys',
+  '/dev',
+  '/run',
+  '/root',
+  '/pis',
+  '/opt/pis',
+];
 
 function object(value, keys, label) {
-  assert(value && typeof value === 'object' && !Array.isArray(value), `${label} must be an object.`);
-  for (const key of Object.keys(value)) assert(keys.includes(key), `Unknown field: ${label}.${key}`);
+  assert(
+    value && typeof value === 'object' && !Array.isArray(value),
+    `${label} must be an object.`,
+  );
+  for (const key of Object.keys(value))
+    assert(keys.includes(key), `Unknown field: ${label}.${key}`);
 }
 function strings(value, label) {
-  assert(Array.isArray(value) && value.every(item => typeof item === 'string' && item.length > 0), `${label} must be an array of nonempty strings.`);
+  assert(
+    Array.isArray(value) && value.every((item) => typeof item === 'string' && item.length > 0),
+    `${label} must be an array of nonempty strings.`,
+  );
   assert(new Set(value).size === value.length, `${label} contains duplicates.`);
 }
 
 export function safeMount(source, { home = os.homedir(), storage }) {
-  assert(!/[\n\r,:]/.test(source), `Mount paths cannot contain commas, colons, or newlines: ${source}`);
+  assert(
+    !/[\n\r,:]/.test(source),
+    `Mount paths cannot contain commas, colons, or newlines: ${source}`,
+  );
   assert(path.normalize(source) === source, `Mount path must be normalized: ${source}`);
-  assert(!within(source, home), `Refusing to share the entire home directory or an ancestor: ${source}`);
-  assert(!['/', '/home', '/tmp', '/var', '/opt', '/mnt', '/media'].includes(source), `Mount is too broad: ${source}`);
-  for (const reserved of RESERVED) assert(!overlap(source, reserved), `Mount conflicts with reserved container path ${reserved}: ${source}`);
-  if (storage) assert(!overlap(source, storage), `Mount must not expose or overlap pis storage: ${source}`);
+  assert(
+    !within(source, home),
+    `Refusing to share the entire home directory or an ancestor: ${source}`,
+  );
+  assert(
+    !['/', '/home', '/tmp', '/var', '/opt', '/mnt', '/media'].includes(source),
+    `Mount is too broad: ${source}`,
+  );
+  for (const reserved of RESERVED)
+    assert(
+      !overlap(source, reserved),
+      `Mount conflicts with reserved container path ${reserved}: ${source}`,
+    );
+  if (storage)
+    assert(!overlap(source, storage), `Mount must not expose or overlap pis storage: ${source}`);
 }
 
 export function validate(config, { storage, home = os.homedir(), identity, paths = true } = {}) {
-  object(config, ['$schema', 'version', 'id', 'name', 'root', 'agent', 'image', 'mounts', 'credentials', 'extensions', 'updates', 'examples', 'hints'], 'project');
-  if (config.$schema !== undefined) assert(config.$schema === SCHEMA_REFERENCE, `Use ${SCHEMA_REFERENCE} for $schema.`);
+  object(
+    config,
+    [
+      '$schema',
+      'version',
+      'id',
+      'name',
+      'root',
+      'agent',
+      'image',
+      'mounts',
+      'credentials',
+      'extensions',
+      'updates',
+      'examples',
+      'hints',
+    ],
+    'project',
+  );
+  if (config.$schema !== undefined)
+    assert(config.$schema === SCHEMA_REFERENCE, `Use ${SCHEMA_REFERENCE} for $schema.`);
   extensionManifest(config.extensions);
   object(config.updates, ['enabled', 'includePinnedExtensions'], 'updates');
-  assert(typeof config.updates.enabled === 'boolean' && typeof config.updates.includePinnedExtensions === 'boolean', 'updates.enabled and updates.includePinnedExtensions must be booleans.');
+  assert(
+    typeof config.updates.enabled === 'boolean' &&
+      typeof config.updates.includePinnedExtensions === 'boolean',
+    'updates.enabled and updates.includePinnedExtensions must be booleans.',
+  );
   if (config.hints !== undefined) {
     object(config.hints, Object.keys(HINTS), 'hints');
-    assert(Object.values(config.hints).every(value => typeof value === 'string'), 'hints must contain strings.');
+    assert(
+      Object.values(config.hints).every((value) => typeof value === 'string'),
+      'hints must contain strings.',
+    );
   }
   assert(config.version === 1, 'Unsupported configuration version (expected 1).');
   assert(['pi', 'claude'].includes(config.agent), 'agent must be pi or claude.');
-  assert(typeof config.id === 'string' && ID_PATTERN.test(config.id), 'Project id must be five lowercase letters/digits.');
-  if (config.name !== undefined) assert(typeof config.name === 'string' && NAME_PATTERN.test(config.name), 'Invalid project name (use letters, digits, dot, underscore, or dash; max 64 characters).');
-  assert(typeof config.root === 'string' && path.isAbsolute(config.root), 'root must be an absolute path.');
+  assert(
+    typeof config.id === 'string' && ID_PATTERN.test(config.id),
+    'Project id must be five lowercase letters/digits.',
+  );
+  if (config.name !== undefined)
+    assert(
+      typeof config.name === 'string' && NAME_PATTERN.test(config.name),
+      'Invalid project name (use letters, digits, dot, underscore, or dash; max 64 characters).',
+    );
+  assert(
+    typeof config.root === 'string' && path.isAbsolute(config.root),
+    'root must be an absolute path.',
+  );
   if (identity) {
-    assert(config.id === identity.id && config.root === identity.root, 'Do not edit id or root; use pis --relocate to change the root.');
+    assert(
+      config.id === identity.id && config.root === identity.root,
+      'Do not edit id or root; use pis --relocate to change the root.',
+    );
   }
   object(config.image, ['packages', 'extraInstructions'], 'image');
   strings(config.image.packages, 'image.packages');
-  for (const pkg of config.image.packages) assert(/^[a-z0-9][a-z0-9+.-]*(?::[a-z0-9]+)?(?:=[a-zA-Z0-9.+:~_-]+)?$/.test(pkg), `Invalid apt package: ${pkg}`);
+  for (const pkg of config.image.packages)
+    assert(
+      /^[a-z0-9][a-z0-9+.-]*(?::[a-z0-9]+)?(?:=[a-zA-Z0-9.+:~_-]+)?$/.test(pkg),
+      `Invalid apt package: ${pkg}`,
+    );
   strings(config.image.extraInstructions, 'image.extraInstructions');
   for (const instruction of config.image.extraInstructions) {
-    assert(!/[\n\r]/.test(instruction) && /^RUN\s+\S/.test(instruction) && !/\\\s*$/.test(instruction), 'extraInstructions supports single-line RUN instructions only (no trailing continuation).');
-    assert(!/^RUN\s+--mount\b/.test(instruction), 'Build mounts are not supported in extraInstructions.');
+    assert(
+      !/[\n\r]/.test(instruction) && /^RUN\s+\S/.test(instruction) && !/\\\s*$/.test(instruction),
+      'extraInstructions supports single-line RUN instructions only (no trailing continuation).',
+    );
+    assert(
+      !/^RUN\s+--mount\b/.test(instruction),
+      'Build mounts are not supported in extraInstructions.',
+    );
   }
   object(config.credentials, ['env', 'proxy'], 'credentials');
   strings(config.credentials.env, 'credentials.env');
-  assert(config.credentials.env.length === 0, 'Direct credential forwarding is no longer supported. Set credentials.env to [] and configure credentials.proxy (for OpenAI: provider=openai after pis --login openai). Real keys must stay on the host.');
+  assert(
+    config.credentials.env.length === 0,
+    'Direct credential forwarding is no longer supported. Set credentials.env to [] and configure credentials.proxy (for OpenAI: provider=openai after pis --login openai). Real keys must stay on the host.',
+  );
   if (config.credentials.proxy !== undefined) {
     const proxy = config.credentials.proxy;
-    assert(!Object.hasOwn(proxy || {}, 'keyEnv'), 'Remove keyEnv from credentials.proxy; environment API keys are no longer supported. Run pis --login PROVIDER and select its provider. Edit the host project.json directly if pis --edit cannot open this legacy configuration.');
-    object(proxy, ['provider', 'profile', 'models', 'maxRequests', 'maxConcurrent', 'discoverModels', 'modelOverrides'], 'credentials.proxy');
-    assert(['openai', 'openai-codex', 'berget', 'mistral', 'custom'].includes(proxy.provider), 'Proxy provider must be openai, berget, mistral, custom or openai-codex.');
-    assert(proxy.profile === undefined || (proxy.provider !== 'openai-codex' && proxy.profile === proxy.provider), 'Profile must match the API-key provider (openai, berget, mistral or custom).');
+    assert(
+      !Object.hasOwn(proxy || {}, 'keyEnv'),
+      'Remove keyEnv from credentials.proxy; environment API keys are no longer supported. Run pis --login PROVIDER and select its provider. Edit the host project.json directly if pis --edit cannot open this legacy configuration.',
+    );
+    object(
+      proxy,
+      [
+        'provider',
+        'profile',
+        'models',
+        'maxRequests',
+        'maxConcurrent',
+        'discoverModels',
+        'modelOverrides',
+      ],
+      'credentials.proxy',
+    );
+    assert(
+      ['openai', 'openai-codex', 'berget', 'mistral', 'custom'].includes(proxy.provider),
+      'Proxy provider must be openai, berget, mistral, custom or openai-codex.',
+    );
+    assert(
+      proxy.profile === undefined ||
+        (proxy.provider !== 'openai-codex' && proxy.profile === proxy.provider),
+      'Profile must match the API-key provider (openai, berget, mistral or custom).',
+    );
 
-    assert(config.credentials.env.length === 0, 'Proxy mode requires credentials.env to be empty; never forward real credentials alongside the proxy.');
+    assert(
+      config.credentials.env.length === 0,
+      'Proxy mode requires credentials.env to be empty; never forward real credentials alongside the proxy.',
+    );
     validateBergetModelSettings(proxy);
     if (proxy.models !== undefined) strings(proxy.models, 'credentials.proxy.models');
-    if (proxy.maxRequests !== undefined) assert(Number.isInteger(proxy.maxRequests) && proxy.maxRequests >= 1 && proxy.maxRequests <= 100_000, 'proxy.maxRequests must be an integer between 1 and 100000.');
-    if (proxy.maxConcurrent !== undefined) assert(Number.isInteger(proxy.maxConcurrent) && proxy.maxConcurrent >= 1 && proxy.maxConcurrent <= 64, 'proxy.maxConcurrent must be an integer between 1 and 64.');
+    if (proxy.maxRequests !== undefined)
+      assert(
+        Number.isInteger(proxy.maxRequests) &&
+          proxy.maxRequests >= 1 &&
+          proxy.maxRequests <= 100_000,
+        'proxy.maxRequests must be an integer between 1 and 100000.',
+      );
+    if (proxy.maxConcurrent !== undefined)
+      assert(
+        Number.isInteger(proxy.maxConcurrent) &&
+          proxy.maxConcurrent >= 1 &&
+          proxy.maxConcurrent <= 64,
+        'proxy.maxConcurrent must be an integer between 1 and 64.',
+      );
   }
   assert(Array.isArray(config.mounts), 'mounts must be an array.');
   const sources = [config.root];
   for (const mount of config.mounts) {
     object(mount, ['source', 'access'], 'mount');
-    assert(typeof mount.source === 'string' && path.isAbsolute(mount.source), 'mount.source must be an absolute path.');
-    assert(mount.access === undefined || ['read-only', 'read-write'].includes(mount.access), `Invalid mount access: ${mount.access}`);
+    assert(
+      typeof mount.source === 'string' && path.isAbsolute(mount.source),
+      'mount.source must be an absolute path.',
+    );
+    assert(
+      mount.access === undefined || ['read-only', 'read-write'].includes(mount.access),
+      `Invalid mount access: ${mount.access}`,
+    );
     sources.push(mount.source);
   }
   for (const source of sources) {
     safeMount(source, { storage, home });
-    if (paths) assert(directory(source) === source, `Mount must use its canonical path (resolve symlinks): ${source}`);
+    if (paths)
+      assert(
+        directory(source) === source,
+        `Mount must use its canonical path (resolve symlinks): ${source}`,
+      );
   }
   for (let i = 0; i < sources.length; i++) {
-    for (let j = i + 1; j < sources.length; j++) assert(!overlap(sources[i], sources[j]), `Mounts overlap: ${sources[i]} and ${sources[j]}`);
+    for (let j = i + 1; j < sources.length; j++)
+      assert(!overlap(sources[i], sources[j]), `Mounts overlap: ${sources[i]} and ${sources[j]}`);
   }
   if (config.examples !== undefined) {
-    object(config.examples, ['mounts', 'extraInstructions', 'credentials', 'extensions'], 'examples');
+    object(
+      config.examples,
+      ['mounts', 'extraInstructions', 'credentials', 'extensions'],
+      'examples',
+    );
     if (config.examples.extensions !== undefined) extensionManifest(config.examples.extensions);
     if (config.examples.credentials !== undefined) {
-      object(config.examples.credentials, ['openai', 'berget', 'mistral', 'codex', 'direct'], 'examples.credentials');
+      object(
+        config.examples.credentials,
+        ['openai', 'berget', 'mistral', 'codex', 'direct'],
+        'examples.credentials',
+      );
       // Credential examples are inert JSON objects, not active credential modes.
-      for (const entry of Object.values(config.examples.credentials)) object(entry, ['env', 'proxy'], 'credential example');
+      for (const entry of Object.values(config.examples.credentials))
+        object(entry, ['env', 'proxy'], 'credential example');
     }
     if (config.examples.mounts !== undefined) {
       assert(Array.isArray(config.examples.mounts), 'examples.mounts must be an array.');
       for (const mount of config.examples.mounts) {
         object(mount, ['source', 'access'], 'example mount');
         assert(typeof mount.source === 'string', 'Example mount source must be a string.');
-        assert(mount.access === undefined || ['read-only', 'read-write'].includes(mount.access), 'Invalid example mount access.');
+        assert(
+          mount.access === undefined || ['read-only', 'read-write'].includes(mount.access),
+          'Invalid example mount access.',
+        );
       }
     }
-    if (config.examples.extraInstructions !== undefined) strings(config.examples.extraInstructions, 'examples.extraInstructions');
+    if (config.examples.extraInstructions !== undefined)
+      strings(config.examples.extraInstructions, 'examples.extraInstructions');
   }
   return config;
 }
 
 export function completeConfig(input) {
-  const record = value => value !== null && typeof value === 'object' && !Array.isArray(value);
+  const record = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
   if (!record(input)) return input;
   const config = structuredClone(input);
   const fill = (target, values) => {
     if (!record(target)) return;
-    for (const [key, value] of Object.entries(values)) if (target[key] === undefined) target[key] = structuredClone(value);
+    for (const [key, value] of Object.entries(values))
+      if (target[key] === undefined) target[key] = structuredClone(value);
   };
   fill(config, {
-    $schema: SCHEMA_REFERENCE, version: 1, agent: 'pi', image: {}, mounts: [],
+    $schema: SCHEMA_REFERENCE,
+    version: 1,
+    agent: 'pi',
+    image: {},
+    mounts: [],
     credentials: { env: [], proxy: { ...DEFAULT_PROXY, models: [] } },
-    extensions: DEFAULT_EXTENSIONS, updates: {}, examples: {}, hints: {},
+    extensions: DEFAULT_EXTENSIONS,
+    updates: {},
+    examples: {},
+    hints: {},
   });
   fill(config.updates, { enabled: false, includePinnedExtensions: false });
   fill(config.image, { packages: [], extraInstructions: [] });
@@ -137,19 +293,35 @@ export function completeConfig(input) {
     credentials: {},
   });
   fill(config.examples?.credentials, {
-    openai: { env: [], proxy: { provider: 'openai', models: [], maxRequests: 1000, maxConcurrent: 4 } },
-    berget: { env: [], proxy: { provider: 'berget', models: [], maxRequests: 1000, maxConcurrent: 4 } },
-    mistral: { env: [], proxy: { provider: 'mistral', models: [], maxRequests: 1000, maxConcurrent: 4 } },
-    codex: { env: [], proxy: { provider: 'openai-codex', models: [], maxRequests: 1000, maxConcurrent: 4 } },
+    openai: {
+      env: [],
+      proxy: { provider: 'openai', models: [], maxRequests: 1000, maxConcurrent: 4 },
+    },
+    berget: {
+      env: [],
+      proxy: { provider: 'berget', models: [], maxRequests: 1000, maxConcurrent: 4 },
+    },
+    mistral: {
+      env: [],
+      proxy: { provider: 'mistral', models: [], maxRequests: 1000, maxConcurrent: 4 },
+    },
+    codex: {
+      env: [],
+      proxy: { provider: 'openai-codex', models: [], maxRequests: 1000, maxConcurrent: 4 },
+    },
   });
   return config;
 }
 
 export function defaults(id, root, name) {
   return completeConfig({
-    version: 1, id, ...(name ? { name } : {}), root,
+    version: 1,
+    id,
+    ...(name ? { name } : {}),
+    root,
     image: { packages: ['build-essential', 'python3'], extraInstructions: [] },
-    mounts: [], credentials: { env: [], proxy: { ...DEFAULT_PROXY, models: [] } },
+    mounts: [],
+    credentials: { env: [], proxy: { ...DEFAULT_PROXY, models: [] } },
     examples: {
       mounts: [
         { source: path.join(os.homedir(), 'Projects/shared-library'), access: 'read-only' },

@@ -13,14 +13,25 @@ export const OPENAI_UPSTREAM = 'https://api.openai.com';
 export const CODEX_UPSTREAM = 'https://chatgpt.com';
 export const BERGET_UPSTREAM = 'https://api.berget.ai';
 export const MISTRAL_UPSTREAM = 'https://api.mistral.ai';
-export const DEFAULT_PROXY = { provider: 'openai-codex', models: [], maxRequests: 1000, maxConcurrent: 4 };
+export const DEFAULT_PROXY = {
+  provider: 'openai-codex',
+  models: [],
+  maxRequests: 1000,
+  maxConcurrent: 4,
+};
 const API_ROUTES = new Set(['POST /v1/responses', 'POST /v1/chat/completions', 'GET /v1/models']);
 const BERGET_ROUTES = new Set(['POST /v1/chat/completions']);
 const CODEX_ROUTES = new Set(['POST /backend-api/codex/responses', 'GET /backend-api/wham/usage']);
 
 function credentialFor(provider, apiKey) {
   if (provider === 'openai-codex') return { apiKey, ...codexClaims(apiKey) };
-  assert(typeof apiKey === 'string' && apiKey.length >= 8 && apiKey.length <= 4096 && /^[\x21-\x7e]+$/.test(apiKey), 'Missing or invalid host API key.');
+  assert(
+    typeof apiKey === 'string' &&
+      apiKey.length >= 8 &&
+      apiKey.length <= 4096 &&
+      /^[\x21-\x7e]+$/.test(apiKey),
+    'Missing or invalid host API key.',
+  );
   return { apiKey };
 }
 
@@ -64,28 +75,43 @@ export class SecretRedactor extends Transform {
     }
     callback();
   }
-  _flush(callback) { this.push(this.pending); callback(); }
+  _flush(callback) {
+    this.push(this.pending);
+    callback();
+  }
 }
 
 function reply(res, status, message) {
   if (res.destroyed || res.writableEnded) return;
-  if (res.headersSent) { res.destroy(); return; }
-  res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store', connection: 'close' });
+  if (res.headersSent) {
+    res.destroy();
+    return;
+  }
+  res.writeHead(status, {
+    'content-type': 'application/json',
+    'cache-control': 'no-store',
+    connection: 'close',
+  });
   res.end(JSON.stringify({ error: { message, type: 'pis_proxy_error' } }));
 }
 
 function body(req, maxBytes) {
   return new Promise((resolve, reject) => {
-    let size = 0, chunks = [], failed = false;
-    req.on('data', chunk => {
+    let size = 0,
+      chunks = [],
+      failed = false;
+    req.on('data', (chunk) => {
       size += chunk.length;
       if (size > maxBytes && !failed) {
-        failed = true; chunks = [];
+        failed = true;
+        chunks = [];
         reject(Object.assign(new Error('Request body too large.'), { status: 413 }));
       }
       if (!failed) chunks.push(chunk);
     });
-    req.on('end', () => { if (!failed) resolve(Buffer.concat(chunks)); });
+    req.on('end', () => {
+      if (!failed) resolve(Buffer.concat(chunks));
+    });
     req.on('error', () => reject(new Error('Request interrupted.')));
     req.on('aborted', () => reject(new Error('Request interrupted.')));
   });
@@ -96,30 +122,86 @@ function body(req, maxBytes) {
  * upstream parameter and limit overrides exist only for local fake-service tests.
  * No headers, URLs, payloads, or credentials are logged or included in errors.
  */
-export async function startOpenAIProxy({ socketPath, apiKey, provider = 'openai', getCredentials, onUpstreamStatus, token, models = [], maxRequests = 1000, maxConcurrent = 4, upstream, upstreamBaseUrl, lookup, maxBodyBytes = 16 * 1024 * 1024, timeoutMs = 300_000 }) {
-  assert(['openai', 'openai-codex', 'berget', 'mistral', 'custom'].includes(provider), 'Unsupported proxy provider.');
+export async function startOpenAIProxy({
+  socketPath,
+  apiKey,
+  provider = 'openai',
+  getCredentials,
+  onUpstreamStatus,
+  token,
+  models = [],
+  maxRequests = 1000,
+  maxConcurrent = 4,
+  upstream,
+  upstreamBaseUrl,
+  lookup,
+  maxBodyBytes = 16 * 1024 * 1024,
+  timeoutMs = 300_000,
+}) {
+  assert(
+    ['openai', 'openai-codex', 'berget', 'mistral', 'custom'].includes(provider),
+    'Unsupported proxy provider.',
+  );
   const initialCredential = credentialFor(provider, apiKey);
-  token ??= provider === 'openai-codex' ? dummyCodexToken() : `sk-pis-${randomBytes(32).toString('hex')}`;
-  assert(typeof token === 'string' && token.length >= 16 && token !== apiKey, 'Invalid proxy capability.');
-  const routes = provider === 'openai-codex' ? CODEX_ROUTES : ['berget', 'mistral', 'custom'].includes(provider) ? BERGET_ROUTES : API_ROUTES;
-  const fixedBase = provider === 'openai-codex' ? CODEX_UPSTREAM : provider === 'berget' ? `${BERGET_UPSTREAM}/v1` : provider === 'mistral' ? `${MISTRAL_UPSTREAM}/v1` : `${OPENAI_UPSTREAM}/v1`;
+  token ??=
+    provider === 'openai-codex' ? dummyCodexToken() : `sk-pis-${randomBytes(32).toString('hex')}`;
+  assert(
+    typeof token === 'string' && token.length >= 16 && token !== apiKey,
+    'Invalid proxy capability.',
+  );
+  const routes =
+    provider === 'openai-codex'
+      ? CODEX_ROUTES
+      : ['berget', 'mistral', 'custom'].includes(provider)
+        ? BERGET_ROUTES
+        : API_ROUTES;
+  const fixedBase =
+    provider === 'openai-codex'
+      ? CODEX_UPSTREAM
+      : provider === 'berget'
+        ? `${BERGET_UPSTREAM}/v1`
+        : provider === 'mistral'
+          ? `${MISTRAL_UPSTREAM}/v1`
+          : `${OPENAI_UPSTREAM}/v1`;
   const targetBase = upstreamBaseUrl || fixedBase;
   const origin = new URL(upstream || targetBase);
   const testUpstream = Boolean(upstream);
-  assert(!origin.username && !origin.password && !origin.search && !origin.hash, 'Upstream URL is invalid.');
-  assert(origin.protocol === 'https:' || (testUpstream && origin.protocol === 'http:' && origin.hostname === '127.0.0.1'), 'Upstream requires HTTPS (loopback HTTP is test-only).');
-  if (provider === 'openai-codex') assert(origin.pathname === '/', 'Codex upstream must be an origin.');
-  else if (!testUpstream) assert(/^\/(?:[A-Za-z0-9._~-]+\/)*v1$/.test(origin.pathname), 'API upstream must use a safe /v1 base path.');
+  assert(
+    !origin.username && !origin.password && !origin.search && !origin.hash,
+    'Upstream URL is invalid.',
+  );
+  assert(
+    origin.protocol === 'https:' ||
+      (testUpstream && origin.protocol === 'http:' && origin.hostname === '127.0.0.1'),
+    'Upstream requires HTTPS (loopback HTTP is test-only).',
+  );
+  if (provider === 'openai-codex')
+    assert(origin.pathname === '/', 'Codex upstream must be an origin.');
+  else if (!testUpstream)
+    assert(
+      /^\/(?:[A-Za-z0-9._~-]+\/)*v1$/.test(origin.pathname),
+      'API upstream must use a safe /v1 base path.',
+    );
   else assert(origin.pathname === '/', 'Fake upstream must be an origin.');
-  const apiBasePath = provider === 'openai-codex' ? '' : testUpstream ? (upstreamBaseUrl ? new URL(upstreamBaseUrl).pathname : '/v1') : origin.pathname;
+  const apiBasePath =
+    provider === 'openai-codex'
+      ? ''
+      : testUpstream
+        ? upstreamBaseUrl
+          ? new URL(upstreamBaseUrl).pathname
+          : '/v1'
+        : origin.pathname;
   const upstreamLookup = lookup ? { lookup } : {};
   const expected = Buffer.from(`Bearer ${token}`);
-  const active = new Set(), sockets = new Set();
-  let concurrent = 0, used = 0;
+  const active = new Set(),
+    sockets = new Set();
+  let concurrent = 0,
+    used = 0;
 
   async function handle(req, res) {
     const supplied = Buffer.from(req.headers.authorization || '');
-    if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) return reply(res, 401, 'Invalid proxy capability.');
+    if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected))
+      return reply(res, 401, 'Invalid proxy capability.');
     // Exact raw path matching rejects queries, absolute URLs, traversal, and alternate destinations.
     if (!routes.has(`${req.method} ${req.url}`)) return reply(res, 403, 'Endpoint not allowed.');
     if (concurrent >= maxConcurrent) return reply(res, 429, 'Proxy concurrency limit reached.');
@@ -135,26 +217,46 @@ export async function startOpenAIProxy({ socketPath, apiKey, provider = 'openai'
     let finished = false;
     const finish = () => {
       if (finished) return;
-      finished = true; clearTimeout(timeout); concurrent--; controller.abort();
-      if (outgoing) { active.delete(outgoing); outgoing.destroy(); }
+      finished = true;
+      clearTimeout(timeout);
+      concurrent--;
+      controller.abort();
+      if (outgoing) {
+        active.delete(outgoing);
+        outgoing.destroy();
+      }
     };
     res.once('close', finish);
     try {
-      let payload, stateful = false;
+      let payload,
+        stateful = false;
       if (req.method === 'POST') {
-        if (!/^application\/json(?:\s*;|$)/i.test(req.headers['content-type'] || '')) return reply(res, 415, 'JSON content type required.');
+        if (!/^application\/json(?:\s*;|$)/i.test(req.headers['content-type'] || ''))
+          return reply(res, 415, 'JSON content type required.');
         payload = await body(req, maxBodyBytes);
         const encoding = req.headers['content-encoding'];
         if (encoding && encoding !== 'identity') {
-          if (provider !== 'openai-codex' || encoding !== 'zstd') return reply(res, 415, 'Unsupported request encoding.');
-          try { payload = zstdDecompressSync(payload, { maxOutputLength: maxBodyBytes }); }
-          catch { return reply(res, 413, 'Invalid or oversized compressed request.'); }
+          if (provider !== 'openai-codex' || encoding !== 'zstd')
+            return reply(res, 415, 'Unsupported request encoding.');
+          try {
+            payload = zstdDecompressSync(payload, { maxOutputLength: maxBodyBytes });
+          } catch {
+            return reply(res, 413, 'Invalid or oversized compressed request.');
+          }
         }
         let parsed;
-        try { parsed = JSON.parse(payload.toString('utf8')); } catch { return reply(res, 400, 'Invalid JSON request.'); }
-        if (!parsed || typeof parsed.model !== 'string' || !parsed.model) return reply(res, 400, 'A model is required.');
-        if (models.length && !models.includes(parsed.model)) return reply(res, 403, 'Model not allowed.');
-        stateful = Boolean(parsed.previous_response_id || parsed.conversation || parsed.conversation_id);
+        try {
+          parsed = JSON.parse(payload.toString('utf8'));
+        } catch {
+          return reply(res, 400, 'Invalid JSON request.');
+        }
+        if (!parsed || typeof parsed.model !== 'string' || !parsed.model)
+          return reply(res, 400, 'A model is required.');
+        if (models.length && !models.includes(parsed.model))
+          return reply(res, 403, 'Model not allowed.');
+        stateful = Boolean(
+          parsed.previous_response_id || parsed.conversation || parsed.conversation_id,
+        );
       }
       if (finished || res.destroyed || res.writableEnded) return;
       // Recheck after asynchronous body collection so parallel uploads cannot overspend the request count.
@@ -162,65 +264,137 @@ export async function startOpenAIProxy({ socketPath, apiKey, provider = 'openai'
       used++;
       let credential = initialCredential;
       if (getCredentials) {
-        try { credential = credentialFor(provider, (await getCredentials(controller.signal, { method: req.method, path: req.url, stateful })).apiKey); }
-        catch (error) {
-          if (provider === 'openai-codex' && error?.code === 'PIS_CODEX_STATEFUL') return reply(res, 409, 'Codex account switch requires a full-context request; nothing was replayed.');
-          if (provider === 'openai-codex' && error?.code === 'PIS_CODEX_QUOTA') return reply(res, 429, 'Codex quota exhausted: no verified available account in the host pool.');
-          return reply(res, 503, 'Host credentials unavailable. For Codex, run pis --login-codex on the host.');
+        try {
+          credential = credentialFor(
+            provider,
+            (
+              await getCredentials(controller.signal, {
+                method: req.method,
+                path: req.url,
+                stateful,
+              })
+            ).apiKey,
+          );
+        } catch (error) {
+          if (provider === 'openai-codex' && error?.code === 'PIS_CODEX_STATEFUL')
+            return reply(
+              res,
+              409,
+              'Codex account switch requires a full-context request; nothing was replayed.',
+            );
+          if (provider === 'openai-codex' && error?.code === 'PIS_CODEX_QUOTA')
+            return reply(
+              res,
+              429,
+              'Codex quota exhausted: no verified available account in the host pool.',
+            );
+          return reply(
+            res,
+            503,
+            'Host credentials unavailable. For Codex, run pis --login-codex on the host.',
+          );
         }
       }
       if (finished || res.destroyed || res.writableEnded) return;
       const sessionHeaders = {};
       if (provider === 'openai-codex') {
         for (const name of ['session-id', 'x-client-request-id']) {
-          if (typeof req.headers[name] === 'string' && /^[A-Za-z0-9._:-]{1,128}$/.test(req.headers[name])) sessionHeaders[name] = req.headers[name];
+          if (
+            typeof req.headers[name] === 'string' &&
+            /^[A-Za-z0-9._:-]{1,128}$/.test(req.headers[name])
+          )
+            sessionHeaders[name] = req.headers[name];
         }
       }
       const request = origin.protocol === 'https:' ? https.request : http.request;
-      const targetPath = provider === 'openai-codex' ? req.url : `${apiBasePath.replace(/\/$/, '')}${req.url.slice(3)}`;
-      outgoing = request(new URL(targetPath, origin.origin), {
-        method: req.method,
-        ...upstreamLookup,
-        headers: {
-          authorization: `Bearer ${credential.apiKey}`,
-          ...(provider === 'openai-codex' ? { 'chatgpt-account-id': credential.accountId, originator: 'pi', 'openai-beta': 'responses=experimental', ...sessionHeaders } : {}),
-          'content-type': 'application/json',
-          accept: 'application/json, text/event-stream',
-          'accept-encoding': 'identity',
-          'user-agent': req.url === '/backend-api/wham/usage' ? 'codex-cli' : 'pis-credential-proxy/0.1',
-          ...(payload ? { 'content-length': payload.length } : {}),
+      const targetPath =
+        provider === 'openai-codex'
+          ? req.url
+          : `${apiBasePath.replace(/\/$/, '')}${req.url.slice(3)}`;
+      outgoing = request(
+        new URL(targetPath, origin.origin),
+        {
+          method: req.method,
+          ...upstreamLookup,
+          headers: {
+            authorization: `Bearer ${credential.apiKey}`,
+            ...(provider === 'openai-codex'
+              ? {
+                  'chatgpt-account-id': credential.accountId,
+                  originator: 'pi',
+                  'openai-beta': 'responses=experimental',
+                  ...sessionHeaders,
+                }
+              : {}),
+            'content-type': 'application/json',
+            accept: 'application/json, text/event-stream',
+            'accept-encoding': 'identity',
+            'user-agent':
+              req.url === '/backend-api/wham/usage' ? 'codex-cli' : 'pis-credential-proxy/0.1',
+            ...(payload ? { 'content-length': payload.length } : {}),
+          },
+          // No client-supplied Host, organization, project, cookies, proxy, or forwarding headers.
         },
-        // No client-supplied Host, organization, project, cookies, proxy, or forwarding headers.
-      }, async upstreamResponse => {
-        const status = upstreamResponse.statusCode || 502;
-        if (status < 200 || status >= 300) {
-          upstreamResponse.destroy();
-          try { onUpstreamStatus?.({ status, credential }); } catch { /* Never retry/replay on callback failure. */ }
-          // In particular, never follow redirects or expose upstream error bodies/headers.
-          return reply(res, status >= 400 && status <= 599 ? status : 502, `Provider upstream returned status ${status}.`);
-        }
-        if (upstreamResponse.headers['content-encoding'] && upstreamResponse.headers['content-encoding'] !== 'identity') {
-          upstreamResponse.destroy();
-          return reply(res, 502, 'Unsupported upstream content encoding.');
-        }
-        if (req.url === '/backend-api/wham/usage') {
-          try {
-            const summary = codexUsageSummary(JSON.parse((await body(upstreamResponse, 128 * 1024)).toString('utf8')));
-            if (!res.destroyed && !res.writableEnded) {
-              res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
-              res.end(JSON.stringify(summary));
+        async (upstreamResponse) => {
+          const status = upstreamResponse.statusCode || 502;
+          if (status < 200 || status >= 300) {
+            upstreamResponse.destroy();
+            try {
+              onUpstreamStatus?.({ status, credential });
+            } catch {
+              /* Never retry/replay on callback failure. */
             }
-          } catch { reply(res, 502, 'Invalid Codex usage response.'); }
-          return;
-        }
-        res.writeHead(status, { 'content-type': String(upstreamResponse.headers['content-type']).startsWith('text/event-stream') ? 'text/event-stream' : 'application/json', 'cache-control': 'no-store' });
-        pipeline(upstreamResponse, new SecretRedactor(credential.apiKey), res, () => finish());
-      });
+            // In particular, never follow redirects or expose upstream error bodies/headers.
+            return reply(
+              res,
+              status >= 400 && status <= 599 ? status : 502,
+              `Provider upstream returned status ${status}.`,
+            );
+          }
+          if (
+            upstreamResponse.headers['content-encoding'] &&
+            upstreamResponse.headers['content-encoding'] !== 'identity'
+          ) {
+            upstreamResponse.destroy();
+            return reply(res, 502, 'Unsupported upstream content encoding.');
+          }
+          if (req.url === '/backend-api/wham/usage') {
+            try {
+              const summary = codexUsageSummary(
+                JSON.parse((await body(upstreamResponse, 128 * 1024)).toString('utf8')),
+              );
+              if (!res.destroyed && !res.writableEnded) {
+                res.writeHead(200, {
+                  'content-type': 'application/json',
+                  'cache-control': 'no-store',
+                });
+                res.end(JSON.stringify(summary));
+              }
+            } catch {
+              reply(res, 502, 'Invalid Codex usage response.');
+            }
+            return;
+          }
+          res.writeHead(status, {
+            'content-type': String(upstreamResponse.headers['content-type']).startsWith(
+              'text/event-stream',
+            )
+              ? 'text/event-stream'
+              : 'application/json',
+            'cache-control': 'no-store',
+          });
+          pipeline(upstreamResponse, new SecretRedactor(credential.apiKey), res, () => finish());
+        },
+      );
       active.add(outgoing);
       outgoing.on('error', () => reply(res, 502, 'Provider upstream connection failed.'));
       outgoing.end(payload);
     } catch (error) {
-      reply(res, error.status || 400, error.status === 413 ? 'Request body too large.' : 'Invalid or interrupted request.');
+      reply(
+        res,
+        error.status || 400,
+        error.status === 413 ? 'Request body too large.' : 'Invalid or interrupted request.',
+      );
     }
   }
 
@@ -231,13 +405,19 @@ export async function startOpenAIProxy({ socketPath, apiKey, provider = 'openai'
   server.headersTimeout = 15_000;
   server.maxHeadersCount = 50;
   server.maxConnections = 128;
-  server.on('connection', socket => { sockets.add(socket); socket.once('close', () => sockets.delete(socket)); });
+  server.on('connection', (socket) => {
+    sockets.add(socket);
+    socket.once('close', () => sockets.delete(socket));
+  });
   server.on('connect', (_req, socket) => socket.destroy());
   server.on('upgrade', (_req, socket) => socket.destroy());
   server.on('clientError', (_error, socket) => socket.destroy());
   await new Promise((resolve, reject) => {
     server.once('error', reject);
-    server.listen(socketPath, () => { server.off('error', reject); resolve(); });
+    server.listen(socketPath, () => {
+      server.off('error', reject);
+      resolve();
+    });
   });
   fs.chmodSync(socketPath, 0o600);
   return {
@@ -245,7 +425,7 @@ export async function startOpenAIProxy({ socketPath, apiKey, provider = 'openai'
     async close() {
       for (const outgoing of active) outgoing.destroy();
       for (const socket of sockets) socket.destroy();
-      await new Promise(resolve => server.close(resolve));
+      await new Promise((resolve) => server.close(resolve));
       fs.rmSync(socketPath, { force: true });
     },
   };
