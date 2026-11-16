@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { once } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
+import { waitFor } from './fixtures/transport.js';
 import { hashPassword, randomKey, digest } from '../web/common.js';
 
 const installed = fs.existsSync(new URL('../web/node_modules/ws/package.json', import.meta.url));
@@ -16,8 +17,7 @@ const { parseAgentOptions } = installed ? await import('../web/agent-cli.js') : 
 const password = 'enrollment-test-password-only', passwordHash = await hashPassword(password);
 const webTest = (name, fn) => test(name, { skip: !installed, timeout: 25000 }, fn);
 async function until(predicate) {
-  for (let index = 0; index < 600; index++) { if (await predicate()) return; await delay(10); }
-  assert.fail('Enrollment test deadline.');
+  return waitFor(predicate, { attempts: 600, message: 'Enrollment test deadline.' });
 }
 async function api(server, route, { value, cookie, csrf, token, origin = server.origin } = {}) {
   return fetch(`${server.origin}${route}`, { method: value ? 'POST' : 'GET', headers: { Connection: 'close',

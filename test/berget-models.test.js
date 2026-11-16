@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { listenLocal } from './fixtures/transport.js';
 import http from 'node:http';
 import { BERGET_MODELS_URL, BERGET_CATALOG_LIMITS, bundledBergetModels, projectBergetCatalog, loadBergetModels, validateBergetModelSettings } from '../src/berget-models.js';
 
@@ -70,10 +71,10 @@ test('redirects and slow/stalled catalogues fall back using local fake HTTP only
     else if (req.url === '/destination') { destinationHits++; res.end(JSON.stringify(list(entry()))); }
     else { res.writeHead(200); res.write('{'); }
   });
-  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const origin = await listenLocal(server);
   t.after(() => { server.closeAllConnections(); return new Promise(resolve => server.close(resolve)); });
   for (const route of ['/redirect', '/stall']) {
-    const result = await loadBergetModels({ provider: 'berget' }, { timeoutMs: 100, fetchImpl: (url, options) => { assert.equal(url, BERGET_MODELS_URL); return fetch(`http://127.0.0.1:${server.address().port}${route}`, options); } });
+    const result = await loadBergetModels({ provider: 'berget' }, { timeoutMs: 100, fetchImpl: (url, options) => { assert.equal(url, BERGET_MODELS_URL); return fetch(`${origin}${route}`, options); } });
     assert.equal(result.source, 'fallback');
   }
   assert.equal(destinationHits, 0);

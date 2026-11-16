@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
+import { waitFor } from './fixtures/transport.js';
 import { once } from 'node:events';
 import { createDiagnostics } from '../web/diagnostics.js';
 import { hashPassword, verifyPassword, randomKey, digest, send, wsOptions } from '../web/common.js';
@@ -62,8 +63,7 @@ async function denied(origin, path, headers) {
   });
 }
 async function eventually(predicate) {
-  for (let tries = 0; tries < 500; tries++) { if (await predicate()) return; await delay(10); }
-  assert.fail('Local web state deadline.');
+  return waitFor(predicate, { message: 'Local web state deadline.' });
 }
 async function select(client, id = 'dummy-1') {
   const requestId = randomUUID();

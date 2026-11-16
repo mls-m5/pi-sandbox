@@ -8,14 +8,15 @@ import { Readable } from 'node:stream';
 import { SecretRedactor, startOpenAIProxy } from '../src/proxy.js';
 import { zstdCompressSync } from 'node:zlib';
 import { fakeCodexAccess } from './fixtures/codex.js';
+import { listenLocal } from './fixtures/transport.js';
 
 const KEY = 'sk-real-host-key-never-expose-this';
 async function fixture(t, handler, options = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pis-proxy-test-'));
   const upstream = http.createServer(handler);
-  await new Promise(resolve => upstream.listen(0, '127.0.0.1', resolve));
+  const upstreamOrigin = await listenLocal(upstream);
   const socketPath = path.join(dir, 'api.sock');
-  const proxy = await startOpenAIProxy({ socketPath, apiKey: KEY, upstream: `http://127.0.0.1:${upstream.address().port}`, ...options });
+  const proxy = await startOpenAIProxy({ socketPath, apiKey: KEY, upstream: upstreamOrigin, ...options });
   t.after(async () => {
     await proxy.close();
     upstream.closeAllConnections();

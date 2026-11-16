@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { setTimeout as delay } from 'node:timers/promises';
+import { waitFor } from './fixtures/transport.js';
 import { hashPassword, randomKey, digest } from '../web/common.js';
 
 const installed = fs.existsSync(new URL('../web/node_modules/ws/package.json', import.meta.url));
@@ -15,8 +16,7 @@ class Element {
 const nodes = element => [element, ...element.children.flatMap(nodes)];
 const content = element => element.textContent + element.children.map(content).join('');
 async function until(check) {
-  for (let i = 0; i < 600; i++) { if (check()) return; await delay(10); }
-  assert.fail('App DOM-shim deadline.');
+  return waitFor(check, { attempts: 600, message: 'App DOM-shim deadline.' });
 }
 
 test('actual browser app module logs in, selects, chats, recovers dummy quota and logs out via real local HTTP/WS', { skip: !installed, timeout: 15_000 }, async t => {
