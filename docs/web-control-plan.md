@@ -7,6 +7,10 @@
 
 The richer agent/delegated-work dashboard is still a future request; steering queue support is implemented separately from the experimental SSH transport. No unattended supervisor or host approval changes are implied.
 
+## Requested: agent-proposed non-force Git push from the web workflow
+
+The user requests a way for an agent to propose a Git push (never force) while using the web workflow. Existing terminal `request_host_git` already supports exact-commit non-force pushes with host approval, but is unavailable in web RPC. Web support remains unimplemented: design an authenticated, explicit host-side approval for the exact repository/remote/commit/destination branch, preserving the existing snapshot isolation, fast-forward checks, credential boundary, lifecycle and no-retry-on-ambiguity contract in host-actions.md. Never expose unrestricted Git/shell commands or host credentials to the agent. A server update button must remain separate from agent Git authorization.
+
 ## Deferred request: server update button and registration continuity
 
 Deferred at the user's request; manual code updates remain the current workflow. A future authenticated administrator button should fetch the server program from the repository's registered **public HTTPS GitHub source**, prepare/validate it without overwriting local changes, and restart only the server. Preserve registered agent identities and private machine-key hashes across restart so independent clients can reconnect; do not stop/restart agent work, persist browser sessions/one-use approvals, replay ambiguous commands, or add a transcript store. Persistent server registration, safe source/branch selection, update authority, staged activation/failure recovery and credential/storage contracts require design and tests before implementation. Downloaded server code executes on the host, so publisher trust and explicit authorization matter.
