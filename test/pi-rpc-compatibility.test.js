@@ -4,10 +4,36 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { spawn } from 'node:child_process';
+import { spawn, execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { PI_VERSION } from '../src/container.js';
 import { PiRpc, PiControl } from '../src/pi-rpc.js';
 import { PiView, VIEW_LIMITS } from '../src/pi-view.js';
+
+test('installed compatible Pi: opted-in host Git tool survives restored removal without overriding exclusions', { skip: !process.env.PIS_PI_PACKAGE, timeout: 20000 }, async t => {
+  const pkg = path.resolve(process.env.PIS_PI_PACKAGE), manifest = JSON.parse(fs.readFileSync(path.join(pkg, 'package.json'), 'utf8'));
+  const baseline = PI_VERSION.split('.').slice(0, 2).join('.');
+  assert.ok(new RegExp(`^${baseline.replaceAll('.', '\\.')}\\.\\d+$`).test(manifest.version));
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'pis-host-tool-compat-')); t.after(() => fs.rmSync(base, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(base, 'auth.json'), '{}', { mode: 0o600 });
+  const report = path.join(base, 'network-attempts');
+  let stdout;
+  try { ({ stdout } = await promisify(execFile)(process.execPath, [
+    '--import', fileURLToPath(new URL('./fixtures/pi-rpc-network-guard.mjs', import.meta.url)),
+    fileURLToPath(new URL('./fixtures/host-git-loadout.mjs', import.meta.url)), pkg, base,
+    fileURLToPath(new URL('../src/runtime/request-apt.mjs', import.meta.url)),
+    fileURLToPath(new URL('../src/runtime/image-entry.mjs', import.meta.url)),
+  ], { cwd: base, timeout: 15000, maxBuffer: 65536, env: { PATH: process.env.PATH, HOME: base, PI_CODING_AGENT_DIR: base, PI_OFFLINE: '1', PI_SKIP_VERSION_CHECK: '1', PIS_APT_SOCKET: '/nonexistent-pis-probe', PIS_HOST_GIT_ONLY: '1', PIS_RPC_NETWORK_REPORT: report } })); }
+  catch { throw new Error('Installed Pi host-tool loadout probe failed.'); }
+  const rows = JSON.parse(stdout), byMode = Object.fromEntries(rows.map(row => [row.mode, row]));
+  assert.equal(byMode['removed-baseline'].registered, true); assert.equal(byMode['removed-baseline'].active, false);
+  for (const name of ['fresh', 'restored-optin']) { assert.equal(byMode[name].active, true); assert.equal(byMode[name].read, true); }
+  for (const name of ['explicit-selection', 'explicit-none', 'explicit-exclusion']) assert.equal(byMode[name].active, false);
+  assert.equal(byMode['explicit-selection'].read, true);
+  assert.equal(fs.existsSync(report), false, 'Even attempted network access fails the probe.');
+  assert.equal(fs.readFileSync(path.join(base, 'auth.json'), 'utf8'), '{}');
+  t.diagnostic(`Tested installed Pi ${manifest.version}; no prompt, proposal or model call.`);
+});
 
 // Opt-in only. Never discovers/loads personal configuration or sends prompts.
 test('installed compatible Pi: isolated RPC state/history and orderly shutdown without network/model calls', {

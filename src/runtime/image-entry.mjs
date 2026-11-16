@@ -26,6 +26,13 @@ export function imageCommand(command, extensions, env = process.env) {
   const options = end === -1 ? args : args.slice(0, end);
   if (options.includes('--no-extensions') || options.includes('-ne')) return command;
   const subagents = extensions.find((entry) => entry.name === 'pi-subagents');
+  // A resumed transcript can remember this tool as removed. The per-launch host
+  // opt-in therefore adds a fixed modifier, never an allowlist/config rewrite.
+  // Explicit caller tool selections still win; --exclude-tools stays enforced by Pi.
+  const explicitTools = options.some(
+    (arg) => ['--tools', '-t', '--no-tools', '-nt'].includes(arg) || arg.startsWith('--tools='),
+  );
+  const activateHostGit = env.PIS_APT_SOCKET && env.PIS_HOST_GIT_ONLY === '1' && !explicitTools;
   return [
     command[0],
     ...extensions.flatMap((entry) => ['--extension', entry.path]),
@@ -34,6 +41,7 @@ export function imageCommand(command, extensions, env = process.env) {
       : []),
     ...(env.PIS_APT_SOCKET ? ['--extension', '/opt/pis/request-apt.mjs'] : []),
     ...(env.PIS_CODEX_AUTO_SOCKET ? ['--extension', '/opt/pis/codex-auto.mjs'] : []),
+    ...(activateHostGit ? ['--tools', '+request_host_git'] : []),
     ...args,
   ];
 }

@@ -38,6 +38,20 @@ test('image startup loads installed package directories without remote install r
   assert.deepEqual(imageCommand(['bash', '-i'], extensions, {}), ['bash', '-i']);
 });
 
+test('web Git opt-in adds only a fixed additive tool modifier and preserves explicit selections', () => {
+  const env = { PIS_APT_SOCKET: '/pis/apt/request.sock', PIS_HOST_GIT_ONLY: '1' };
+  const command = imageCommand(['pi', '--mode', 'rpc', '--continue'], [], env);
+  assert.deepEqual(command, ['/usr/local/bin/pis-pi-real', '--extension', '/opt/pis/request-apt.mjs', '--tools', '+request_host_git', '--mode', 'rpc', '--continue']);
+  for (const args of [['--tools', 'read'], ['-t', 'read'], ['--tools=read'], ['--no-tools'], ['-nt'], ['--no-extensions'], ['-ne']]) {
+    assert.ok(!imageCommand(['pi', ...args], [], env).includes('+request_host_git'));
+  }
+  for (const other of [{ PIS_APT_SOCKET: env.PIS_APT_SOCKET }, { PIS_HOST_GIT_ONLY: '1' }, {}]) assert.ok(!imageCommand(['pi'], [], other).includes('+request_host_git'));
+  assert.deepEqual(imageCommand(['bash'], [], env), ['bash']);
+  assert.ok(!imageCommand(['pi', 'install', 'npm:foo'], [], env).includes('+request_host_git'));
+  const excluded = imageCommand(['pi', '--exclude-tools', 'request_host_git'], [], env); assert.ok(excluded.includes('--exclude-tools'));
+  const prompt = imageCommand(['pi', '--', '--tools'], [], env); assert.ok(prompt.indexOf('+request_host_git') < prompt.indexOf('--'));
+});
+
 test('web settings fill proxy-compatible defaults but preserve explicit preferences and invalid files', t => {
   const dir = fs.mkdtempSync('/tmp/pis-web-defaults-');
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
