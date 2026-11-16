@@ -1,5 +1,12 @@
 # Design: outbound agent connections and a web control server
 
+## Requested GUI follow-ups (not implemented)
+
+- Improve the GUI's view of **how agents are working**, including delegated/parallel activity, rather than only the existing lifecycle/status/chat projection. Define bounded, content-safe activity information and distinguish running/waiting/idle from task completion; do not expose arbitrary worker state/auth/transcripts through diagnostics.
+- Support **queued, editable steer messages**, similar to Pi's own interface. The user should be able to inspect and edit queued steer input before delivery. Queue ownership, bounds, generation/session changes, cancellation, delivery acknowledgement and ambiguous-outcome/no-replay behavior need a separate design; this is not permission to add an unattended supervisor or weaken host approvals.
+
+These are future requests recorded for discovery. They are separate from the SSH connection transport currently being implemented; no activity dashboard or steer queue is claimed as available.
+
 ## Current local enrollment slice
 
 `pis --server --standalone` and `pis --connect` implement independently started **same-host** agents. Default connect uses a saved host-global origin and registered project containing the current directory; its two-digit client code is entered under **Väntande klienter** by an authenticated admin. One-use collection then saves its private connection key/profile and starts automatically. Named/project/server overrides and explicit advanced ten-minute GUI keys remain available. Stable identity plus prior-key proof reuses offline registrations; live identities are not displaced. Advanced legacy register/run/forget remain available. The controller's registrations/sessions remain in memory; client profiles are private host files, never sandbox mounts. Server restart requires fresh approved connection requests, while normal disconnect preserves local work. No persistent transcript database, LAN/TLS listener, server container or inter-agent messaging is added. See [the current implementation/security contract](web-agents.md). The older investigation below is historical context, not a current test count or deployment claim.
