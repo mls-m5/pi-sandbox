@@ -7,7 +7,7 @@ Status: the approved bounded cleanup is implemented and verified with offline ch
 | Work | Current result / durable reference |
 | --- | --- |
 | Consistent formatting | Pinned development-only Prettier 3.10.1; production JS/MJS/CSS/HTML and GNOME sources follow one convention. The approved one-time image-source pass can change fingerprints; avoid repeated formatting churn. |
-| Automatic syntax checks | `scripts/check-syntax.mjs` discovers relevant JS/MJS/CJS/shell sources, skips dependencies/generated/hidden/symlink paths and parses without executing them. Discovery/non-execution/error tests protect the boundary. |
+| Automatic syntax checks | `scripts/check-syntax.mjs` discovers relevant JS/MJS/CJS/shell sources, skips dependencies/generated/hidden/symlink paths and parses without executing them. Discovery/non-execution/error tests protect the boundary. The optional web suite likewise discovers `test/web-*.test.js` rather than maintaining a second filename list. |
 | Shared terminal input | `src/terminal-input.js` owns editing, UTF-8 decoding, terminal restoration and listener cleanup. Callers retain distinct defaults, limits, piped-input/cancellation and credential policies. See [the development map](development.md). |
 | Readable activity policy | `web/public/activity.js` has ordered pure status decisions. Working/waiting/idle/aborted/error/offline remain distinct; idle is not success. See [web control](web-control.md). |
 | Shared transport test primitives | `test/fixtures/transport.js` centralizes loopback startup and bounded waits, retaining caller deadlines/messages. Security assertions and specialized WS queues remain explicit in tests, not hidden behind a framework. |
@@ -36,7 +36,7 @@ Remaining host gates include real graphical-browser CSP/cookies/layout/accessibi
 - Core runtime dependencies remain absent. Development tooling is pinned; optional `ws` stays under `web/`. No new framework/build pipeline is needed.
 - Preserve explicit package/config choices and approval/cancellation semantics. Never echo secrets, silently enable delegation/spending or add host mounts/credentials to make a test pass.
 - No paid/live inference, Podman builds or image/cache deletion as smoke tests. Runtime/embedded-source changes can require next-start rebuilds; audit before moving them.
-- Prefer behavior assertions. Retain source guards where they enforce security; cosmetic formatting assertions should not be whitespace-sensitive.
+- Prefer behavior assertions. Retain source guards where they enforce security; cosmetic formatting assertions should not be whitespace-sensitive. Review worker test assumptions against existing contracts: fail-fast lock contention is not a promise to queue concurrent mutations, and neither passing nor failing worker receipts are integration authority.
 - Separate requested infrastructure/features remain in [development priorities](development.md#remaining-requested-work--priorities), including TLS/LAN, server isolation, supervisor/remote approvals, host Git identity and deferred shared-base-image design.
 
 ## Research informing the plan
