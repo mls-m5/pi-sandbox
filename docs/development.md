@@ -39,6 +39,8 @@ API-key providers now use login-only credential sourcing: `pis --login openai|be
 
 Terminal editing/secret input is shared in `src/terminal-input.js`, with caller policy in API login and `web/secret-input.js`. No secret echo or credential-source change; admin empty input still requests generation and agent keys still require exactly 43 characters. Raw mode is restored and cancellation/error/signal listeners are removed; split UTF-8 chunks are decoded correctly. API key input is bounded at the existing 4096-byte credential limit, other API prompt input at 64 KiB. See the maintenance checklist/tests before adding another raw-mode input loop.
 
+This repository's `.pi/settings.json` scopes terminal model cycling to `openai-codex/gpt-6.1-sol` and `openai-codex/gpt-6-luna`, with Luna's per-model thinking set to low; no default model/provider or authentication is replaced. Use `/reload`, then `/model` or Ctrl+P in terminal Pi. Both IDs and the settings loader were checked against installed Pi 1.5.2 without network/model calls; provider-side quota/cost/speed are not benchmarked. This is manual same-session switching, not an automatic subagent or model router. Respect any explicit host proxy model allowlist; this file does not bypass it.
+
 ## Development checks
 
 ```sh
