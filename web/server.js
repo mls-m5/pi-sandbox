@@ -4,6 +4,7 @@ import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { WebSocketServer } from 'ws';
 import { validateControlCommand } from '../src/pi-rpc.js';
 import { ENROLLMENT_MS, validateEnrollment, uniqueAgentLabel, labelValid } from './enrollment.js';
+import { createWebSessions } from './server-sessions.js';
 import { startupPhase } from './public/startup.js';
 import { resultCode, safeTrace } from './public/diagnostics.js';
 import {
@@ -70,8 +71,7 @@ export async function startWebServer({
     registrations.set(agent.id, { ...agent, kind: agent.kind || 'dummy' });
   }
   const tickets = new Map();
-  const sessions = new Map(),
-    browsers = new Set(),
+  const browsers = new Set(),
     connected = new Map(),
     pending = new Map();
   const loginBudget = budget(10, 60_000),
@@ -95,17 +95,11 @@ export async function startWebServer({
   const wss = new WebSocketServer({ noServer: true, ...wsOptions });
   wss.on('error', () => {});
   server.on('clientError', (_error, socket) => socket.destroy());
-  const sessionFor = (req) => {
-    const match = /(?:^|;\s*)pis_web=([A-Za-z0-9_-]{43})(?:;|$)/.exec(req.headers.cookie || '');
-    if (!match) return;
-    const key = digest(match[1]),
-      session = sessions.get(key);
-    if (!session || session.expires <= Date.now()) {
-      sessions.delete(key);
-      return;
-    }
-    return { ...session, key };
-  };
+  const sessions = createWebSessions(sessionMs, (key) => {
+    for (const [hash, ticket] of tickets) if (ticket.owner === key) clearTicket(hash);
+    for (const ws of browsers) if (ws.sessionKey === key) ws.terminate();
+  });
+  const sessionFor = (req) => sessions.sessionFor(req);
   const headers = (res) => {
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -158,11 +152,7 @@ export async function startWebServer({
     tickets.delete(hash);
     for (const ws of browsers) send(ws, { v: 1, type: 'enrollment_cleared', id: ticket.id });
   }
-  function logout(key) {
-    for (const [hash, ticket] of tickets) if (ticket.owner === key) clearTicket(hash);
-    sessions.delete(key);
-    for (const ws of browsers) if (ws.sessionKey === key) ws.terminate();
-  }
+  const logout = (key) => sessions.logout(key);
   async function handle(req, res) {
     if (!validHost(req)) {
       json(res, 403, { error: 'invalid_host' });
@@ -184,14 +174,12 @@ export async function startWebServer({
           json(res, 401, { error: 'login_failed' });
           return;
         }
-        for (const [key, session] of sessions) if (session.expires <= Date.now()) logout(key);
+        sessions.expire();
         if (sessions.size >= 16) {
           json(res, 429, { error: 'session_limit' });
           return;
         }
-        const token = randomKey(),
-          csrf = randomKey();
-        sessions.set(digest(token), { csrf, expires: Date.now() + sessionMs });
+        const { token, csrf } = sessions.issue();
         res.setHeader(
           'Set-Cookie',
           `pis_web=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${Math.ceil(sessionMs / 1000)}`,
@@ -712,7 +700,7 @@ export async function startWebServer({
   server.on('error', () => {});
   origin = `http://127.0.0.1:${server.address().port}`;
   const heartbeat = setInterval(() => {
-    for (const [key, session] of sessions) if (session.expires <= Date.now()) logout(key);
+    sessions.expire();
     for (const [hash, ticket] of tickets) if (ticket.expires <= Date.now()) clearTicket(hash);
     for (const ws of wss.clients) {
       if (!ws.alive) ws.terminate();
