@@ -182,9 +182,38 @@ function gitEnvironment(home, hostHome = os.homedir()) {
   return env;
 }
 
+function repositoryGitDirectory(root, repo) {
+  const marker = path.join(repo, '.git');
+  const stat = fs.lstatSync(marker);
+  if (stat.isDirectory() && !stat.isSymbolicLink()) return marker;
+  regular(marker, 4096);
+  const match = /^gitdir: ([^\r\n\0]+)\r?\n?$/.exec(fs.readFileSync(marker, 'utf8'));
+  assert(match && repo !== root, 'Only in-project submodule Git files are supported.');
+  // Absorbed (including nested) submodules live beneath the owning project's
+  // ordinary .git/modules tree. Never follow arbitrary worktree/common-dir links.
+  const modules = path.join(root, '.git', 'modules');
+  directory(path.join(root, '.git'));
+  directory(modules);
+  const gitDir = path.resolve(repo, match[1]);
+  assert(
+    within(modules, gitDir) && gitDir !== modules && fs.realpathSync(gitDir) === gitDir,
+    'Submodule Git directory must stay in project .git/modules.',
+  );
+  directory(gitDir);
+  assert(
+    !fs.existsSync(path.join(gitDir, 'commondir')),
+    'Shared worktree Git directories are not supported.',
+  );
+  return gitDir;
+}
+
 // Snapshot object data into a fresh bare repo. Never execute Git in the shared
 // working tree, and never copy its config, hooks, refs, alternates or helpers.
-export async function prepareGitPush(config, proposal, { spawnImpl = spawn } = {}) {
+export async function prepareGitPush(
+  config,
+  proposal,
+  { spawnImpl = spawn, nonInteractive = false, timeoutMs = 120000 } = {},
+) {
   proposal = validateGitPushProposal(proposal);
   const root = fs.realpathSync(config.root);
   const repo = path.resolve(root, proposal.repo);
@@ -192,13 +221,16 @@ export async function prepareGitPush(config, proposal, { spawnImpl = spawn } = {
     within(root, repo) && fs.realpathSync(repo) === repo,
     'Repository must remain inside the registered project, without symlinks.',
   );
-  const gitDir = path.join(repo, '.git');
-  directory(gitDir); // Worktrees/submodules using .git files are not supported yet.
+  const gitDir = repositoryGitDirectory(root, repo);
   const sourceConfig = path.join(gitDir, 'config');
   regular(sourceConfig, 128 * 1024);
   const temp = fs.mkdtempSync('/tmp/pis-push-');
   fs.chmodSync(temp, 0o700);
   const env = gitEnvironment(temp);
+  if (nonInteractive) {
+    env.GIT_TERMINAL_PROMPT = '0';
+    env.GIT_ASKPASS = '/bin/false';
+  }
   const git = async (args) =>
     (
       await exec(GIT, ['-c', 'core.hooksPath=/dev/null', '-c', 'credential.helper=', ...args], {
@@ -290,13 +322,44 @@ export async function prepareGitPush(config, proposal, { spawnImpl = spawn } = {
           `${proposal.commit}:${proposal.ref}`,
         ];
         return new Promise((resolve, reject) => {
-          const child = spawnImpl(GIT, args, { cwd: temp, env, stdio: 'inherit' });
-          child.once('error', () => reject(new Error('Cannot start host Git push.')));
-          child.once('exit', (code) =>
+          const child = spawnImpl(GIT, args, {
+            cwd: temp,
+            env,
+            stdio: nonInteractive ? 'ignore' : 'inherit',
+            detached: nonInteractive,
+          });
+          const signalOwned = (signal) => {
+            try {
+              if (nonInteractive && Number.isInteger(child.pid) && child.pid > 0)
+                process.kill(-child.pid, signal);
+              else child.kill?.(signal);
+            } catch {}
+          };
+          let timer, kill;
+          if (nonInteractive)
+            timer = setTimeout(() => {
+              signalOwned('SIGTERM');
+              kill = setTimeout(() => signalOwned('SIGKILL'), 2000);
+            }, timeoutMs);
+          const clear = () => {
+            clearTimeout(timer);
+            clearTimeout(kill);
+          };
+          child.once('error', () => {
+            clear();
+            reject(new Error('Cannot start host Git push.'));
+          });
+          child.once('exit', (code) => {
+            clear();
+            if (nonInteractive) signalOwned('SIGKILL');
             code === 0
               ? resolve()
-              : reject(new Error('Git push failed; no automatic retry was made.')),
-          );
+              : reject(
+                  new Error(
+                    'Git push did not report success; outcome may be unknown. No automatic retry was made.',
+                  ),
+                );
+          });
         });
       },
       close() {
@@ -309,7 +372,7 @@ export async function prepareGitPush(config, proposal, { spawnImpl = spawn } = {
   } catch {
     fs.rmSync(temp, { recursive: true, force: true });
     throw new Error(
-      'Cannot prepare safe host Git push. Check the remote URL, commit, repository layout and object integrity. Only ordinary SHA-1 .git directories and SSH/HTTPS remotes are supported.',
+      'Cannot prepare safe host Git push. Check the remote URL, commit, repository layout and object integrity. Only ordinary SHA-1 repositories or in-project absorbed submodules, and SSH/HTTPS remotes are supported.',
     );
   }
 }

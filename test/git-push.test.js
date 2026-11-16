@@ -112,6 +112,23 @@ test('real offline Git transfer pushes the exact snapshot commit without reposit
   assert.ok(!fs.existsSync(marker));
 });
 
+test('noninteractive web push preserves real Git non-fast-forward protection and never retries', async t => {
+  const { dir, root, git, proposal } = fixture(t), destination = path.join(dir, 'destination.git');
+  execFileSync('/usr/bin/git', ['init', '--bare', '--template=', destination], { stdio: 'ignore' });
+  let attempts = 0;
+  const options = { nonInteractive: true, spawnImpl(program, args, options) {
+    attempts++; const local = [...args]; local[local.indexOf('--') + 1] = destination;
+    return spawn(program, local, { ...options, env: { ...options.env, GIT_ALLOW_PROTOCOL: 'file' } });
+  } };
+  const first = await prepareGitPush({ root }, proposal, options);
+  try { await first.push(); } finally { first.close(); }
+  git(['checkout', '--orphan', 'diverged']); git(['-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-m', 'divergent root']);
+  const divergent = await prepareGitPush({ root }, { ...proposal, commit: git(['rev-parse', 'HEAD']) }, options);
+  try { await assert.rejects(divergent.push(), /outcome may be unknown/); await assert.rejects(divergent.push(), /already used/); } finally { divergent.close(); }
+  assert.equal(attempts, 2, 'Exactly one process per independently prepared snapshot.');
+  assert.equal(execFileSync('/usr/bin/git', ['--git-dir', destination, 'rev-parse', 'refs/heads/main'], { encoding: 'utf8' }).trim(), proposal.commit);
+});
+
 test('preparation rejects symlinks, missing commits and unsafe remotes without running a push', async t => {
   const { dir, root, git, proposal } = fixture(t);
   await assert.rejects(prepareGitPush({ root }, { ...proposal, commit }), /Cannot prepare safe/);
@@ -124,6 +141,31 @@ test('preparation rejects symlinks, missing commits and unsafe remotes without r
   fs.renameSync(objects, `${objects}-real`);
   fs.symlinkSync(`${objects}-real`, objects);
   await assert.rejects(prepareGitPush({ root }, proposal), /Cannot prepare safe/);
+});
+
+test('absorbed nested submodules snapshot their own commit and remote, rejecting escaped Git pointers', async t => {
+  const { root, dir, proposal } = fixture(t);
+  const module = path.join(root, 'deps', 'child'); fs.mkdirSync(path.dirname(module), { recursive: true });
+  const modules = path.join(root, '.git', 'modules', 'deps', 'child'); fs.mkdirSync(path.dirname(modules), { recursive: true });
+  const env = { PATH: '/usr/bin:/bin', HOME: dir, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' };
+  execFileSync('/usr/bin/git', ['clone', '--no-hardlinks', '--separate-git-dir', modules, root, module], { env, stdio: 'ignore' });
+  execFileSync('/usr/bin/git', ['-C', module, 'remote', 'set-url', 'origin', 'git@example.com:owner/child.git'], { env, stdio: 'ignore' });
+  let calls = 0;
+  const push = await prepareGitPush({ root }, { ...proposal, repo: 'deps/child' }, { nonInteractive: true, spawnImpl(_program, args, options) {
+    calls++; assert.ok(args.includes('ssh://git@example.com/owner/child.git')); assert.ok(args.includes(`${proposal.commit}:refs/heads/main`));
+    assert.equal(options.env.GIT_TERMINAL_PROMPT, '0'); assert.equal(options.stdio, 'ignore');
+    const child = new EventEmitter(); setImmediate(() => child.emit('exit', 0)); return child;
+  } });
+  try { await push.push(); assert.equal(calls, 1); } finally { push.close(); }
+  const leaf = path.join(module, 'vendor', 'leaf'), leafGit = path.join(modules, 'modules', 'leaf'); fs.mkdirSync(path.dirname(leaf), { recursive: true }); fs.mkdirSync(path.dirname(leafGit), { recursive: true });
+  execFileSync('/usr/bin/git', ['clone', '--no-hardlinks', '--separate-git-dir', leafGit, root, leaf], { env, stdio: 'ignore' });
+  execFileSync('/usr/bin/git', ['-C', leaf, 'remote', 'set-url', 'origin', 'git@example.com:owner/leaf.git'], { env, stdio: 'ignore' });
+  const nested = await prepareGitPush({ root }, { ...proposal, repo: 'deps/child/vendor/leaf' });
+  try { assert.equal(nested.url, 'ssh://git@example.com/owner/leaf.git'); assert.equal(nested.commit, proposal.commit); } finally { nested.close(); }
+  const outside = path.join(dir, 'outside.git'); fs.renameSync(modules, outside); fs.writeFileSync(path.join(module, '.git'), `gitdir: ${outside}\n`);
+  await assert.rejects(prepareGitPush({ root }, { ...proposal, repo: 'deps/child' }));
+  fs.symlinkSync(outside, modules); fs.writeFileSync(path.join(module, '.git'), `gitdir: ${modules}\n`);
+  await assert.rejects(prepareGitPush({ root }, { ...proposal, repo: 'deps/child' }));
 });
 
 test('host push approval shows full destination, commit and branch; decline never pushes', async () => {
