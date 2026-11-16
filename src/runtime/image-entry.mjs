@@ -74,6 +74,122 @@ export function initializeWebSettings(extensions, env = process.env) {
   }
 }
 
+// Reject redirected parents without changing existing directory permissions.
+function subagentDirectory(directory, create = false) {
+  const { root } = path.parse(directory);
+  let current = root;
+  for (const part of directory.slice(root.length).split(path.sep).filter(Boolean)) {
+    current = path.join(current, part);
+    let stat;
+    try {
+      stat = fs.lstatSync(current);
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+      if (!create) return false;
+      try {
+        fs.mkdirSync(current, { mode: 0o700 });
+      } catch (error) {
+        if (error.code !== 'EEXIST') throw error;
+      }
+      stat = fs.lstatSync(current);
+    }
+    if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error('Unsafe directory.');
+  }
+  return true;
+}
+
+// Supply a per-process default, never rewrite the extension's user config.
+export function subagentWorktreeEnvironment(command, extensions, source = process.env) {
+  const env = { ...source };
+  const args = command.slice(1),
+    end = args.indexOf('--');
+  const options = end === -1 ? args : args.slice(0, end);
+  if (
+    env.CLAUDE_CONFIG_DIR ||
+    command[0] !== '/usr/local/bin/pis-pi-real' ||
+    PI_COMMANDS.has(command[1]) ||
+    options.some(
+      (arg) =>
+        ['--help', '-h', '--version', '-v', '--list-models', '--export'].includes(arg) ||
+        arg.startsWith('--list-models='),
+    ) ||
+    options.includes('--no-extensions') ||
+    options.includes('-ne') ||
+    !extensions.some((entry) => entry.name === 'pi-subagents')
+  )
+    return env;
+  try {
+    const agentDir = env.PI_CODING_AGENT_DIR || path.join(env.HOME || os.homedir(), '.pi/agent');
+    if (!path.isAbsolute(agentDir)) throw new Error('Invalid state path.');
+    const directory = path.join(agentDir, 'extensions/subagent');
+    let config = {};
+    if (subagentDirectory(directory)) {
+      let fd;
+      try {
+        fd = fs.openSync(
+          path.join(directory, 'config.json'),
+          fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK,
+        );
+      } catch (error) {
+        if (error.code !== 'ENOENT') throw error;
+      }
+      if (fd !== undefined) {
+        try {
+          const stat = fs.fstatSync(fd);
+          if (!stat.isFile() || stat.nlink !== 1 || stat.size > 65536)
+            throw new Error('Unsafe config.');
+          const buffer = Buffer.alloc(65537);
+          let bytes = 0;
+          while (bytes < buffer.length) {
+            const count = fs.readSync(fd, buffer, bytes, buffer.length - bytes, null);
+            if (!count) break;
+            bytes += count;
+          }
+          if (bytes > 65536) throw new Error('Config too large.');
+          config = JSON.parse(
+            new TextDecoder('utf-8', { fatal: true }).decode(buffer.subarray(0, bytes)),
+          );
+        } finally {
+          fs.closeSync(fd);
+        }
+      }
+    }
+    if (!config || typeof config !== 'object' || Array.isArray(config))
+      throw new Error('Invalid config.');
+    if (
+      config.worktreeProvider !== undefined &&
+      !['native', 'auto', 'worktrunk'].includes(config.worktreeProvider)
+    )
+      throw new Error('Invalid provider.');
+    if (
+      config.worktreeBaseDir !== undefined &&
+      (typeof config.worktreeBaseDir !== 'string' ||
+        !config.worktreeBaseDir.trim() ||
+        config.worktreeBaseDir.includes('\0'))
+    )
+      throw new Error('Invalid root.');
+    if (config.worktreeProvider === 'worktrunk' && config.worktreeBaseDir !== undefined)
+      throw new Error('Conflicting provider.');
+    if (
+      config.worktreeBaseDir !== undefined ||
+      ['auto', 'worktrunk'].includes(config.worktreeProvider) ||
+      env.PI_SUBAGENTS_WORKTREE_DIR?.trim()
+    )
+      return env;
+    const root = path.join(agentDir, 'worktrees');
+    subagentDirectory(root, true);
+    const stat = fs.lstatSync(root);
+    if (stat.uid !== process.getuid() || (stat.mode & 0o077) !== 0)
+      throw new Error('Nonprivate root.');
+    env.PI_SUBAGENTS_WORKTREE_DIR = root;
+    return env;
+  } catch {
+    throw new Error(
+      'Sandbox pi-subagents worktree configuration is unsafe or invalid; no config was changed.',
+    );
+  }
+}
+
 export function startupProgress(
   message,
   env = process.env,
@@ -96,7 +212,7 @@ async function main() {
       `Image extensions (managed with pis --edit):\n${extensions.map((entry) => entry.source).join('\n') || '(none)'}\n\nAdditional sandbox-state packages:`,
     );
   }
-  const env = { ...process.env };
+  const env = subagentWorktreeEnvironment(command, extensions);
   const bridge = '--import=/opt/pis/fetch-bridge.mjs';
   if (
     env.PIS_PROXY_PROVIDER === 'openai-codex' &&

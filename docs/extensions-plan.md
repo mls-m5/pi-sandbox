@@ -59,9 +59,15 @@ Pi's npm child resolver selects the Pi package root from the actual Pi CLI entry
 
 ## Parallel worktrees: bounded sandbox trial
 
-A two-worker trial succeeded after configuring the installed extension's native worktree root inside existing writable sandbox state. The package default is a `worktrees` sibling of the repository; that parent directory may be outside the writable project mount. Allocation then fails before agents start, rather than silently sharing the main checkout.
+Eligible Pi launches with configured `pi-subagents` now prepare a private `worktrees` directory under `PI_CODING_AGENT_DIR` (normally `/pis/home/.pi/agent/worktrees`) and provide it through `PI_SUBAGENTS_WORKTREE_DIR` in the spawned Pi environment. The parent environment and extension config are never rewritten. This selects native allocation for the otherwise implicit provider choice; it does not start workers or make every delegation a worktree.
 
-Inside the Pi sandbox, merge this setting into its existing `$PI_CODING_AGENT_DIR/extensions/subagent/config.json` (normally `/pis/home/.pi/agent/extensions/subagent/config.json`), retaining other explicit values:
+Explicit `worktreeBaseDir`, `PI_SUBAGENTS_WORKTREE_DIR`, or `worktreeProvider: "auto"`/`"worktrunk"` are preserved. Explicit `native` without a root can use the new default. Disabled extensions, missing subagents, Claude/non-Pi commands, management commands and help/version/list/export invocations do not prepare the directory. `--no-skills` alone still allows the extension/default; flags after `--` are prompt text, not opt-outs. Existing directory permissions are not changed; unsafe parents/configs or nonprivate default roots fail with a fixed error. Existing config is read through a bounded no-follow/nonblocking regular singly-linked descriptor (64 KiB cap), not a pathname read followed by replacement.
+
+This deliberate bootstrap behavior changes image fingerprints and can cause a next-start rebuild, even with an older explicit extension list; it does not rebuild running images or reclaim caches. Unit tests and an offline installed-0.88.1 provider-resolver probe passed; new-image startup/foreground/background child execution still needs the opt-in real-Podman host gate.
+
+The earlier two-worker trial used a manual configuration because the package's own unconfigured default is a `worktrees` sibling of the repository, whose parent may be outside the writable project mount. Failed allocation stopped before agent work rather than silently sharing the main checkout.
+
+For an already-running session/older image needing a manual override, inside the Pi sandbox merge this setting into its existing `$PI_CODING_AGENT_DIR/extensions/subagent/config.json` (normally `/pis/home/.pi/agent/extensions/subagent/config.json`), retaining other explicit values:
 
 ```json
 {
@@ -69,7 +75,7 @@ Inside the Pi sandbox, merge this setting into its existing `$PI_CODING_AGENT_DI
 }
 ```
 
-Use a writable directory outside both the project checkout and the extension directory. Reload Pi (`/reload`) after changing it: the already-loaded extension retained its previous value in the trial. This is a tested **local configuration**, not an automatically installed pis default or a host-directory permission change. Do not mount host home, expose credentials or broaden container privileges to fix allocation.
+Use a writable directory outside both the project checkout and the extension directory. Reload Pi (`/reload`) after changing it: the already-loaded extension retained its previous value in the trial. That manual override was a tested **local configuration**; new eligible image launches now receive the environment default above, without editing that file. No host-directory permission change is made. Do not mount host home, expose credentials or broaden container privileges to fix allocation.
 
 The tested workflow uses explicit Luna workers with `worktree: true`, a clean committed base, one writer per worktree and disjoint test-file responsibilities. Workers validate without committing; the supervisor checks handoff base commits and file scope, reviews captured patches, applies them explicitly and runs the combined tests before a local commit. No automatic merge/push to `main` is enabled. Generated dependency links must not enter patches. Missing optional test dependencies mean skips, not transport/browser verification.
 
