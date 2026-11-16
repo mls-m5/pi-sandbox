@@ -17,6 +17,7 @@ import { schedulePrune } from './prune.js';
 import { prepareGitPush, approveGitPush } from './git-push.js';
 import { startAptRequestServer, applyAptProposal, approveAptProposal } from './apt-requests.js';
 import { imagePlan } from './image-plan.js';
+import { withDefaultExtensions } from './extensions.js';
 export { BASE_IMAGE, PI_VERSION, containerfile, imagePlan } from './image-plan.js';
 
 export const CONTAINER_HOME = '/pis/home';
@@ -331,6 +332,15 @@ async function launchOnce(store, config, options) {
         config = store.load(config.id);
         if (options.agent) config = { ...config, agent: options.agent };
         const isClaude = config.agent === 'claude';
+        if (options.addDefaultExtensions)
+          assert(
+            !isClaude &&
+              !options.agent &&
+              options.buildOnly &&
+              options.rebuild &&
+              options.mode === 'pi',
+            'Default-extension rebuild requires the configured Pi agent and build-only mode.',
+          );
         if (options.webRpc) {
           assert(
             !isClaude &&
@@ -382,6 +392,17 @@ async function launchOnce(store, config, options) {
         progress('Checking Podman and sandbox image…');
         options.startupProgress?.('checking_engine');
         const info = inspectPodman();
+        if (options.addDefaultExtensions) {
+          const extensions = withDefaultExtensions(config.extensions);
+          if (!isDeepStrictEqual(extensions, config.extensions)) {
+            const updated = { ...config, extensions };
+            await store.save(updated, config);
+            config = updated;
+            console.error(
+              'pis: missing default Pi extensions saved; rebuilding the declared image without cache.',
+            );
+          }
+        }
         const { selectUpdateImage, scheduleUpdates } = await import('./updates.js');
         const managed = options.rebuild ? undefined : await selectUpdateImage(store, config);
         options.startupProgress?.('preparing_image');

@@ -250,9 +250,10 @@ pis --check                    # Validate configuration and active paths
 pis --show                     # Effective settings; no credential values
 pis --build                    # Ensure the declared baseline image exists
 pis --rebuild                  # Rebuild/select that baseline without cached build steps
+pis --rebuild-defaults         # Explicitly add missing default Pi extensions, then rebuild
 ```
 
-The Node base image is digest-pinned and Pi is pinned to 1.5.0. apt repositories and npm transitive dependencies are not fully locked, so uncached builds are not guaranteed to be bit-for-bit reproducible. The source baseline changes in `src/container.js`; an opt-in managed updater can additionally stage tested Pi patch/npm plugin releases without source edits. Running sessions are never updated in place. Pi 1.5 changed the Codex model catalogue: if a previously saved model is missing, choose a supported model using `/model` and explicitly adjust any allowlist. See [managed updates and verification limits](docs/updates.md) and the [remaining design](docs/updates-plan.md).
+The Node base image is digest-pinned and Pi is pinned to 1.5.0. apt repositories and npm transitive dependencies are not fully locked, so uncached builds are not guaranteed to be bit-for-bit reproducible. The source baseline changes in `src/image-plan.js`; an opt-in managed updater can additionally stage tested Pi patch/npm plugin releases without source edits. Running sessions are never updated in place. Pi 1.5 changed the Codex model catalogue: if a previously saved model is missing, choose a supported model using `/model` and explicitly adjust any allowlist. See [managed updates and verification limits](docs/updates.md) and the [remaining design](docs/updates-plan.md).
 
 ### Automatic Pi/npm image updates (opt-in)
 
@@ -300,7 +301,7 @@ Specify Pi install sources in `pis --edit`—not local installation paths:
 }
 ```
 
-`pi-web-access` is the default package when the field is missing. The former usage-bar package is no longer installed by default; the host-side GNOME extension in `gnome-codex-usage/` provides quota display instead. The image build runs `pi install` for each source with npm lifecycle scripts disabled. Packages live in the image and load automatically, including when you type `pi` inside `pis --bash`. No repeated `-e` flags or startup downloads are needed for these image packages.
+`pi-web-access@0.40.0` and `pi-subagents@0.88.1` are the default packages when the field is missing. The former usage-bar package is no longer installed by default; the host-side GNOME extension in `gnome-codex-usage/` provides quota display instead. The image build runs `pi install` for each source with npm lifecycle scripts disabled. Packages live in the image and load automatically, including when you type `pi` inside `pis --bash`. No repeated `-e` flags or startup downloads are needed for these image packages.
 
 ```sh
 pis --extensions-list          # Configured image install sources
@@ -309,7 +310,17 @@ pis -- list                    # Image sources plus manually installed Pi packag
 pis -- --no-extensions         # Diagnostic run without image/discovered extensions
 ```
 
-Use `"extensions": []` to disable all image defaults. Existing arrays are preserved, so removed packages are not silently re-added. Missing fields in older project files are completed on their next selected-project load.
+Use `"extensions": []` to disable all image defaults. Existing arrays are preserved during ordinary loading/builds, so removed packages are not silently re-added. Missing fields in older project files are completed on their next selected-project load.
+
+To explicitly adopt missing current default extensions in an existing Pi project and force a fresh build, run **on the host**:
+
+```sh
+pis --rebuild-defaults
+# Or select another registered project:
+pis --project PROJECT_ID_OR_NAME --rebuild-defaults
+```
+
+This opts in even from an empty extension list. It adds missing package names, preserves existing custom sources/order/version pins and all other configuration, then builds the declared baseline with `--no-cache`. It does not start Pi or send a model request, update an existing pin, reset credentials/mounts/apt packages, or replace a running container. A busy project is refused; additions stay saved if the subsequent build fails so you can retry. Builds may download packages and consume disk; no image/cache purge is performed.
 
 Supported install sources are `npm:<name>`, scoped npm packages, and optional exact versions or dist-tags. Default versions are pinned; unversioned/tagged sources require `pis --rebuild` or opt-in [managed updates](docs/updates.md) to fetch updates. Git sources and local source copying are not implemented. Local development through explicit `pis -- -e ./tools/my-extension.ts` remains supported.
 

@@ -31,6 +31,15 @@ export function extensionManifest(sources = DEFAULT_EXTENSIONS) {
   return entries;
 }
 
+// Explicit opt-in only: retain custom sources/order and pins, add missing defaults.
+export function withDefaultExtensions(sources) {
+  const names = new Set(extensionManifest(sources).map((entry) => entry.name));
+  return [
+    ...sources,
+    ...DEFAULT_EXTENSIONS.filter((source) => !names.has(extensionSource(source).name)),
+  ];
+}
+
 export function shellQuote(value) {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }

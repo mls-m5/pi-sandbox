@@ -47,15 +47,26 @@ pis -- list                # Image sources, then additional sandbox-state packag
 pis --show                 # Full effective project configuration
 ```
 
-Use `"extensions": []` to opt out. Missing fields receive the current defaults (`pi-web-access` and `pi-subagents`); explicit existing arrays are never appended to. Removing one entry keeps it removed, including on later configuration loads. Changing the program's defaults does not upgrade explicitly stored package versions.
+Use `"extensions": []` to opt out. Missing fields receive the current defaults (`pi-web-access` and `pi-subagents`); explicit existing arrays are never appended to by normal loading or ordinary builds. Removing one entry keeps it removed, including on later configuration loads. Changing the program's defaults does not upgrade explicitly stored package versions.
 
 ### Pi subagents
 
 New projects and configurations with a missing `extensions` field include `npm:pi-subagents@0.88.1`. The package declares Pi >=1.2; the image Pi baseline is 1.5.0. On startup the bootstrap loads only its extension entry point and forwards its packaged `skills/` directory as an explicit `--skill` resource. It does not load package prompts or themes. `--no-skills`/`-ns` suppresses that skill forwarding, while `--no-extensions`/`-ne` suppresses all baked resources. The package itself does not automatically launch children; delegation remains a model/tool decision and does not authorize spending or change the parent model.
 
-Existing project arrays are not migrated or appended to, including `extensions: []`. To opt an existing project in, use `pis --edit` and add `"npm:pi-subagents@0.88.1"` to its existing `extensions` array, then save and launch/rebuild. Do not replace other selected packages unintentionally. Configuration edits change the image fingerprint; changes to the runtime bootstrap also affect the fingerprint, so the next start may rebuild even for projects with older explicit arrays.
+Existing project arrays are not automatically migrated or appended to, including `extensions: []`. To opt an existing project in, run `pis --rebuild-defaults` on the host, or use `pis --edit` and add `"npm:pi-subagents@0.88.1"` to its existing `extensions` array, then save and launch/rebuild. Do not replace other selected packages unintentionally. Configuration edits change the image fingerprint; changes to the runtime bootstrap also affect the fingerprint, so the next start may rebuild even for projects with older explicit arrays.
 
 Pi's npm child resolver selects the Pi package root from the actual Pi CLI entry point (rather than the `pi` wrapper), and the image wrapper resolves foreground `pi` launches directly to `/usr/local/bin/pis-pi-real`. The npm Pi child/peer-SDK execution paths have been inspected, but foreground/background execution has not been validated in a real image/container. Do not infer standalone Pi behavior from this npm setup. No host state, credentials, or Podman access is added for children. This availability change applies to Pi sessions only, not Claude Code mode.
+
+### Explicit adoption and forced rebuild
+
+```sh
+pis --rebuild-defaults
+pis --project PROJECT_ID_OR_NAME --rebuild-defaults
+```
+
+This is an explicit opt-in for the selected configured **Pi** project, including an existing `extensions: []`. It adds current default sources only for package names not already present; custom packages, source order and existing version pins win. It does not reset the rest of the project configuration or update existing pins. Normal `--build`, `--rebuild` and configuration completion keep their previous preserve-explicit-values behavior.
+
+The command acquires the normal project lock, verifies the local rootless engine, then saves additions through the registry lock and stale-config check before a `--no-cache` build. A busy project or engine check failure makes no extension addition; concurrent config edits are rejected rather than overwritten. A subsequent build failure retains the explicitly saved additions for retry. Like `--rebuild`, it builds the declared baseline rather than activating a managed candidate; changing configured sources naturally changes managed recipe identity. It does not start an agent, send a prompt, purge arbitrary caches or change the running sandbox. Run it on the host: nested Podman remains unavailable in the tested development sandbox, and uncached builds need disk/network budget.
 
 ## Parallel worktrees: bounded sandbox trial
 

@@ -65,6 +65,7 @@ Usage:
   pis --list
   pis --relocate ID_OR_NAME
   pis [--project ID_OR_NAME] --edit | --check | --show | --build | --rebuild
+  pis [--project ID_OR_NAME] --rebuild-defaults
   pis [--project ID_OR_NAME] --extensions-list
   pis [--project ID_OR_NAME] --updates on|all|off|status|check|rollback
   pis --doctor
@@ -114,6 +115,10 @@ or PIS_CLAUDE_BIN set to its absolute executable path. No host home is mounted.
 --edit uses $VISUAL, $EDITOR, or vim and saves only valid JSON configuration.
 --show prints effective settings and mounts without credential values.
 --rebuild disables build cache. Runtime containers are disposable (--rm).
+--rebuild-defaults explicitly adds missing default Pi extensions (even to []),
+preserves custom extensions and existing version pins, then rebuilds without cache.
+It does not reset credentials, mounts, apt packages or other explicit choices.
+Run on the host; no agent/model starts. Added sources remain saved if build fails.
 Old pis images are cleaned in the background after builds by default.
 --prune previews with --dry-run; keeps current/previous, recent and used images.
 PIS_AUTO_PRUNE=0 disables automatic cleanup; project data is never pruned.
@@ -251,6 +256,7 @@ export function parse(argv) {
         '--show',
         '--build',
         '--rebuild',
+        '--rebuild-defaults',
         '--extensions-list',
         '--doctor',
         '--prune',
@@ -676,7 +682,8 @@ export async function main(argv = process.argv.slice(2)) {
   return launch(store, config, {
     ...options,
     cwd,
-    rebuild: options.action === 'rebuild',
-    buildOnly: ['build', 'rebuild'].includes(options.action),
+    rebuild: ['rebuild', 'rebuild-defaults'].includes(options.action),
+    addDefaultExtensions: options.action === 'rebuild-defaults',
+    buildOnly: ['build', 'rebuild', 'rebuild-defaults'].includes(options.action),
   });
 }
