@@ -110,6 +110,61 @@ function readFile(file) {
 export function readAgentProfile(root, name) {
   return readFile(profilePath(root, name));
 }
+export function readDefaultServer(root) {
+  const file = preferencePath(root);
+  const value = readPrivateJson(file);
+  if (value === undefined) return undefined;
+  assert(exact(value, ['origin']), 'Invalid default server preference.');
+  return localServerOrigin(value.origin);
+}
+export async function saveDefaultServer(root, origin) {
+  origin = localServerOrigin(origin);
+  const file = preferencePath(root);
+  await withLock(`${file}.lock`, () => {
+    readPrivateJson(file);
+    atomicWrite(file, `${JSON.stringify({ origin })}\n`);
+  });
+}
+function preferencePath(root) {
+  assert(path.isAbsolute(root), 'Invalid profile root.');
+  const stat = fs.lstatSync(root);
+  assert(
+    stat.isDirectory() &&
+      !stat.isSymbolicLink() &&
+      stat.uid === process.getuid() &&
+      (stat.mode & 0o077) === 0,
+    'Client preference directory must be private and owned by you.',
+  );
+  return path.join(root, 'web-client.json');
+}
+function readPrivateJson(file) {
+  let fd;
+  try {
+    fd = fs.openSync(
+      file,
+      fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK,
+    );
+  } catch (error) {
+    if (error.code === 'ENOENT') return;
+    throw new Error('Unsafe or unreadable client preference.');
+  }
+  try {
+    const stat = fs.fstatSync(fd);
+    assert(
+      stat.isFile() &&
+        stat.uid === process.getuid() &&
+        stat.nlink === 1 &&
+        (stat.mode & 0o077) === 0 &&
+        stat.size <= 8192,
+      'Unsafe client preference file.',
+    );
+    return JSON.parse(fs.readFileSync(fd, 'utf8'));
+  } catch {
+    throw new Error('Invalid or unsafe client preference.');
+  } finally {
+    fs.closeSync(fd);
+  }
+}
 export async function saveAgentProfile(root, name, record, { replace = false } = {}) {
   validateAgentProfile(record);
   const file = profilePath(root, name);

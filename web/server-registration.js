@@ -10,14 +10,34 @@ export function createAgentRegistry({
   onTicketCleared,
 }) {
   const tickets = new Map();
-
   function clearTicket(hash) {
     const ticket = tickets.get(hash);
     if (!ticket) return;
     tickets.delete(hash);
     onTicketCleared(ticket.id);
   }
-
+  // Both enrollment protocols share the same synchronous proof/live-identity gate.
+  function enrollProof(value, proof) {
+    const proofMatches = (agent) =>
+      proof && timingSafeEqual(Buffer.from(agent.tokenHash, 'hex'), Buffer.from(proof, 'hex'));
+    let existing = [...registrations.values()].find((agent) => agent.clientId === value.clientId);
+    if (!existing && proof)
+      existing = [...registrations.values()].find(
+        (agent) => !agent.clientId && proofMatches(agent),
+      );
+    if (
+      existing &&
+      (!proofMatches(existing) || existing.kind !== value.kind || isConnected(existing.id))
+    )
+      return { status: 409, error: 'enrollment_conflict' };
+    if (!existing && registrations.size >= 32) return { status: 429, error: 'agent_limit' };
+    const id = existing?.id || randomUUID(),
+      token = randomKey(),
+      kind = value.kind;
+    const label = uniqueAgentLabel(registrations, value.label, id);
+    registrations.set(id, { id, label, kind, clientId: value.clientId, tokenHash: digest(token) });
+    return { id, token, kind, label };
+  }
   return {
     get ticketCount() {
       return tickets.size;
@@ -30,9 +50,9 @@ export function createAgentRegistry({
         if (ticket.expires <= Date.now() || ticket.owner === owner) clearTicket(hash);
     },
     issueTicket(owner, lifetime) {
-      const token = randomKey();
-      const id = randomUUID();
-      const expiresAt = Date.now() + lifetime;
+      const token = randomKey(),
+        id = randomUUID(),
+        expiresAt = Date.now() + lifetime;
       tickets.set(digest(token), { id, owner, expires: expiresAt });
       return { token, id, expiresAt };
     },
@@ -49,34 +69,11 @@ export function createAgentRegistry({
       );
     },
     enroll(hash, value) {
-      const proof = value.previousToken ? digest(value.previousToken) : null;
-      const proofMatches = (agent) =>
-        proof && timingSafeEqual(Buffer.from(agent.tokenHash, 'hex'), Buffer.from(proof, 'hex'));
-      let existing = [...registrations.values()].find((agent) => agent.clientId === value.clientId);
-      if (!existing && proof)
-        existing = [...registrations.values()].find(
-          (agent) => !agent.clientId && proofMatches(agent),
-        );
-      if (
-        existing &&
-        (!proofMatches(existing) || existing.kind !== value.kind || isConnected(existing.id))
-      )
-        return { status: 409, error: 'enrollment_conflict' };
-      if (!existing && registrations.size >= 32) return { status: 429, error: 'agent_limit' };
-      const id = existing?.id || randomUUID();
-      const token = randomKey();
-      const kind = value.kind;
-      const label = uniqueAgentLabel(registrations, value.label, id);
-      registrations.set(id, {
-        id,
-        label,
-        kind,
-        clientId: value.clientId,
-        tokenHash: digest(token),
-      });
-      clearTicket(hash); // No asynchronous work occurs between revalidation and consume.
-      return { id, token, kind, label };
+      const result = enrollProof(value, value.previousToken ? digest(value.previousToken) : null);
+      if (!result.error) clearTicket(hash);
+      return result;
     },
+    enrollProof,
     authenticate(req) {
       if (req.headers.origin || req.headers.cookie) return;
       const match = /^Bearer ([A-Za-z0-9_-]{43})$/.exec(req.headers.authorization || '');

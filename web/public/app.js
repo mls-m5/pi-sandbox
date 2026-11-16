@@ -6,6 +6,7 @@ import { startupText, startupFailure } from './startup.js';
 import { diagnosticLine, requestFailure, resultCode, safeTrace } from './diagnostics.js';
 import { createEnrollmentUI } from './enrollment-ui.js';
 import { createPendingCommands } from './pending-commands.js';
+import { createPairingUI } from './pairing-ui.js';
 
 const byId = (id) => document.getElementById(id);
 const model = new ChatModel(),
@@ -38,6 +39,11 @@ const enrollment = createEnrollmentUI({
   getSession: () => csrf,
   getSelected: () => selected,
   draw: () => draw(),
+});
+const pairing = createPairingUI({
+  document,
+  getSession: () => csrf,
+  isSessionActive: (session) => wantConnection && connected && csrf === session,
 });
 function draw() {
   if (drawing) return;
@@ -235,7 +241,7 @@ async function submit(message, clearDraft = false) {
 }
 function receive(value) {
   if (value?.v !== 1) return;
-  if (enrollment.receive(value)) return;
+  if (enrollment.receive(value) || pairing.receive(value)) return;
   if (value.type === 'roster' && Array.isArray(value.agents)) {
     const previous = agents.find((agent) => agent.id === selected);
     agents = value.agents.slice(0, 32);
@@ -313,6 +319,7 @@ async function connect() {
     ws.onclose = () => {
       if (ws !== socket) return;
       enrollment.clear();
+      pairing.clear();
       connected = false;
       model.status = 'unknown';
       model.stateKnown = false;
@@ -343,6 +350,7 @@ function retryConnect() {
 enrollment.bind();
 function showLogin() {
   enrollment.clear();
+  pairing.clear();
   csrf = undefined;
   wantConnection = false;
   connected = false;
@@ -443,6 +451,7 @@ const startupTick = setInterval(() => {
 globalThis.addEventListener('pagehide', () => {
   clearInterval(startupTick);
   enrollment.clear();
+  pairing.clear();
   wantConnection = false;
   selection++;
   clearTimeout(reconnectTimer);

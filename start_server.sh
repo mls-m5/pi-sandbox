@@ -12,15 +12,18 @@ if [[ "${1:-}" == "--connect" ]]; then
   MODE=()
   if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
     printf '%s\n' \
-      'Usage: pis --connect NAME --server http://127.0.0.1:43128 [--project PROJECT | --dummy] [--key-stdin] [--diagnostics]' \
+      'Usage: pis --connect [NAME] [--server http://127.0.0.1:43128] [--project PROJECT | --dummy] [--diagnostics]' \
+      '       pis --connect --set-server http://127.0.0.1:43128' \
       '       pis --connect register NAME --server http://127.0.0.1:43128 (--project PROJECT | --dummy) [--replace] [--key-stdin]' \
       '       pis --connect run NAME [--diagnostics]' \
       '       pis --connect forget NAME' \
-      'Default connect: create a one-use GUI key, paste it at the hidden prompt; profile is replaced and agent starts automatically.' \
+      'Default connect: enter the client-displayed two-digit code under Väntande klienter in the authenticated server UI.' \
+      'Bare connect uses the current registered Pi project and saved global server. --server overrides the address without saving.' \
       'NAME selects registered ID/name or unique final folder component unless --project is supplied. Existing work is never killed.' \
+      'Advanced GUI keys use --enrollment-key (hidden input) or --key-stdin. The default no longer asks for a GUI key.' \
       'Legacy register/run commands remain available for direct agent keys. Never put keys in command arguments.' \
       'Host-private profiles under PIS_HOME/web-agents; keys never mounted into the sandbox. Loopback only, no TLS/LAN yet.' \
-      'After server restart create a fresh GUI key and repeat short connect. Ctrl-C stops the local agent, not the server.'
+      'After server restart repeat connect with a fresh approved code. Ctrl-C stops the local agent, not the server.'
     exit 0
   fi
 fi
@@ -48,7 +51,10 @@ compatible_node() {
   "$1" -e 'const [major, minor] = process.versions.node.split(".").map(Number); process.exit(major > 22 || (major === 22 && minor >= 19) ? 0 : 1)' >/dev/null 2>&1
 }
 
-cd -- "$ROOT"
+# Bare connect resolves the caller's project, not the pis checkout.
+if [[ "$ENTRY" != "$ROOT/web/agent-cli.js" ]]; then
+  cd -- "$ROOT"
+fi
 if command -v node >/dev/null 2>&1 && compatible_node node; then
   exec node "$ENTRY" "${MODE[@]}" "$@"
 fi

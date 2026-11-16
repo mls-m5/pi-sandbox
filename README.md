@@ -385,18 +385,22 @@ Choose a hidden temporary password of at least 20 characters, or press Enter to 
 pis --server --standalone
 ```
 
-Log in at **http://127.0.0.1:43128**, expand **Anslut ny agent** and click **Skapa anslutningsnyckel**. No name/type is needed. In another host terminal:
+Log in at **http://127.0.0.1:43128**. In another host terminal, save the default address once and connect from your registered project:
 
 ```sh
-pis --connect my-app --server http://127.0.0.1:43128
-# Paste the one-use key at the hidden prompt. Saves/replaces its profile and starts automatically.
-# Token-free alternative, with a fresh GUI key:
-pis --connect demo-agent --server http://127.0.0.1:43128 --dummy
+pis --connect --set-server http://127.0.0.1:43128
+cd /path/to/registered/project
+pis --connect
+# Enter the client's two-digit code under Väntande klienter in the server UI.
+# Token-free alternative:
+pis --connect demo-agent --dummy
 # Explicit project selection / separate profile alias:
 pis --connect laptop-app --server http://127.0.0.1:43128 --project PROJECT_ID
 ```
 
-Repeat with fresh one-use keys/profile names for more agents. Project lookup accepts registered IDs/names or a unique last folder component; ambiguous folder names require explicit `--project`. The GUI shows the folder name (suffix `-2`, etc. for another agent with that name); re-enrolling the same offline profile proves ownership and reuses its agent ID. Unused keys do not create agent placeholders and disappear from the GUI when consumed; tickets expire after ten minutes. The standalone server starts no local agents and keeps its registrations/login state **only in memory**. History is fetched from connected clients, not saved in a server database. Client keys are 0600 host-only files under `$PIS_HOME/web-agents`, outside the sandbox. After server restart, create new GUI keys and repeat the short connect command; successful enrollment replaces the local profile automatically. It never kills an existing connector/project. Normal network loss reconnects using the separate saved connection key without replaying prompts. Revoke in the GUI to invalidate a key; `pis --connect forget NAME` removes only its local copy. A server stop/revocation does not stop independent local work; Ctrl-C in each run terminal does. **Loopback only: LAN/TLS and a separate Podman server are not implemented in this step.** See [complete instructions, credential/security contracts and verification limits](docs/web-agents.md).
+Bare connect selects the nearest registered Pi project containing the current directory. Named profiles still accept a registered ID/name or unique folder basename; `--project` overrides selection. The host-global address is private; `--server` overrides it for one invocation without saving. Pending requests expire after two minutes and create no agent placeholder until approval is collected. The two-digit code is only confirmation of the exact request, not a connection key or admin password. Offline identity reuse still requires the previous key; a live identity cannot be displaced. Legacy GUI-key enrollment remains explicit via `--enrollment-key` or `--key-stdin`.
+
+The server starts no local agents and keeps registrations/login state **only in memory**, fetching history from clients rather than a transcript database. Client keys are private host files under `$PIS_HOME/web-agents`, never sandbox mounts. After a server restart, repeat connect with a fresh approved code; no existing connector/project is killed. Normal transport loss reconnects with the saved machine key without prompt replay. GUI revocation disconnects transport, not local work; Ctrl-C in each connector terminal stops that agent. **Loopback only: LAN/TLS and a separate Podman server remain unimplemented.** See [complete instructions, security contracts and verification limits](docs/web-agents.md).
 
 The agent has a spinning work indicator and explicit idle/error/unknown labels. Each correlated tool call and its literal result share one card: dashed while running, blue when completed, red on reported failure; interrupted/missing results stay unknown. Idle is not a guarantee that the task succeeded.
 

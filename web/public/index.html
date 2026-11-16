@@ -33,8 +33,17 @@
         <h2>Agenter</h2>
         <p id="connection" role="status">Ansluter…</p>
         <div id="agents"></div>
+        <section aria-label="Väntande klienter">
+          <h3>Väntande klienter</h3>
+          <p>
+            Kör pis --connect i projektets värdterminal. Välj rätt förfrågan här och ange den
+            tvåsiffriga koden från klienten. Godkänn bara klienter du litar på.
+          </p>
+          <div id="pending-clients"></div>
+          <p id="pairing-note" role="status"></p>
+        </section>
         <details>
-          <summary>Anslut ny agent</summary>
+          <summary>Avancerat · äldre anslutningsnyckel</summary>
           <form id="register-agent">
             <button id="register-submit">Skapa anslutningsnyckel</button>
           </form>
@@ -49,9 +58,9 @@
             ></textarea></label
           ><button id="clear-registration" type="button" hidden>Dölj och rensa nyckeln</button>
           <p>
-            Kör pis --connect PROJEKT --server ADRESS i en värdterminal. Klistra nyckeln i den dolda
-            frågan. Agenten namnges och visas först när registreringen lyckas. Nyckeln rensas när
-            den används.
+            Kör pis --connect PROJEKT --server ADRESS --enrollment-key i en värdterminal. Klistra
+            nyckeln i den dolda frågan. Agenten namnges och visas först när registreringen lyckas.
+            Nyckeln rensas när den används.
           </p>
         </details>
         <button id="revoke-agent" type="button" disabled>Återkalla vald agentnyckel</button>

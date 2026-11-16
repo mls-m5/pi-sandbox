@@ -6,6 +6,7 @@ import { validateControlCommand } from '../src/pi-rpc.js';
 import { ENROLLMENT_MS, validateEnrollment, labelValid } from './enrollment.js';
 import { createAgentRegistry } from './server-registration.js';
 import { createWebSessions } from './server-sessions.js';
+import { createPairing, PAIRING_MS } from './pairing.js';
 import { startupPhase } from './public/startup.js';
 import { resultCode, safeTrace } from './public/diagnostics.js';
 import {
@@ -24,6 +25,7 @@ import {
 const assets = new Map([
   ['/', ['index.html', 'text/html; charset=utf-8']],
   ['/app.js', ['app.js', 'text/javascript; charset=utf-8']],
+  ['/pairing-ui.js', ['pairing-ui.js', 'text/javascript; charset=utf-8']],
   ['/activity.js', ['activity.js', 'text/javascript; charset=utf-8']],
   ['/pending-commands.js', ['pending-commands.js', 'text/javascript; charset=utf-8']],
   ['/enrollment-ui.js', ['enrollment-ui.js', 'text/javascript; charset=utf-8']],
@@ -45,6 +47,7 @@ export async function startWebServer({
   heartbeatMs = 10_000,
   commandTimeoutMs = 35_000,
   enrollmentMs = ENROLLMENT_MS,
+  pairingMs = PAIRING_MS,
   diagnostic = () => {},
 } = {}) {
   if (!/^[a-f0-9]{64}$/.test(passwordHash?.salt) || !/^[a-f0-9]{128}$/.test(passwordHash?.hash))
@@ -56,7 +59,10 @@ export async function startWebServer({
     agents.length > 32 ||
     !Number.isSafeInteger(enrollmentMs) ||
     enrollmentMs < 1 ||
-    enrollmentMs > ENROLLMENT_MS
+    enrollmentMs > ENROLLMENT_MS ||
+    !Number.isSafeInteger(pairingMs) ||
+    pairingMs < 1 ||
+    pairingMs > PAIRING_MS
   )
     throw new Error('Invalid local server configuration.');
   const registrations = new Map();
@@ -73,7 +79,7 @@ export async function startWebServer({
       throw new Error('Invalid agent registration.');
     registrations.set(agent.id, { ...agent, kind: agent.kind || 'dummy' });
   }
-  let registry;
+  let registry, pairing;
   const browsers = new Set(),
     connected = new Map(),
     pending = new Map();
@@ -100,6 +106,7 @@ export async function startWebServer({
   server.on('clientError', (_error, socket) => socket.destroy());
   const sessions = createWebSessions(sessionMs, (key) => {
     registry.clearOwnerTickets(key);
+    pairing?.clearOwner(key);
     for (const ws of browsers) if (ws.sessionKey === key) ws.terminate();
   });
   const sessionFor = (req) => sessions.sessionFor(req);
@@ -198,6 +205,79 @@ export async function startWebServer({
       logout(session.key);
       res.setHeader('Set-Cookie', 'pis_web=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0');
       json(res, 200, { ok: true });
+      return;
+    }
+    if (req.method === 'POST' && ['/agent/requests', '/agent/requests/result'].includes(req.url)) {
+      if (req.headers.origin !== undefined || req.headers.cookie !== undefined) {
+        json(res, 403, { error: 'pairing_invalid' });
+        return;
+      }
+      const creating = req.url === '/agent/requests';
+      const bearer = /^Bearer ([A-Za-z0-9_-]{43})$/.exec(req.headers.authorization || '');
+      if ((creating && req.headers.authorization !== undefined) || (!creating && !bearer)) {
+        json(res, 403, { error: 'pairing_invalid' });
+        return;
+      }
+      if (creating && !pairing.allowCreate()) {
+        json(res, 429, { error: 'pairing_limit' });
+        return;
+      }
+      const value = await body(req);
+      if (creating) {
+        try {
+          validateEnrollment(value);
+        } catch {
+          json(res, 400, { error: 'invalid_enrollment' });
+          return;
+        }
+        const result = pairing.create(value);
+        json(res, result.status || 201, result.error ? { error: result.error } : result);
+      } else {
+        if (!exact(value, ['id']) || !generationValid(value.id)) {
+          json(res, 400, { error: 'pairing_invalid' });
+          return;
+        }
+        const result = pairing.claim(value.id, bearer[1]);
+        json(
+          res,
+          result.status || 201,
+          result.error ? { error: result.error } : result.pending ? { pending: true } : result,
+        );
+        if (!result.error && !result.pending) broadcastRoster();
+      }
+      return;
+    }
+    if (req.method === 'POST' && req.url === '/pending-clients/approve') {
+      const session = sessionFor(req);
+      if (
+        !session ||
+        req.headers.origin !== origin ||
+        req.headers['x-csrf-token'] !== session.csrf ||
+        req.headers.authorization !== undefined
+      ) {
+        json(res, 403, { error: 'invalid_session' });
+        return;
+      }
+      if (!pairing.allowApproval(session.key)) {
+        json(res, 429, { error: 'pairing_throttled' });
+        return;
+      }
+      const value = await body(req);
+      if (sessionFor(req)?.key !== session.key) {
+        json(res, 403, { error: 'invalid_session' });
+        return;
+      }
+      if (
+        !exact(value, ['id', 'code']) ||
+        !generationValid(value.id) ||
+        typeof value.code !== 'string' ||
+        !/^[0-9]{2}$/.test(value.code)
+      ) {
+        json(res, 400, { error: 'pairing_invalid' });
+        return;
+      }
+      const result = pairing.approve(value.id, value.code, session.key);
+      json(res, result.status || 200, result.error ? { error: result.error } : result);
       return;
     }
     if (req.method === 'POST' && req.url === '/agent/enroll') {
@@ -371,6 +451,16 @@ export async function startWebServer({
     isConnected: (id) => connected.has(id),
     onTicketCleared: (id) => {
       for (const ws of browsers) send(ws, { v: 1, type: 'enrollment_cleared', id });
+    },
+  });
+  pairing = createPairing({
+    sessionExpires: (key) => sessions.get(key)?.expires,
+    enroll: registry.enrollProof,
+    lifetime: pairingMs,
+    onChange: (requests) => {
+      for (const ws of browsers)
+        if ((sessions.get(ws.sessionKey)?.expires || 0) > Date.now())
+          send(ws, { v: 1, type: 'pending_clients', requests });
     },
   });
   const authenticateAgent = registry.authenticate;
@@ -610,6 +700,7 @@ export async function startWebServer({
         ws.sessionKey = session.key;
         browsers.add(ws);
         send(ws, { v: 1, type: 'roster', agents: roster() });
+        send(ws, { v: 1, type: 'pending_clients', requests: pairing.snapshot() });
       }
       ws.on('message', (data, binary) => {
         try {
@@ -669,6 +760,7 @@ export async function startWebServer({
   const heartbeat = setInterval(() => {
     sessions.expire();
     registry.expireTickets();
+    pairing.expire();
     for (const ws of wss.clients) {
       if (!ws.alive) ws.terminate();
       else {
@@ -701,6 +793,7 @@ export async function startWebServer({
         registrations.clear();
         connected.clear();
         registry.clearTickets();
+        pairing.clear();
       })());
     },
   };

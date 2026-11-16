@@ -9,6 +9,7 @@ const installed = fs.existsSync(new URL('../web/node_modules/ws/package.json', i
 class Element {
   constructor(tag) { this.tag = tag; this.children = []; this.textContent = ''; this.hidden = false; this.disabled = true; this.value = ''; this.scrollTop = 0; this.scrollHeight = 100; this.clientHeight = 100; this.listeners = new Map(); }
   addEventListener(type, fn) { this.listeners.set(type, fn); }
+  setAttribute(name, value) { this[name] = value; }
   append(...nodes) { this.children.push(...nodes); }
   replaceChildren(...nodes) { this.children = nodes; }
   async dispatch(type, extra = {}) { await this.listeners.get(type)?.({ preventDefault() {}, ...extra }); }
@@ -57,7 +58,7 @@ test('actual browser app module logs in, selects, chats, recovers dummy quota an
     constructor(url) { super(url, { headers: { Origin: server.origin, Cookie: cookie } }); browser = this; }
     send(payload, ...args) { sent.push(JSON.parse(payload)); return super.send(payload, ...args); }
   };
-  for (const [asset, exported] of [['enrollment-ui.js', 'createEnrollmentUI'], ['pending-commands.js', 'createPendingCommands']]) {
+  for (const [asset, exported] of [['enrollment-ui.js', 'createEnrollmentUI'], ['pending-commands.js', 'createPendingCommands'], ['pairing-ui.js', 'createPairingUI']]) {
     const response = await realFetch(`${server.origin}/${asset}`);
     assert.equal(response.status, 200, 'Extracted browser modules must be present in the static asset allowlist.');
     assert.ok((await response.text()).includes(exported));
@@ -183,6 +184,18 @@ test('actual browser app module logs in, selects, chats, recovers dummy quota an
   await element('agents').children[2].dispatch('click'); await until(() => element('agent-title').textContent === '<b>New agent</b>');
   globalThis.confirm = () => true; await element('revoke-agent').dispatch('click');
   await until(() => element('agents').children.length === 2); assert.match(element('registration-action').textContent, /återkallad/);
+  const requestResponse = await realFetch(`${server.origin}/agent/requests`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Pis-Web': '1' }, body: JSON.stringify({ clientId: crypto.randomUUID(), label: '<b>Pending client</b>', kind: 'dummy', previousToken: null }) });
+  const request = await requestResponse.json();
+  await until(() => element('pending-clients').children.length === 1);
+  const pendingForm = element('pending-clients').children[0], codeInput = nodes(pendingForm).find(node => node.tag === 'input');
+  assert.ok(content(pendingForm).includes('<b>Pending client</b>'));
+  assert.ok(!content(pendingForm).includes(request.token));
+  codeInput.value = request.code; await pendingForm.dispatch('submit');
+  assert.equal(codeInput.value, '');
+  const claim = await realFetch(`${server.origin}/agent/requests/result`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Pis-Web': '1', Authorization: `Bearer ${request.token}` }, body: JSON.stringify({ id: request.id }) });
+  assert.equal(claim.status, 201); const paired = await claim.json();
+  assert.ok(!content(element('diagnostics')).includes(paired.token));
+  await until(() => element('pending-clients').children.length === 0);
   await element('register-agent').dispatch('submit');
   assert.match(element('registration-secret').value, /^[A-Za-z0-9_-]{43}$/);
   await element('logout').dispatch('click');

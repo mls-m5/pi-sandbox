@@ -37,11 +37,12 @@ export function resolveWebProjects(selectors, store = new Store()) {
 }
 
 export function resolveConnectProject(selector, store = new Store()) {
+  if (selector === undefined) return resolveWebProjects([store.select(process.cwd()).id], store)[0];
+  const projects = store.all();
   assert(
     typeof selector === 'string' && selector.length > 0 && selector.length <= 128,
     'Invalid project selector.',
   );
-  const projects = store.all();
   const exact = projects.find((project) => project.id === selector || project.name === selector);
   const matches = exact
     ? [exact]

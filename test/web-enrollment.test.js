@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { once } from 'node:events';
@@ -14,6 +15,7 @@ const installed = fs.existsSync(new URL('../web/node_modules/ws/package.json', i
 const { startWebServer } = installed ? await import('../web/server.js') : {};
 const { default: WebSocket } = installed ? await import('../web/node_modules/ws/wrapper.mjs') : {};
 const { parseAgentOptions } = installed ? await import('../web/agent-cli.js') : {};
+const { readDefaultServer, saveDefaultServer } = await import('../web/agent-profile.js');
 const password = 'enrollment-test-password-only', passwordHash = await hashPassword(password);
 const webTest = (name, fn) => test(name, { skip: !installed, timeout: 25000 }, fn);
 async function until(predicate) {
@@ -202,11 +204,28 @@ webTest('shortcut consumes ticket, replaces profile safely, starts immediately a
   for (const value of [runner, blocked, failed, replacement]) assert.ok(![first.token, second.token, saved.token, replaced.token].some(secret => value.output().includes(secret)));
 });
 
+webTest('private default server preference rejects unsafe file types and preserves loopback-only origins', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pis-default-server-'));
+  try {
+    assert.equal(readDefaultServer(root), undefined);
+    await saveDefaultServer(root, 'http://127.0.0.1:43128');
+    assert.equal(readDefaultServer(root), 'http://127.0.0.1:43128');
+    await assert.rejects(saveDefaultServer(root, 'http://10.0.0.2:43128'));
+    const file = path.join(root, 'web-client.json');
+    fs.unlinkSync(file);
+    fs.symlinkSync('/etc/passwd', file);
+    assert.throws(() => readDefaultServer(root));
+    await assert.rejects(saveDefaultServer(root, 'http://127.0.0.1:9999'));
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 webTest('agent CLI supports one-command connect and advanced commands, never keys on argv', () => {
   assert.equal(parseAgentOptions(['register', 'test', '--server', 'http://127.0.0.1:43128', '--dummy']).dummy, true);
   assert.equal(parseAgentOptions(['run', 'test', '--diagnostics']).diagnostics, true);
   assert.deepEqual(parseAgentOptions(['my-project', '--server', 'http://127.0.0.1:43128']), { action: 'connect', name: 'my-project', server: 'http://127.0.0.1:43128', project: 'my-project', replace: true });
   assert.equal(parseAgentOptions(['alias', '--server', 'http://127.0.0.1:43128', '--project', 'real']).project, 'real');
   assert.equal(parseAgentOptions(['dummy', '--server', 'http://127.0.0.1:43128', '--dummy']).replace, true);
-  for (const args of [[], ['run', '../path'], ['run', 'test', '--key', randomKey()], ['register', 'test', '--server', 'http://10.0.0.1', '--dummy'], ['register', 'test', '--server', 'http://127.0.0.1:43128', '--dummy', '--project', 'app'], ['forget', 'test', '--replace']]) assert.throws(() => parseAgentOptions(args));
+  assert.deepEqual(parseAgentOptions([]), { action: 'connect', unnamed: true, replace: true });
+  assert.equal(parseAgentOptions(['--set-server', 'http://127.0.0.1:43128']).action, 'set-server');
+  for (const args of [['run', '../path'], ['run', 'test', '--key', randomKey()], ['register', 'test', '--server', 'http://10.0.0.1', '--dummy'], ['register', 'test', '--server', 'http://127.0.0.1:43128', '--dummy', '--project', 'app'], ['forget', 'test', '--replace'], ['--set-server', 'http://127.0.0.1:43128', '--dummy']]) assert.throws(() => parseAgentOptions(args));
 });

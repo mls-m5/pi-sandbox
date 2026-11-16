@@ -1,6 +1,6 @@
-# Independent agents: one-command local connection
+# Independent agents: simple local connection
 
-Implemented: a standalone controller, GUI-issued one-use enrollment keys and independently launched local dummy/registered-Pi connectors. **Localhost-only host processes, not a server container.** LAN/TLS, multi-computer deployment, persistent server registration, inter-agent messaging and remote host approvals remain future work.
+Implemented: a standalone controller, client-requested two-digit confirmation, a private host-global server preference, and independently launched local dummy/registered-Pi connectors. **Localhost-only host processes, not a server container.** LAN/TLS, multi-computer deployment, persistent server registration, inter-agent messaging and remote host approvals remain future work.
 
 ## Start the controller
 
@@ -11,90 +11,81 @@ npm --prefix web ci --ignore-scripts --omit=optional --no-audit --no-fund
 pis --server --standalone
 ```
 
-Use a host terminal, not a sandbox. Enter an admin password (or press Enter to generate/display one once), then open **http://127.0.0.1:43128**, not `localhost`. The controller initially has no agents and starts no Pi/Podman/model processes. The default all-in-one `pis --server` dummy demo and explicit `--project` convenience mode still exist.
+Use a host terminal, not a sandbox. Enter an admin password (or press Enter to generate/display one once), then open **http://127.0.0.1:43128**, not `localhost`. The standalone controller starts no runtimes. The all-in-one dummy demo and explicit `--project` convenience mode remain available.
 
-## One command per agent
-
-In the sidebar, expand **Anslut ny agent** and click **Skapa anslutningsnyckel**. No name or agent type is required. Copy the displayed key and, in another host terminal, run:
+## Save a server once, then connect from the project
 
 ```sh
-pis --connect pi-sandbox --server http://127.0.0.1:43128
-# Paste the key at the hidden prompt; registration and agent startup follow.
+pis --connect --set-server http://127.0.0.1:43128
+cd /path/to/registered/project
+pis --connect
 ```
 
-Here `pi-sandbox` is both the local connection-profile name and default project selector. Selection tries an exact registered project ID/name first, then the **last folder component** of registered roots. An ambiguous folder name fails with a request for a unique `--project ID_OR_NAME`; it never guesses or registers an arbitrary directory. A folder must already be registered with pis. Registered ID/name matches take precedence over folder fallback.
+`--set-server` writes only a host-private default address shared across this client's projects; it starts no enrollment, runtime or model. The address is stored in `$PIS_HOME/web-client.json`. An explicit `--server ORIGIN` overrides it **for that invocation only** and never silently replaces the preference. If no default exists, the command explains how to save one. Only `http://127.0.0.1:PORT` is supported today; a saved IP/port is not permission to expose the current HTTP service on a LAN or the Internet.
 
-To use a different profile name or disambiguate:
+Without a name or `--project`, the CLI uses the registered Pi project containing the current working directory (the nearest registered root, including when inside a subdirectory), using normal canonical local selection. It derives a private connection-profile name `p-PROJECT_ID`. An unregistered directory fails with guidance; the CLI never auto-registers a project or accepts project paths/executables from the server. Claude-configured projects are refused.
+
+The client prints a short-lived **two-digit code**. On the authenticated server page, find **Väntande klienter**, select the matching labelled request and enter the code from that client. Check the request identity as well as the label: labels are untrusted and may collide. The server never shows the expected code. The code confirms the intended request; it is not an admin password or the connection credential.
+
+After approval the client collects a distinct random connection key once, saves its private profile and starts the connector. Before collection there is no agent placeholder, runtime, project prompt or model call. For real Pi projects later startup/extensions and prompts may cost tokens. Trust the server as a controller: it can read permitted history, prompt and stop agent work.
+
+### Overrides and token-free check
 
 ```sh
-pis --list
-pis --connect laptop-app --server http://127.0.0.1:43128 --project PROJECT_ID_OR_NAME
+pis --connect alias --project PROJECT_ID_OR_NAME --server http://127.0.0.1:43128
+pis --connect demo-a --dummy
+# Enter each client's displayed code in the server UI.
 ```
 
-Profile names retain the existing safe name rules (letters/digits, dots, underscores, hyphens, maximum 64 characters). `register`, `run`, `forget` are advanced-command words; use a different profile alias plus `--project` for projects with those names, spaces or longer folder names. The project is resolved locally; the server supplies no project path, executable or startup prompt. Only configured Pi projects are accepted, not Claude overrides.
+With an explicit profile name and no `--project`, project selection tries that registered ID/name, then a unique final folder component. An ambiguous folder name fails rather than guessing. Profile names retain safe name rules (maximum 64 characters). Advanced `register`, `run`, `forget` are reserved command words; use an alias and `--project` for projects with those names or spaces. `--project` always overrides current-directory/name selection. Explicit `--dummy` selects a token-free dummy; unnamed dummy mode uses the profile `dummy`.
 
-The command exchanges the one-use key for a **different** random long-lived connection key, saves a private local profile, and starts the connector immediately. No separate `run` or `--replace` is needed. Failed enrollment leaves the previous local profile unchanged. A successful enrollment replaces that profile automatically, but does **not** terminate any old connector/project: existing project locks and concurrent-identity protection still apply. A local project-lock preflight avoids consuming a key for already locked projects; the normal locked launch remains authoritative against races. If startup fails after enrollment, the GUI can show an offline agent; retry `pis --connect run NAME` after correcting the local cause rather than creating another registration.
+A local project-lock preflight happens **before** requesting approval. Normal locked launch remains authoritative against later races. No existing runtime or live identity is stopped/stolen by connection or profile replacement. If startup fails after successful registration, an offline GUI post may exist; correct the host problem and use `pis --connect run PROFILE`, not blind enrollment retries.
 
-### Token-free first check
+## Approval, expiry and identity contracts
 
-Create a new GUI key for each dummy:
+- Requests expire after at most **two minutes**. Active requests have distinct randomly selected two-digit codes to reduce accidental request mix-ups. Creation is limited to 10/minute/server and at most 32 pending/unclaimed requests. No placeholder registration is created merely by requesting or approving a client.
+- Machine request/collection endpoints reject browser Origin/cookies. Creation accepts only strict bounded enrollment metadata; collection requires the exact opaque request ID plus a separate 256-bit bearer capability. The code is never sufficient for collection or agent authentication.
+- Approval requires an authenticated admin session, exact Host/Origin, JSON/custom headers and CSRF. Budgets are 3 wrong code checks/request, 5 attempts/session/minute and 10/server/minute, including unknown request IDs/malformed approval bodies. Approved requests are bound to the approving session; its logout/expiry invalidates unclaimed approvals.
+- Pending browser snapshots contain only request ID, label, kind and expiry. Code/capability/prior-proof values are excluded by construction; the server retains hashes, not the previous bearer proof. UI code inputs clear on submission, snapshot replacement, disconnect, logout and page exit, and are never placed in browser storage/history/diagnostics. The generated two-digit code is intentionally displayed in the requesting client terminal; never share complete terminal recordings containing other secrets.
+- Approval and collection recheck state after asynchronous body parsing. Final proof/live checks, consumption and key issuance are synchronous: simultaneous claims yield at most one key. The final plaintext connection key is not retained for replay.
+- Offline identity reuse requires the stable local client ID and proof of the previous connection key, with matching kind. Legacy direct registrations can be adopted with their previous key. IDs, display names and approval alone cannot take over an identity. A live identity cannot be evicted, even if an administrator approved a new request; revoke/stop explicitly when intended.
+- Only an explicit pending (202) result may be polled again, within the original expiry. Network/HTTP/framing errors or ambiguous create/collection results stop the CLI; it never automatically recreates a request or replays a mutation. Cancellation stops waiting without starting an agent; any orphan request expires. Lost final response/local save can leave a registration without a usable new key: inspect and revoke that exact GUI post, then start a fresh request. The old profile is not replaced on failed collection. HTTP and local disk do not form a distributed transaction.
 
-```sh
-pis --connect demo-a --server http://127.0.0.1:43128 --dummy
-# another GUI key, another terminal:
-pis --connect demo-b --server http://127.0.0.1:43128 --dummy
-```
+## Memory-only server and private client files
 
-No model tokens are used by dummy runtimes. Their history exists only until that process exits. Keep run terminals open. For real Pi projects startup extensions and later browser prompts can cost quota/credits; existing rootless Podman, provider proxies, separate project state, exclusive project locks and verified cleanup/lock retention are preserved. No Git/apt web approvals or production quota-auto is enabled.
+The server keeps password hashes, sessions, pending request hashes/expiry and at most 32 registrations (hashed 256-bit machine keys) **in memory**. It has no transcript database or persistent enrollment volume. History is fetched from connected clients; transient routing/network buffers can contain sensitive conversations. Real Pi's saved project sessions persist independently.
 
-## GUI naming, reuse and key lifetime
+Profiles live at `$PIS_HOME/web-agents/NAME.json` in a 0700 host-only directory with 0600 regular singly-linked owned files. They contain origin, connection key/agent ID, optional stable client ID and local project ID/kind; never the two-digit code or temporary polling capability. The separate `$PIS_HOME/web-client.json` stores only the default origin. Unsafe symlinks/hardlinks/nonregular/nonprivate/oversized/malformed files are rejected; writes are locked/atomic. The global filename cannot collide with valid agent-profile names.
 
-- An unused enrollment key creates **no placeholder agent**. The GUI clears the displayed key when the server reports it consumed/replaced/expired, on the local ten-minute display deadline, logout, transport disconnect or page exit. Never store it in browser storage or share screenshots/devtools/terminal recordings containing it.
-- Keys expire after **ten minutes**, authorize one enrollment and cannot be used directly on `/agent` or `/agent/identity`. Issuing a new key replaces the same browser session's previous unused key. Logout invalidates that session's pending key. Hiding the text alone does not revoke a copied key; it expires or can be superseded by creating a new one.
-- After enrollment, the agent appears with its **project folder name**, not the profile alias/old registered display name; dummy labels use the profile name. Names are bounded to 80 characters. If another agent owns the name, suffixes `-2`, `-3`, etc. distinguish it.
-- The private profile saves a random stable `clientId`. Re-enrolling the **same offline profile/project/server** proves ownership using its previous connection key and reuses the server agent ID instead of appending duplicate entries. The ID or display name alone cannot authorize takeover. A legacy direct registration can be adopted with proof of its previous connection key. A genuinely different profile/agent gets a separate ID and, if needed, a label suffix.
-- A live registration cannot be rotated/evicted by enrollment. Stop your own connector first. Revocation/removal is an explicit admin action; do not revoke another running agent merely to free a name.
-- Registration is a mutation and is **never automatically replayed** after an ambiguous result. If the server consumes a ticket but the response/local save is lost, a registration may exist without a usable new local key. Revoke that exact GUI post and create a fresh key; do not weaken proof checks or retry blindly. Profile writes are atomic, but there is no distributed transaction across HTTP and disk.
-
-The controller can read permitted history, prompt the connected agent and stop work: trust it as a controller, not merely a status receiver. Agent messages remain scoped to their own identity/routes, with no inter-agent API. Idle is not task success.
-
-## Requested future simplified connection (not implemented)
-
-The user requested a simpler connection flow for future design/implementation. This section records requirements only; the current GUI-issued one-use enrollment key and `pis --connect NAME --server ORIGIN` behavior above remain unchanged.
-
-- Save a host-global default server address (IP/host and port), shared across the client's projects, in host-private client configuration; allow an explicit server override. A saved address is only a destination preference: it does not approve a server, authorize enrollment, reconnect automatically, or certify LAN deployment.
-- Bare `pis --connect` should resolve a locally registered Pi project from the current working directory, without requiring a project/profile name or `--project`. It must not guess when resolution is ambiguous, auto-register a project, or accept a project path supplied by the server. Fail with helpful guidance when no eligible local registration exists or resolution is ambiguous.
-- Replace copying a GUI enrollment key with a client-initiated outward request that displays a short-lived two-digit confirmation code at the client. An authenticated administrator UI should list **Pending clients**, allow the administrator to select the exact request and enter the client-displayed code, then approve it. The code confirms the intended client/request; it is not sole authentication or proof of identity.
-- Bind approval to an opaque, exact pending request. Define strict expiry, bounded attempts/rates and atomic one-use consumption. Preserve protected machine-key issuance, role separation, prior-key proof for offline identity reuse, and refusal to evict live identities. Never automatically replay an ambiguous enrollment/approval outcome.
-- A globally reachable IP/LAN connection requires a separately reviewed TLS/WSS and secure-deployment design. Do not enable public/global binding or treat the current loopback-only HTTP server as LAN-safe. Persistent server-address preference does not imply persistent server enrollment or automatic reconnect approval.
-
-Do not implement this flow by weakening the current ticket/key protections or changing current defaults. Review the existing browser/machine role, origin, session, ticket and ambiguous-outcome contracts before proposing an implementation.
-
-## Memory-only server and private client configuration
-
-The server keeps admin password hashes, sessions, enrollment-key hashes/expiry and at most 32 agent registrations (only hashes of their 256-bit connection keys) **in memory**. It has no persistent secret/registration volume or transcript database. History is fetched from connected clients; routing and network buffers still transiently contain sensitive conversation data. Real Pi's normal saved sessions persist independently and are not deleted by registration/restart.
-
-Profiles live at **`$PIS_HOME/web-agents/NAME.json`**, normally `~/.local/share/pis/web-agents/NAME.json`, in a 0700 host-only directory with 0600 regular singly-linked owned files. They contain the server origin, connection key/agent ID, optional stable client ID and local registered project ID/kind. They do **not** contain the consumed enrollment key. Legacy saved profiles without client IDs can still run and are adopted on the first verified re-enrollment. Symlinks, hardlinks, nonprivate/nonregular/oversized/malformed profiles are rejected.
-
-These files are outside shared project/sandbox state and are never mounted into containers, included in image builds, project JSON, Podman environments or diagnostics. The connector uses its key only in an Authorization header to its validated loopback server. Do not mount host home/PIS_HOME into a sandbox, commit a profile or expose credential-bearing backups.
+These files stay outside shared project/sandbox mounts, image builds, project JSON and diagnostics. No host home, provider credentials, SSH agents or engine sockets are added. The connector sends machine keys only in Authorization headers to the validated server. Server role separation, correlation/generation/backpressure limits, strict framing and no prompt replay remain unchanged.
 
 ## Reconnect, restart, stop and revoke
 
-Normal transport interruptions reconnect with the saved connection key and same runtime generation, without replaying prompts or stopping Pi. HTTP 401/403 stops authentication retries for the old key and warns that local work can still continue. Duplicate active identities receive 409; throttling receives 429. Initial project startup still requires registration acknowledgement and performs its normal shutdown/lock verification if that initial registration fails.
+Ordinary transport interruptions reconnect using the saved connection key and same runtime generation without stopping Pi or replaying prompts. HTTP 401/403 stops retries of that old key while local work may continue. Concurrent active identities receive 409; throttling receives 429. Runtime launch still needs initial registration acknowledgement and normal cleanup/lock verification.
 
-A server restart discards all tickets, agent registrations and sessions. To resume: stop old connector terminals locally when appropriate, log into the restarted server, create fresh one-use keys and repeat the same short connect commands. Automatic profile replacement does not change the old running process. A new in-memory server has no old agent records to duplicate. The SSH-admin/LAN-agent two-port design is still future work; current addresses must be `http://127.0.0.1:PORT`.
+Server restart discards pending requests, registrations and sessions. Log into the new server and use `pis --connect` with a fresh displayed code; the private address preference remains, but is not an enrollment approval. Successful profile replacement never kills an old connector/project. Existing project locks and live-identity checks still apply.
 
-- Ctrl-C in a connect/run terminal stops **that local agent**, with existing project cleanup checks.
-- Ctrl-C in the standalone server stops **only the server**, not independently running local agents.
-- **Återkalla vald agentnyckel** removes the selected registration and disconnects it, without killing local work. Use Stoppa before revocation if desired or stop on the agent host. Unconfirmed commands remain unknown, not automatically retried.
-- `pis --connect run NAME` restarts a saved local connection without a new ticket if its server registration still exists.
-- `pis --connect forget NAME` removes only the host profile, not server registrations or already running processes.
-- Advanced legacy `register NAME --server ... (--project ... | --dummy) [--replace]` remains for direct agent keys issued by the older `/agents` admin API. **New GUI enrollment keys are not direct agent keys**; use the short command for them. Legacy register still saves without starting a runtime.
+- Ctrl-C during approval waiting cancels that wait; during a running connector it stops **that local agent**, with normal cleanup checks.
+- Ctrl-C in the standalone server stops **only the server**, not independently running agents.
+- **Återkalla vald agentnyckel** removes the registration/disconnects transport, not local work. Stop agent work explicitly when desired. Unconfirmed command outcomes remain unknown, never automatically replayed.
+- `pis --connect run PROFILE` starts a previously saved profile if the server still recognizes it.
+- `pis --connect forget PROFILE` removes only that local profile, not registrations, running processes or the global server preference.
 
-## Security and verification boundary
+## Advanced legacy key compatibility
 
-Admin issuance/revocation require authenticated sessions, exact Host/Origin, JSON/custom headers and CSRF. Machine redemption rejects browser Origin/cookies, validates a strict bounded body, verifies a live issuer session/ticket and atomically consumes the ticket. Duplicate claims race safely; no caller-supplied agent IDs, connection keys, commands or endpoint changes are accepted. Names are plain text and only Pi/dummy kinds are permitted. IDs plus an old bearer proof identify an existing offline agent; arbitrary client IDs cannot rotate someone else's key. Roles, request correlation/generations, backpressure, heartbeat/body/frame/connection caps, no redirect and no prompt replay remain unchanged. Network preflight/redemption have a five-second timeout and 1024-byte response cap; interactive key entry is hidden and `--key-stdin` is explicitly bounded. Never put keys in argv, URLs or environment variables.
+The GUI's advanced section can still create one-use enrollment keys (10-minute expiry, one unused key per browser session, invalidated on issuer logout). They authorize one exchange for a different connection key, cannot authenticate directly as an agent, and do not pre-create agent posts.
 
-This is still a host-user controller, **not OS isolation**. No LAN/TLS listener, server container, persistent server database or inter-agent command route is included. Do not expose the current HTTP listener publicly or disable certificate verification to emulate future LAN support.
+```sh
+pis --connect NAME --server http://127.0.0.1:43128 --enrollment-key
+# hidden key prompt; --key-stdin is the explicit piped alternative
+pis --connect register NAME --server http://127.0.0.1:43128 --dummy
+# legacy direct key from admin POST /agents, not a one-use enrollment key
+```
 
-Tests cover one-use ticket races/expiry/replacement/logout, no pre-registration placeholders, GUI automatic clearing, collision suffixes, proof-based offline reuse, live refusal, safe local replacement, hidden/private secrets, exact/folder project lookup and ambiguity, automatic dummy/Pi startup, client history and server restart invalidation. Real HTTP/WS and separate dummy CLI processes use no model calls; Pi lifecycle/mount/lock tests use fake Podman. Actual graphical/mobile layout, real rootless Podman lifecycle and prolonged multi-agent/crash operation remain host verification gates.
+Advanced `register` verifies/saves a direct registration without starting a runtime. It requires `--replace` to replace an existing profile. Short connect replaces its profile only after successful enrollment. Neither changes other running clients. Never place keys in argv, URLs, environment variables, project JSON or terminal history.
+
+## Verification boundaries and remaining deployment work
+
+Offline tests use temporary synthetic files, local HTTP/WS, separate dummy CLI processes and fake project services, with no paid/live model calls. They cover request/proof/role/expiry/budget bounds, session revalidation during delayed bodies, simultaneous claims, pending/result ambiguity, unsafe preference files, current-directory selection and overrides, live-identity refusal/profile preservation, and actual app-module code approval/clearing in a DOM shim. Existing one-use-key and real project fake-Podman tests remain gates. A DOM shim is not graphical/browser CSP/accessibility/mobile verification; real rootless Podman and foreground/background subagents remain separate host gates.
+
+**Not implemented:** LAN/global-IP listeners, TLS/WSS deployment, independent multi-computer enrollment, persistent server registration/login maintenance, least-privilege server OS isolation or remote host approvals. The desired same simple command across computers requires those separately reviewed transport/deployment boundaries. Do not expose current HTTP publicly, disable certificate checks or weaken role/proof protections to approximate them. Idle remains not task success; production quota-auto and host Git/apt approval contracts are unchanged.

@@ -15,19 +15,28 @@ import {
   identifyAgent,
   enrollAgent,
   localServerOrigin,
+  readDefaultServer,
+  saveDefaultServer,
 } from './agent-profile.js';
 import { readAgentKey } from './secret-input.js';
+import { pairAgent } from './pairing-client.js';
 import { createDiagnostics } from './diagnostics.js';
 import { STARTUP_LABELS } from './public/startup.js';
 
 export const AGENT_HELP = `Usage:
-  pis --connect NAME --server http://127.0.0.1:43128 [--project PROJECT | --dummy] [--key-stdin] [--diagnostics]
+  pis --connect [NAME] [--server http://127.0.0.1:43128] [--project PROJECT | --dummy] [--diagnostics]
+  pis --connect NAME [--enrollment-key | --key-stdin] [other connect options]
+  pis --connect --set-server http://127.0.0.1:43128
   pis --connect register NAME --server http://127.0.0.1:43128 (--project PROJECT | --dummy) [--replace] [--key-stdin]
   pis --connect run NAME [--diagnostics]
   pis --connect forget NAME
 
-Default: create a one-use enrollment key in the GUI, then connect NAME. Project
-selection defaults to NAME (registered ID/name or unique last folder component).
+Default: request connection, then enter the displayed two-digit code under
+Väntande klienter in the authenticated server UI. Without NAME/--project, select
+the registered Pi project containing the current directory. Save a global server
+with --set-server; --server overrides it for one invocation and does not save it.
+With NAME, project selection defaults to NAME (registered ID/name or unique last folder component).
+Legacy GUI keys use --enrollment-key (hidden prompt) or --key-stdin.
 This replaces the private local profile after successful enrollment and runs it.
 Existing running projects are never stopped or stolen. GUI uses the folder name.
 Advanced register/run/forget commands below remain supported for legacy keys.
@@ -43,34 +52,69 @@ The registered server can prompt/read history/stop this agent; trust it as a
 controller. Real project prompts can cost tokens. No Git/apt web approvals.`;
 export function parseAgentOptions(args) {
   const explicit = ['register', 'run', 'forget'].includes(args[0]);
-  const action = explicit ? args[0] : 'connect',
-    name = args[explicit ? 1 : 0],
-    rest = args.slice(explicit ? 2 : 1);
-  if (!name || !NAME_PATTERN.test(name)) throw new Error('Invalid agent command.');
-  const options = { action, name },
+  const action = explicit ? args[0] : 'connect';
+  let index = explicit ? 1 : 0;
+  const name = explicit || (args[0] && !args[0].startsWith('-')) ? args[index++] : undefined;
+  const rest = args.slice(index);
+  if (explicit && (!name || !NAME_PATTERN.test(name))) throw new Error('Invalid agent command.');
+  const options = { action, ...(name ? { name } : {}) },
     seen = new Set();
   while (rest.length) {
     const flag = rest.shift();
     if (seen.has(flag)) throw new Error('Duplicate option.');
     seen.add(flag);
-    if (['register', 'connect'].includes(action) && ['--server', '--project'].includes(flag)) {
+    if (action === 'connect' && flag === '--set-server') {
+      const value = rest.shift();
+      if (!value || value.startsWith('-')) throw new Error('Missing option value.');
+      options.setServer = value;
+    } else if (
+      ['register', 'connect'].includes(action) &&
+      ['--server', '--project'].includes(flag)
+    ) {
       const value = rest.shift();
       if (!value || value.startsWith('-')) throw new Error('Missing option value.');
       options[flag.slice(2)] = value;
     } else if (
       ['register', 'connect'].includes(action) &&
-      ['--dummy', '--replace', '--key-stdin'].includes(flag)
+      [
+        '--dummy',
+        '--replace',
+        '--key-stdin',
+        ...(action === 'connect' ? ['--enrollment-key'] : []),
+      ].includes(flag)
     )
       options[flag.slice(2)] = true;
     else if (['run', 'connect'].includes(action) && flag === '--diagnostics')
       options.diagnostics = true;
     else throw new Error('Unknown agent option.');
   }
+  if (options.setServer) {
+    if (
+      name ||
+      options.server ||
+      options.project ||
+      options.dummy ||
+      options['key-stdin'] ||
+      options['enrollment-key'] ||
+      options.replace ||
+      options.diagnostics
+    )
+      throw new Error('--set-server cannot be combined with connection options.');
+    options.server = localServerOrigin(options.setServer);
+    options.action = 'set-server';
+    return options;
+  }
   if (['register', 'connect'].includes(action)) {
-    options.server = localServerOrigin(options.server);
-    if (action === 'connect' && !options.dummy) options.project ||= name;
+    if (action === 'connect' && !name) options.unnamed = true;
+    if (name && !NAME_PATTERN.test(name)) throw new Error('Invalid agent command.');
+    if (action === 'connect' && !options.dummy && name) options.project ||= name;
     if (action === 'connect') options.replace = true;
-    if (Boolean(options.project) === Boolean(options.dummy))
+    if (action === 'register') options.server = localServerOrigin(options.server);
+    if (action === 'connect' && options.server) options.server = localServerOrigin(options.server);
+    if (
+      (options.project && options.dummy) ||
+      (action === 'register' && !options.project && !options.dummy)
+    )
       throw new Error('Choose exactly one project or dummy.');
   }
   return options;
@@ -122,7 +166,7 @@ async function runProfile(store, name, diagnostic) {
       );
       connector.network.events.on('rejected', () =>
         console.error(
-          'pis agent: registreringen nekades. Automatisk återanslutning stoppad, men lokal agent kan fortfarande arbeta. Stoppa här med Ctrl-C, skapa ny engångsnyckel i GUI:t och kör pis --connect NAMN --server ADRESS igen.',
+          'pis agent: registreringen nekades. Automatisk återanslutning stoppad, men lokal agent kan fortfarande arbeta. Stoppa här med Ctrl-C och kör pis --connect igen med en ny kod som godkänns i GUI:t.',
         ),
       );
       connector.rpc.once('closed', finish);
@@ -146,6 +190,11 @@ export async function agentMain(args) {
   }
   const options = parseAgentOptions(args),
     store = new Store();
+  if (options.action === 'set-server') {
+    await saveDefaultServer(store.root, options.server);
+    console.error('Standardserver sparad privat. Ingen registrering eller agent startades.');
+    return;
+  }
   if (options.action === 'forget') {
     await forgetAgentProfile(store.root, options.name);
     console.error(
@@ -155,6 +204,12 @@ export async function agentMain(args) {
   }
   if (options.action === 'connect') {
     const project = options.dummy ? undefined : resolveConnectProject(options.project, store);
+    options.name ||= project ? `p-${project.id}` : 'dummy';
+    options.server ||= readDefaultServer(store.root);
+    if (!options.server)
+      throw new Error(
+        'No default server. Save one with pis --connect --set-server http://127.0.0.1:43128, or use --server.',
+      );
     if (
       project &&
       inspectLock(path.join(store.projectDir(project.id), 'project.lock')).status !== 'absent'
@@ -168,14 +223,36 @@ export async function agentMain(args) {
       previous.origin === options.server &&
       previous.kind === (project ? 'pi' : 'dummy') &&
       previous.projectId === (project?.id || null);
-    const key = await readAgentKey({ piped: options['key-stdin'] });
     const clientId = same && previous.clientId ? previous.clientId : randomUUID();
-    const identity = await enrollAgent(options.server, key, {
+    const enrollment = {
       clientId,
       label: project ? path.basename(project.root).slice(0, 80) : options.name,
       kind: project ? 'pi' : 'dummy',
       previousToken: same ? previous.token : null,
-    });
+    };
+    let identity;
+    if (options['key-stdin'] || options['enrollment-key']) {
+      const key = await readAgentKey({ piped: options['key-stdin'] });
+      identity = await enrollAgent(options.server, key, enrollment);
+    } else {
+      const controller = new AbortController();
+      const stop = () => controller.abort();
+      for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(signal, stop);
+      try {
+        console.error(
+          'Servern kan läsa historik, skicka promptar (kan kosta tokens) och stoppa agenten. Godkänn bara rätt server och klient.',
+        );
+        identity = await pairAgent(options.server, enrollment, {
+          signal: controller.signal,
+          onCode: (code) =>
+            console.error(
+              `pis connect: kod ${code} · ange koden under Väntande klienter på servern (giltig i högst 2 minuter).`,
+            ),
+        });
+      } finally {
+        for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.off(signal, stop);
+      }
+    }
     await saveAgentProfile(
       store.root,
       options.name,
@@ -190,9 +267,7 @@ export async function agentMain(args) {
       },
       { replace: true },
     );
-    console.error(
-      'Engångsnyckeln är förbrukad. Anslutningen är sparad privat; startar agenten nu.',
-    );
+    console.error('Anslutningen är godkänd och sparad privat; startar agenten nu.');
     await runProfile(store, options.name, createDiagnostics({ enabled: options.diagnostics }));
     return;
   }
@@ -228,7 +303,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url))
   agentMain(process.argv.slice(2)).catch((error) => {
     if (error.code === 'ENROLLMENT_CONFLICT')
       console.error(
-        'pis agent: agenten är redan ansluten eller tidigare identitet kunde inte verifieras. Inget arbete stoppades och den lokala profilen ersattes inte. Stoppa din gamla anslutning först; vid förlorad registreringsbekräftelse, återkalla rätt GUI-post och skapa en ny nyckel.',
+        'pis agent: agenten är redan ansluten eller tidigare identitet kunde inte verifieras. Inget arbete stoppades och den lokala profilen ersattes inte. Stoppa din gamla anslutning först; vid förlorad registreringsbekräftelse, återkalla rätt GUI-post och gör en ny godkänd anslutning.',
       );
     if (error.code === 'CONNECT_PROJECT_BUSY')
       console.error(
