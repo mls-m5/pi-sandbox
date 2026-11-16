@@ -73,59 +73,100 @@
         </div>
         <p id="state" role="status"></p>
         <p id="sync-note"></p>
+        <div class="chat-details">
+          <details>
+            <summary>Senaste verktygshändelser</summary>
+            <div id="tools"></div>
+          </details>
+          <details>
+            <summary>Anslutningsdiagnostik · utan chattinnehåll</summary>
+            <pre id="diagnostics"></pre>
+            <p>
+              Dela bara kommando, kod och referens här. Skicka inte logg-/state-mappar, lösenord
+              eller råa nätverkssvar.
+            </p>
+          </details>
+        </div>
         <div id="messages" aria-label="Konversation"></div>
-        <details>
-          <summary>Senaste verktygshändelser</summary>
-          <div id="tools"></div>
-        </details>
-        <details>
-          <summary>Anslutningsdiagnostik · utan chattinnehåll</summary>
-          <pre id="diagnostics"></pre>
-          <p>
-            Dela bara kommando, kod och referens här. Skicka inte logg-/state-mappar, lösenord eller
-            råa nätverkssvar.
-          </p>
-        </details>
+        <section class="message-queue" aria-label="Meddelandekö">
+          <details>
+            <summary>Kö och utkast</summary>
+            <p class="queue-help">
+              Utkast finns bara i denna flik och agentkörning. De skickas aldrig automatiskt och
+              försvinner när sidan stängs eller du loggar ut.
+            </p>
+            <div class="actions">
+              <button
+                id="take-queue"
+                type="button"
+                title="Bekräfta och töm hela kvarvarande Pi-kön till redigerbara utkast. Redan levererade meddelanden kan inte tas tillbaka."
+                disabled
+              >
+                Hämta Pi-kö
+              </button>
+              <button
+                id="clear-queue-drafts"
+                type="button"
+                title="Radera alla lokala utkast, även från tidigare agentkörningar. Pi-kön påverkas inte."
+                disabled
+              >
+                Rensa utkast
+              </button>
+            </div>
+            <p id="native-queue-state"></p>
+            <div id="queued-messages"></div>
+          </details>
+          <p id="queue-note" role="status"></p>
+        </section>
+        <div class="actions dummy-actions">
+          <button id="quota" disabled>Simulera kvotstopp 5 s</button>
+          <button id="refill" disabled>Fyll på dummy-kvot</button>
+        </div>
+        <p id="command-note" role="status"></p>
         <form id="prompt-form">
-          <label
-            >Meddelande<textarea
-              id="prompt"
-              rows="3"
-              maxlength="64000"
-              aria-describedby="prompt-help"
-              placeholder="Skriv till dummy-agenten…"
-            ></textarea></label
-          ><small id="prompt-help"
+          <label class="visually-hidden" for="prompt">Meddelande</label>
+          <textarea
+            id="prompt"
+            rows="3"
+            maxlength="64000"
+            aria-describedby="prompt-help"
+            placeholder="Skriv till dummy-agenten…"
+          ></textarea>
+          <small id="prompt-help" class="visually-hidden"
             >Enter skickar prompt när agenten vilar, steer när den arbetar · Shift+Enter ger ny rad.
             Steer levereras vid nästa säkra Pi-gräns, inte som hårt avbrott.</small
           >
           <div class="actions">
             <button id="send" disabled>Skicka</button
-            ><button id="stop" type="button" disabled>Stoppa</button>
+            ><button id="stop" type="button" title="Töm Pi-kön och avbryt arbetet" disabled>
+              Stoppa
+            </button>
+            <button
+              id="queue-steer"
+              type="button"
+              title="Flytta texten till ett redigerbart steerutkast, utan att skicka"
+              disabled
+            >
+              + Steer
+            </button>
+            <button
+              id="queue-follow-up"
+              type="button"
+              title="Flytta texten till ett redigerbart uppföljningsutkast, utan att skicka"
+              disabled
+            >
+              + Uppföljning
+            </button>
+            <details class="composer-help">
+              <summary aria-label="Hjälp för meddelanden">?</summary>
+              <p>
+                Enter skickar, Shift+Enter ger ny rad. Under arbete skickas steer vid nästa säkra
+                gräns; annars en vanlig prompt. Plusknapparna sparar bara lokala utkast. Öppna Kö
+                och utkast för att redigera och leverera dem.
+              </p>
+            </details>
           </div>
         </form>
-        <div class="actions">
-          <button id="quota" disabled>Simulera kvotstopp 5 s</button
-          ><button id="refill" disabled>Fyll på dummy-kvot</button>
-        </div>
-        <p id="command-note" role="status"></p>
-        <section aria-label="Meddelandekö">
-          <h3>Meddelandekö</h3>
-          <p>
-            Utkast lagras bara i denna flik och för denna agentkörning. Redigera innan du levererar;
-            ingen automatisk omsändning. Oskickade utkast försvinner vid utloggning eller sidans
-            stängning.
-          </p>
-          <div class="actions">
-            <button id="queue-steer" type="button" disabled>Köa steerutkast</button>
-            <button id="queue-follow-up" type="button" disabled>Köa uppföljningsutkast</button>
-            <button id="take-queue" type="button" disabled>Hämta tillbaka Pi-kön</button>
-            <button id="clear-queue-drafts" type="button" disabled>Rensa alla lokala utkast</button>
-          </div>
-          <p id="native-queue-state"></p>
-          <p id="queue-note" role="status"></p>
-          <div id="queued-messages"></div>
-        </section>
       </section>
     </main>
     <footer>
