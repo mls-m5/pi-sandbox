@@ -18,7 +18,7 @@ if [[ "${1:-}" == "--connect" ]]; then
       '       pis --connect register NAME --server http://127.0.0.1:43128 (--project PROJECT | --dummy) [--replace] [--key-stdin]' \
       '       pis --connect run NAME [--diagnostics]' \
       '       pis --connect forget NAME' \
-      '--allow-web-git explicitly trusts server admins to approve exact non-force pushes on this Pi host after sandbox shutdown; not saved. No apt/recursive push/automatic resume.' \
+      '--allow-web-git explicitly trusts server admins to approve exact non-force pushes on this Pi host after sandbox shutdown; not saved. Verified completion reconnects Pi idle; no apt/recursive push/model continuation.' \
       'Default connect: enter the client-displayed two-digit code under Väntande klienter in the authenticated server UI.' \
       'Bare connect uses the current registered Pi project and saved global server; if absent, it asks and saves the address (TTY only).' \
       '--server overrides the address for one invocation without saving. --set-server saves only; it starts no SSH/runtime.' \
@@ -46,7 +46,7 @@ if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
   printf '%s\n' \
     'Usage: ./start_server.sh [--standalone | --project NAME (repeatable) | --agents 1..8] [--port PORT] [--password-stdin] [--diagnostics]' \
     '--standalone starts only the server; agent registrations persist privately per port. Use pis --connect --help.' \
-    '--allow-web-git with --project explicitly enables stopped-sandbox exact-commit Git push approval; no force, apt or automatic resume.' \
+    '--allow-web-git with --project explicitly enables stopped-sandbox exact-commit Git push approval; no force/apt/model continuation; verified Git completion reconnects Pi idle.' \
     'Default: dummy-only demo, no model calls. --project starts real registered Pi sandboxes; prompts may cost tokens.' \
     '--diagnostics emits bounded safe request metadata; share only pis web diagnostic: lines, never passwords/state folders.' \
     'Empty password input generates a strong password shown once on stderr (visible in terminal/log captures).' \

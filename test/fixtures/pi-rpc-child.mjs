@@ -1,7 +1,9 @@
 // Offline subprocess: no Pi package, credentials, network or model requests.
 import { JsonlDecoder } from '../../src/pi-rpc.js';
+import fs from 'node:fs';
 const send = record => process.stdout.write(`${JSON.stringify(record)}\n`);
 const decoder = new JsonlDecoder(command => {
+  if (process.env.PIS_TEST_RPC_TRACE) fs.appendFileSync(process.env.PIS_TEST_RPC_TRACE, `${['get_state', 'get_messages', 'prompt', 'steer', 'follow_up', 'clear_queue', 'abort'].includes(command.type) ? command.type : 'unknown'}\n`);
   if (command.type === 'get_state') send({ id: command.id, type: 'response', command: command.type, success: true, data: { isStreaming: false, isCompacting: false, pendingMessageCount: 0 } });
   else if (command.type === 'get_messages') send({ id: command.id, type: 'response', command: command.type, success: true, data: { messages: [] } });
   else if (command.type === 'prompt') {

@@ -30,6 +30,15 @@ async function main() {
       startupProgress: report,
       webGitApproval,
     });
+    // Emitted only after launch() has released the project lock and completed
+    // verified cleanup. This is not a request to continue model work.
+    if (process.exitCode === 0 && webGitApproval?.completedId && process.connected) {
+      await new Promise((resolve, reject) =>
+        process.send({ type: 'web_git_restart_ready', id: webGitApproval.completedId }, (error) =>
+          error ? reject(new Error('Restart handoff unavailable.')) : resolve(),
+        ),
+      );
+    }
   } finally {
     webGitApproval?.dispose();
     if (process.connected) process.disconnect();

@@ -77,7 +77,8 @@ controller. Real project prompts can cost tokens. Apt web approvals remain unava
 Optional --allow-web-git (connect/run, real Pi only) trusts this server's authenticated
 admins to approve exact non-force Git pushes on THIS host after sandbox shutdown.
 Not saved in profiles; opt in on every launch. Supports individual in-project submodules.
-No automatic push, recursive push, credential prompt, model continuation or retry.`;
+Verified Git-flow completion reconnects a fresh idle runtime; no automatic push,
+recursive push, credential prompt, model continuation or retry.`;
 export function parseAgentOptions(args) {
   const explicit = ['register', 'run', 'forget'].includes(args[0]);
   const action = explicit ? args[0] : 'connect';
@@ -185,7 +186,7 @@ async function runProfile(store, name, diagnostic, transport, signal, allowWebGi
         );
       if (allowWebGit)
         console.error(
-          'Web Git opt-in: authenticated admins of this server may approve one exact non-force push after this sandbox stops. SSH host authentication stays local; no automatic resume or retry.',
+          'Web Git opt-in: authenticated admins of this server may approve one exact non-force push after this sandbox stops. SSH host authentication stays local. Verified Git completion reconnects Pi idle; no automatic model continuation or push retry.',
         );
       connector = project
         ? await startProjectConnector({
@@ -219,9 +220,10 @@ async function runProfile(store, name, diagnostic, transport, signal, allowWebGi
           'pis agent: registreringen nekades. Automatisk återanslutning stoppad, men lokal agent kan fortfarande arbeta. Stoppa här med Ctrl-C och kör pis --connect igen med en ny kod som godkänns i GUI:t.',
         ),
       );
-      connector.rpc.once('closed', () => (allowWebGit ? setTimeout(finish, 150) : finish()));
+      if (connector.events) connector.events.once('closed', finish);
+      else connector.rpc.once('closed', finish);
       if (project) ready();
-      if (connector.rpc.closed) finish();
+      if (connector.events ? connector.isClosed : connector.rpc.closed) finish();
       if (controller.signal.aborted) finish();
       await stopped;
     } finally {

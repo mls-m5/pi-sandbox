@@ -1,4 +1,5 @@
 const phases = new Set(['pending', 'pushing', 'succeeded', 'unknown', 'declined', 'expired']);
+const terminal = (phase) => ['succeeded', 'unknown', 'declined', 'expired'].includes(phase);
 export function createHostPushUI({ document, getContext, send }) {
   const root = document.getElementById('host-push');
   let value,
@@ -22,7 +23,7 @@ export function createHostPushUI({ document, getContext, send }) {
     if (
       !value ||
       value.agentId !== context.agentId ||
-      (context.generation && context.generation !== value.generation)
+      (context.generation && context.generation !== value.generation && !terminal(value.push.phase))
     ) {
       if (input) input.value = '';
       rendered = undefined;
@@ -40,7 +41,10 @@ export function createHostPushUI({ document, getContext, send }) {
     input = undefined;
     const p = value.push,
       title = document.createElement('h3');
-    title.textContent = 'Godkänn Git-push · vald agents värd';
+    title.textContent =
+      context.generation && context.generation !== value.generation
+        ? 'Föregående körnings Git-push · endast resultat'
+        : 'Godkänn Git-push · vald agents värd';
     const details = document.createElement('pre');
     details.textContent = `Repo: ${p.repo}\nRemote: ${p.remote}\nDestination: ${p.url}\nCommit: ${p.commit}\nBranch: ${p.ref}\n\nAgentens skäl (opålitligt): ${p.reason}`;
     const status = document.createElement('p');
@@ -49,14 +53,18 @@ export function createHostPushUI({ document, getContext, send }) {
       pending:
         'Sandboxen är stoppad enligt agentens värdadapter. Granska exakt destination och commit. Ingen push är godkänd ännu.',
       pushing: 'Push godkänd och begärd. Ingen automatisk retry.',
-      succeeded:
-        'Git rapporterade lyckad push. Starta/anslut agenten manuellt igen för att fortsätta.',
+      succeeded: 'Git rapporterade lyckad push.',
       unknown:
         'Utfallet är okänt eller anslutningen bröts. Kontrollera remote på värden innan någon ny push.',
       declined: 'Avböjd. Ingen push godkändes.',
       expired: 'Godkännandet har gått ut.',
     };
-    status.textContent = note || labels[p.phase];
+    const replacement = terminal(p.phase)
+      ? context.online && context.generation && context.generation !== value.generation
+        ? ' Ny runtime har återanslutits. Ingen tidigare push eller prompt skickas om automatiskt.'
+        : ' Väntar på agentens återanslutning. Om den förblir offline kan återstarten ha misslyckats; ingen automatisk krasch-retry görs.'
+      : '';
+    status.textContent = note || labels[p.phase] + replacement;
     root.replaceChildren(title, details, status);
     if (p.phase !== 'pending' || !context.online) return;
     const button = (text, handler) => {
@@ -127,7 +135,7 @@ export function createHostPushUI({ document, getContext, send }) {
     );
     const warning = document.createElement('small');
     warning.textContent =
-      'Endast denna push. Inget force, ingen rekursiv submodulspush och ingen automatisk agentomstart. Verifiera ett okänt utfall på värden.';
+      'Endast denna push. Inget force, ingen rekursiv submodulspush eller automatisk modellfortsättning. En ny väntande runtime återansluts efter bekräftat avslutat Git-flöde. Verifiera ett okänt utfall på värden.';
     root.append(warning);
   }
   return {
@@ -137,10 +145,18 @@ export function createHostPushUI({ document, getContext, send }) {
       const context = getContext();
       if (
         message.agentId !== context.agentId ||
-        (context.generation && message.generation !== context.generation)
+        (context.generation &&
+          message.generation !== context.generation &&
+          !(message.type === 'host_push' && terminal(message.push?.phase)))
       )
         return;
       if (message.type === 'host_push') {
+        if (
+          context.generation &&
+          message.generation !== context.generation &&
+          value?.generation === context.generation
+        )
+          return;
         const p = message.push;
         if (
           !p ||

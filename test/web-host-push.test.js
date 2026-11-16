@@ -42,6 +42,28 @@ test('review nonce belongs to one browser, generation and proposal; wrong owner/
   manager.decide(b, peer, decision); manager.decide(b, peer, decision); assert.equal(sent.filter(x => x.target === peer).length, 1);
   assert.equal(broadcasts.at(-1).push.phase, 'pushing'); manager.disconnect(peer); assert.equal(broadcasts.at(-1).push.phase, 'unknown');
 });
+test('runtime restart readiness requires correlated outcome plus a separate post-cleanup IPC marker', () => {
+  for (const phase of ['succeeded', 'declined', 'unknown']) {
+    const child = new Channel(), host = createProjectHostPush(child, { fault() {} }), p = proposal();
+    child.emit('message', { type: 'web_git_restart_ready', id: p.id }); assert.equal(host.restartReady, false);
+    child.emit('message', { type: 'web_git_proposal', proposal: p });
+    child.emit('message', { type: 'web_git_restart_ready', id: p.id }); assert.equal(host.restartReady, false);
+    child.emit('message', { type: 'web_git_outcome', id: p.id, phase }); assert.equal(host.restartReady, false);
+    child.emit('message', { type: 'web_git_restart_ready', id: randomUUID() }); assert.equal(host.restartReady, false);
+    child.emit('message', { type: 'web_git_restart_ready', id: p.id }); assert.equal(host.restartReady, true); host.close();
+  }
+});
+test('generation replacement is permitted only once after a completed host push, not while pending or pushing', () => {
+  const sent = [], peer = { agentId: 'agent', generation: randomUUID() }, owner = {};
+  const manager = createHostPushes({ send: (_target, value) => { sent.push(value); return true; }, broadcast() {} });
+  const p = proposal(); manager.announce(peer, p); assert.equal(manager.canReplace(peer), false);
+  manager.review(owner, peer, { id: p.id, generation: peer.generation });
+  manager.decide(owner, peer, { id: p.id, generation: peer.generation, reviewId: sent.at(-1).reviewId, approved: true, code: p.code }); assert.equal(manager.canReplace(peer), false);
+  manager.outcome(peer, p.id, 'succeeded'); assert.equal(manager.canReplace(peer), true);
+  peer.generation = randomUUID(); assert.equal(manager.canReplace(peer), false);
+  manager.announce(peer, proposal()); assert.equal(manager.canReplace(peer), false);
+});
+
 test('connector rejects native control once host review begins and cancels pending proposals on transport loss', () => {
   const child = new Channel(), faults = [], host = createProjectHostPush(child, { fault: code => faults.push(code) }), p = proposal(); let seen;
   host.events.on('proposal', value => { seen = value; }); child.emit('message', { type: 'web_git_proposal', proposal: p });
@@ -84,10 +106,30 @@ test('real authenticated WebSockets route one reviewed decision and logout inval
   send(second, decision); send(second, decision); await until(() => peer.messages.some(x => x.type === 'host_push_decision'));
   assert.equal(peer.messages.filter(x => x.type === 'host_push_decision').length, 1);
   send(peer, { type: 'host_push_outcome', generation, id: p.id, phase: 'succeeded' }); await until(() => second.messages.some(x => x.push?.phase === 'succeeded'));
+  const replacement = randomUUID(); send(peer, { type: 'runtime_replaced', previousGeneration: generation, generation: replacement, seq: 0, status: 'idle' });
+  await until(() => server.roster()[0].generation === replacement); assert.equal(server.roster()[0].status, 'idle');
+  const invalid = randomUUID(), disconnected = once(peer, 'close');
+  send(peer, { type: 'runtime_replaced', previousGeneration: replacement, generation: invalid, seq: 0, status: 'idle' }); await disconnected;
+  assert.ok(!peer.messages.some(x => x.type === 'registered' && x.generation === invalid), 'The old completion cannot authorize a second generation change.');
 });
 
 class Element { children = []; listeners = {}; value = ''; textContent = ''; append(...nodes) { this.children.push(...nodes); } replaceChildren(...nodes) { this.children = nodes; } setAttribute(name, value) { this[name] = value; } addEventListener(type, fn) { this.listeners[type] = fn; } }
 const all = node => [node, ...node.children.flatMap(all)];
+test('previous-generation Git results remain read-only and cannot replace current-generation approval', () => {
+  const root = new Element(), context = { agentId: 'agent', generation: randomUUID(), online: true }, messages = [];
+  const ui = createHostPushUI({ document: { getElementById: () => root, createElement: tag => Object.assign(new Element(), { tag }) }, getContext: () => context, send: value => messages.push(value) });
+  const old = { ...proposal(), phase: 'succeeded' }, oldGeneration = randomUUID();
+  ui.receive({ type: 'host_push', agentId: 'agent', generation: oldGeneration, push: old });
+  assert.ok(all(root).some(node => node.textContent.includes('Föregående körnings')));
+  assert.equal(all(root).filter(node => node.tag === 'button' || node.tag === 'input').length, 0);
+  ui.receive({ type: 'host_push', agentId: 'agent', generation: oldGeneration, push: { ...old, phase: 'pending' } });
+  assert.equal(all(root).filter(node => node.tag === 'button').length, 0);
+  const current = { ...proposal(), repo: 'newmodule', phase: 'pending' };
+  ui.receive({ type: 'host_push', agentId: 'agent', generation: context.generation, push: current });
+  ui.receive({ type: 'host_push', agentId: 'agent', generation: oldGeneration, push: old });
+  assert.ok(all(root).some(node => node.textContent.includes('newmodule'))); assert.ok(all(root).some(node => node.textContent === 'Granska push')); assert.deepEqual(messages, []);
+});
+
 test('browser approval needs explicit review and a typed code, remains literal and clears on logout', () => {
   const root = new Element(), messages = [], context = { agentId: 'agent', generation: randomUUID(), online: true };
   const ui = createHostPushUI({ document: { getElementById: () => root, createElement: tag => Object.assign(new Element(), { tag }) }, getContext: () => context, send: value => { messages.push(value); return true; } });

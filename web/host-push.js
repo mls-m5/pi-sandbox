@@ -62,10 +62,19 @@ export function createHostPushes({ send, broadcast }) {
     announce(peer, value) {
       const proposal = validateWebPush(value),
         previous = entries.get(peer.agentId);
-      if (previous?.peer === peer) throw new Error('Only one host push per runtime.');
+      if (previous?.peer === peer && previous.generation === peer.generation)
+        throw new Error('Only one host push per runtime.');
       const entry = { peer, generation: peer.generation, proposal, phase: 'pending' };
       entries.set(peer.agentId, entry);
       publish(entry);
+    },
+    canReplace(peer) {
+      const e = entries.get(peer.agentId);
+      return (
+        e?.peer === peer &&
+        e.generation === peer.generation &&
+        ['succeeded', 'unknown', 'declined', 'expired'].includes(e.phase)
+      );
     },
     snapshot(ws, agentId) {
       const e = entries.get(agentId);

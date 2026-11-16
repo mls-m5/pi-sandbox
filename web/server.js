@@ -623,6 +623,27 @@ export async function startWebServer({
       broadcastRoster();
       return;
     }
+    if (value.type === 'runtime_replaced') {
+      if (
+        !exact(value, ['v', 'type', 'previousGeneration', 'generation', 'seq', 'status']) ||
+        value.previousGeneration !== ws.generation ||
+        !generationValid(value.generation) ||
+        value.generation === ws.generation ||
+        !Number.isSafeInteger(value.seq) ||
+        value.seq < 0 ||
+        value.status !== 'idle' ||
+        !hostPushes.canReplace(ws)
+      )
+        throw new Error('Protocol.');
+      for (const [route, entry] of pending)
+        if (entry.agent === ws) removePending(route, 'outcome_unknown');
+      ws.generation = value.generation;
+      ws.seq = value.seq;
+      ws.status = 'idle';
+      send(ws, { v: 1, type: 'registered', generation: ws.generation });
+      broadcastRoster();
+      return;
+    }
     if (
       exact(value, ['v', 'type', 'generation', 'proposal']) &&
       value.type === 'host_push' &&

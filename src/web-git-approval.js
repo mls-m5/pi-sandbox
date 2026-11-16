@@ -4,6 +4,7 @@ import { randomUUID, randomInt } from 'node:crypto';
 export function createWebGitApproval(channel, { lifetimeMs = 300000 } = {}) {
   let pending,
     lastId,
+    completedId,
     disposed = false;
   function finish(approved) {
     const entry = pending;
@@ -67,7 +68,11 @@ export function createWebGitApproval(channel, { lifetimeMs = 300000 } = {}) {
         }
       });
     },
+    get completedId() {
+      return completedId;
+    },
     report(phase) {
+      if (lastId && ['succeeded', 'unknown', 'declined'].includes(phase)) completedId = lastId;
       if (lastId && channel.connected && ['succeeded', 'unknown', 'declined'].includes(phase))
         try {
           channel.send({ type: 'web_git_outcome', id: lastId, phase }, () => {});

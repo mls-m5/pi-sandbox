@@ -5,6 +5,8 @@ import { validateWebPush } from './host-push.js';
 export function createProjectHostPush(child, rpc) {
   const events = new EventEmitter();
   let pending,
+    outcomeReceived = false,
+    restartReady = false,
     decided = false;
   const cancel = () => {
     if (pending && !decided) {
@@ -30,7 +32,15 @@ export function createProjectHostPush(child, rpc) {
         pending?.id === value.id &&
         ['succeeded', 'unknown', 'declined'].includes(value.phase)
       ) {
+        outcomeReceived = true;
         events.emit('outcome', { id: value.id, phase: value.phase });
+      } else if (
+        value?.type === 'web_git_restart_ready' &&
+        Object.keys(value).length === 2 &&
+        pending?.id === value.id &&
+        outcomeReceived
+      ) {
+        restartReady = true;
       }
     } catch {
       if (
@@ -53,6 +63,9 @@ export function createProjectHostPush(child, rpc) {
   child.on('message', receive);
   return {
     events,
+    get restartReady() {
+      return restartReady;
+    },
     cancel,
     decide(value) {
       if (!pending || decided || value.id !== pending.id || pending.expiresAt <= Date.now()) return;

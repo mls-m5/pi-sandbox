@@ -63,7 +63,7 @@ export default function (pi) {
     label: 'Request host Git command',
     exposure: 'model-only',
     description:
-      'Request ONE Git operation on the host, using host authentication only after the user approves it there. Pi stops for approval. Currently only args ["push", "REMOTE", "FULL_40_HEX_COMMIT:refs/heads/BRANCH"] are allowed: no shell, force, aliases or other commands. repo is relative to the registered project; use "." for its root. Inspect and commit changes inside the sandbox first. Submodules inside the project can be proposed individually using their relative path, never an automatic recursive push. In web mode the sandbox stops for an explicit admin approval on the opted-in host; there is no automatic restart or continuation. Do not claim success until the host reports it.',
+      'Request ONE Git operation on the host, using host authentication only after the user approves it there. Pi stops for approval. Currently only args ["push", "REMOTE", "FULL_40_HEX_COMMIT:refs/heads/BRANCH"] are allowed: no shell, force, aliases or other commands. repo is relative to the registered project; use "." for its root. Inspect and commit changes inside the sandbox first. Submodules inside the project can be proposed individually using their relative path, never an automatic recursive push. In web mode the sandbox stops for explicit admin approval on the opted-in host. After verified Git-flow cleanup the connector starts a new idle runtime with the saved session and a fresh generation; no model continuation or push retry is automatic. Do not claim success until the host reports it.',
     parameters: Type.Object({
       repo: Type.String({
         description:

@@ -33,7 +33,8 @@ export function connectView({
   let socket,
     timer,
     stopped = false,
-    attempts = 0;
+    attempts = 0,
+    registeredGeneration;
   const onFrame = (frame) => {
     if (socket) send(socket, { v: 1, type: 'frame', frame });
   };
@@ -115,6 +116,7 @@ export function connectView({
           message.type === 'registered' &&
           message.generation === view.control.generation
         ) {
+          registeredGeneration = message.generation;
           events.emit('registered');
           return;
         }
@@ -142,6 +144,9 @@ export function connectView({
         )
           throw new Error('Protocol.');
         const command = validateControlCommand(message.command);
+        // Old in-flight commands belong to the retired generation, never the replacement.
+        if (command.generation !== view.control.generation) return;
+        const executingView = view;
         const startedAt = Date.now();
         diagnostic({
           component: 'connector',
@@ -163,9 +168,12 @@ export function connectView({
               stable: result.stable,
             });
             // A reply belongs only to this connection. Never queue it for reconnect.
-            if (socket === ws) send(ws, { v: 1, type: 'result', routeId: message.routeId, result });
+            if (socket === ws && view === executingView)
+              send(ws, { v: 1, type: 'result', routeId: message.routeId, result });
           })
-          .catch(() => ws.terminate())
+          .catch(() => {
+            if (view === executingView && socket === ws) ws.terminate();
+          })
           .finally(() => pending--);
       } catch {
         diagnostic({
@@ -180,7 +188,10 @@ export function connectView({
       hostPush?.cancel();
       diagnostic({ component: 'connector', event: 'agent_disconnected' });
       clearInterval(watchdog);
-      if (socket === ws) socket = undefined;
+      if (socket === ws) {
+        socket = undefined;
+        registeredGeneration = undefined;
+      }
       events.emit('disconnected');
       if (!stopped)
         timer = setTimeout(
@@ -192,11 +203,60 @@ export function connectView({
   connect();
   return {
     events,
+    async replaceView(next, nextHostPush) {
+      if (
+        stopped ||
+        next.rpc.status !== 'idle' ||
+        next.control.generation === view.control.generation
+      )
+        throw new Error('Runtime replacement unavailable.');
+      const previousGeneration = view.control.generation;
+      view.off('frame', onFrame);
+      view.rpc.off('fault', onFault);
+      view.rpc.off('closed', onClosed);
+      hostPush?.events.off('proposal', proposal);
+      hostPush?.events.off('outcome', outcome);
+      view = next;
+      hostPush = nextHostPush;
+      view.on('frame', onFrame);
+      view.rpc.on('fault', onFault);
+      view.rpc.on('closed', onClosed);
+      hostPush?.events.on('proposal', proposal);
+      hostPush?.events.on('outcome', outcome);
+      await new Promise((resolve, reject) => {
+        const finish = (error) => {
+          clearTimeout(deadline);
+          events.off('registered', ready);
+          events.off('rejected', failed);
+          events.off('stopped', failed);
+          error ? reject(new Error('Runtime registration unavailable.')) : resolve();
+        };
+        const ready = () => {
+          if (registeredGeneration === view.control.generation) finish();
+        };
+        const failed = () => finish(true);
+        const deadline = setTimeout(failed, 8000);
+        events.on('registered', ready);
+        events.on('rejected', failed);
+        events.on('stopped', failed);
+        if (socket && registeredGeneration === previousGeneration)
+          send(socket, {
+            v: 1,
+            type: 'runtime_replaced',
+            previousGeneration,
+            generation: view.control.generation,
+            seq: view.sequence,
+            status: 'idle',
+          });
+        else socket?.terminate(); // Existing bounded reconnect sends only a fresh hello, no replay.
+      });
+    },
     disconnect() {
       socket?.terminate();
     }, // Testable transport interruption, never EOF on Pi.
     close() {
       stopped = true;
+      events.emit('stopped');
       clearTimeout(timer);
       socket?.terminate();
       hostPush?.cancel();

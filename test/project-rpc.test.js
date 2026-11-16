@@ -256,6 +256,91 @@ test('independent registered agent CLI keeps Pi inside existing project boundary
   const trace = fs.readFileSync(f.trace, 'utf8'); assert.ok(!trace.includes(ticket.token)); assert.ok(!trace.includes(JSON.parse(saved).token)); assert.ok(!output.includes(ticket.token));
 });
 
+test('connector replaces only verified Git-flow runtimes, stays registered and sends no continuation prompt', { skip: process.getuid() === 0 || !fs.existsSync(new URL('../web/node_modules/ws/package.json', import.meta.url)), timeout: 30000 }, async t => {
+  const { startWebServer } = await import('../web/server.js'), { startProjectConnector } = await import('../web/project-connector.js');
+  const { hashPassword, randomKey, digest } = await import('../web/common.js'), { default: WebSocket } = await import('../web/node_modules/ws/wrapper.mjs');
+  const keys = ['PATH', 'PIS_AUTO_UPDATE', 'PIS_AUTO_PRUNE', 'TEST_UNKNOWN_CONTAINER', 'TEST_PI_FAIL', 'PIS_TEST_RPC_TRACE', 'NODE_OPTIONS', 'NODE_PATH', 'NODE_COMPILE_CACHE', 'NODE_DISABLE_COMPILE_CACHE'], saved = Object.fromEntries(keys.map(key => [key, process.env[key]]));
+  t.after(() => { for (const key of keys) { if (saved[key] === undefined) delete process.env[key]; else process.env[key] = saved[key]; } });
+  const until = async predicate => { for (let i = 0; i < 700; i++) { if (predicate()) return; await new Promise(resolve => setTimeout(resolve, 10)); } assert.fail('Runtime replacement deadline.'); };
+  for (const mode of ['declined', 'unconfirmed', 'ordinary-exit', 'cancelled', 'replacement-fails', 'replacement-unclean', 'replacement-code-corrupt']) {
+    const f = await fixture(t), trace = path.join(f.base, 'rpc-types');
+    for (const key of ['PATH', 'PIS_AUTO_UPDATE', 'PIS_AUTO_PRUNE']) process.env[key] = f.env[key];
+    process.env.TEST_UNKNOWN_CONTAINER = mode === 'unconfirmed' ? '1' : '0'; process.env.TEST_PI_FAIL = '0'; process.env.PIS_TEST_RPC_TRACE = trace;
+    const git = args => execFileSync('/usr/bin/git', ['-C', f.root, ...args], { env: { PATH: '/usr/bin:/bin', HOME: f.base, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' }, stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8' }).trim();
+    git(['init']); fs.writeFileSync(path.join(f.root, 'hello'), 'test'); git(['add', 'hello']); git(['-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-m', 'test']); git(['remote', 'add', 'origin', 'git@example.invalid:owner/project.git']);
+    const hookMarker = path.join(f.base, 'hook-must-not-run'), hook = path.join(f.base, 'mutable-hook.mjs');
+    fs.writeFileSync(hook, `import fs from 'node:fs'; fs.writeFileSync(${JSON.stringify(hookMarker)}, 'executed');`);
+    process.env.NODE_OPTIONS = `--import=${hook}`; process.env.NODE_PATH = path.join(f.base, 'untrusted-modules');
+    const injectedCache = path.join(f.base, 'injected-compile-cache'); process.env.NODE_COMPILE_CACHE = injectedCache; process.env.NODE_DISABLE_COMPILE_CACHE = '0';
+    const commit = git(['rev-parse', 'HEAD']), token = randomKey(), password = randomKey(), steps = [];
+    const server = await startWebServer({ port: 0, passwordHash: await hashPassword(password), agents: [{ id: 'pi-replace', label: 'Project', kind: 'pi', tokenHash: digest(token) }] }); t.after(() => server.close());
+    const connector = await startProjectConnector({ project: resolveWebProjects(['web-test'], f.store)[0], origin: server.origin, token, allowWebGit: true, startupTimeoutMs: 3000, onProgress: phase => steps.push(phase) }); t.after(() => connector.close().catch(() => {}));
+    const generation = connector.view.control.generation, network = connector.network;
+    const trustedEntry = connector.rpc.child.spawnargs[1]; assert.ok(trustedEntry.startsWith(path.join(f.store.root, 'web-runtime-code') + path.sep));
+    const response = await fetch(server.origin + '/login', { method: 'POST', headers: { Origin: server.origin, 'Content-Type': 'application/json', 'X-Pis-Web': '1' }, body: JSON.stringify({ password }) }); await response.json();
+    const browser = new WebSocket(server.origin.replace('http:', 'ws:') + '/browser', { headers: { Origin: server.origin, Cookie: response.headers.getSetCookie()[0].split(';')[0] } }), messages = [];
+    browser.on('message', data => messages.push(JSON.parse(data))); browser.on('error', () => {}); t.after(() => browser.terminate()); await once(browser, 'open');
+    const send = value => browser.send(JSON.stringify({ v: 1, agentId: 'pi-replace', generation, ...value }));
+    browser.send(JSON.stringify({ v: 1, type: 'select', agentId: 'pi-replace', id: token.slice(0, 20) })); await until(() => messages.some(value => value.type === 'selected'));
+    const calls = () => fs.readFileSync(f.trace, 'utf8').trim().split('\n').map(JSON.parse), runs = () => calls().filter(args => args[0] === 'run');
+    if (mode !== 'ordinary-exit') {
+      const volume = runs()[0].find(value => value.includes(':/pis/apt:ro'));
+      const socket = net.createConnection(path.join(volume.split(':')[0], 'request.sock')); await once(socket, 'connect'); const reply = once(socket, 'data');
+      socket.end(JSON.stringify({ type: 'git-command', repo: '.', args: ['push', 'origin', `${commit}:refs/heads/main`], reason: 'Test decline only; no external push' }) + '\n'); assert.equal(JSON.parse((await reply)[0].toString()).ok, true);
+    }
+    connector.rpc.child.stdin.end();
+    if (mode === 'unconfirmed' || mode === 'ordinary-exit') {
+      await until(() => connector.isClosed); assert.equal(runs().length, 1);
+      if (mode === 'unconfirmed') { assert.ok(fs.existsSync(f.lock)); await assert.rejects(connector.close()); }
+      else await connector.close();
+    } else {
+      await until(() => messages.some(value => value.type === 'host_push' && value.push.phase === 'pending'));
+      const push = messages.find(value => value.type === 'host_push').push;
+      if (mode === 'cancelled') { await connector.close(); assert.equal(runs().length, 1); }
+      else {
+        send({ type: 'host_push_review', id: push.id }); await until(() => messages.some(value => value.type === 'host_push_review'));
+        const reviewId = messages.find(value => value.type === 'host_push_review').reviewId;
+        if (['replacement-fails', 'replacement-unclean'].includes(mode)) process.env.TEST_PI_FAIL = '1';
+        if (mode === 'replacement-code-corrupt') fs.appendFileSync(trustedEntry, '\n// changed private bundle\n');
+        if (mode === 'replacement-unclean') process.env.TEST_UNKNOWN_CONTAINER = '1';
+        send({ type: 'host_push_decision', id: push.id, reviewId, approved: false, code: '' });
+        if (mode.startsWith('replacement-')) {
+          await until(() => connector.isClosed); assert.equal(runs().length, mode === 'replacement-code-corrupt' ? 1 : 2);
+          const phase = mode === 'replacement-unclean' ? 'cleanup_unconfirmed' : mode === 'replacement-code-corrupt' ? 'failed' : 'pi_failed'; assert.ok(steps.includes(phase));
+          await assert.rejects(connector.close(), error => error.code === 'PROJECT_REPLACEMENT_FAILED' && error.phase === phase);
+          assert.equal(fs.existsSync(f.lock), mode === 'replacement-unclean');
+        }
+        else {
+          await until(() => connector.view.control.generation !== generation && server.roster()[0].generation === connector.view.control.generation && server.roster()[0].status === 'idle');
+          assert.equal(connector.rpc.child.spawnargs[1], trustedEntry);
+          assert.equal(connector.network, network); assert.equal(connector.isClosed, false); assert.equal(runs().length, 2); assert.ok(fs.existsSync(f.lock));
+          const stale = await connector.view.execute({ v: 1, generation, id: 'stale', action: 'prompt', message: 'must not replay' }); assert.equal(stale.data.error, 'control_stale_generation');
+          assert.deepEqual([...new Set(fs.readFileSync(trace, 'utf8').trim().split('\n'))], ['get_state']);
+          const secondGeneration = connector.view.control.generation, secondVolume = runs()[1].find(value => value.includes(':/pis/apt:ro'));
+          const secondSocket = net.createConnection(path.join(secondVolume.split(':')[0], 'request.sock')); await once(secondSocket, 'connect'); const secondReply = once(secondSocket, 'data');
+          secondSocket.end(JSON.stringify({ type: 'git-command', repo: '.', args: ['push', 'origin', `${commit}:refs/heads/main`], reason: 'Second independent decline; never push' }) + '\n'); assert.equal(JSON.parse((await secondReply)[0].toString()).ok, true);
+          connector.rpc.child.stdin.end();
+          await until(() => messages.some(value => value.type === 'host_push' && value.generation === secondGeneration && value.push.phase === 'pending'));
+          const secondPush = messages.find(value => value.type === 'host_push' && value.generation === secondGeneration).push;
+          send({ type: 'host_push_review', generation: secondGeneration, id: secondPush.id }); await until(() => messages.some(value => value.type === 'host_push_review' && value.id === secondPush.id));
+          send({ type: 'host_push_decision', generation: secondGeneration, id: secondPush.id, reviewId: messages.find(value => value.type === 'host_push_review' && value.id === secondPush.id).reviewId, approved: false, code: '' });
+          await until(() => connector.view.control.generation !== secondGeneration && server.roster()[0].generation === connector.view.control.generation && server.roster()[0].status === 'idle');
+          assert.equal(runs().length, 3); assert.equal(connector.network, network); assert.equal(connector.isClosed, false);
+          assert.deepEqual([...new Set(fs.readFileSync(trace, 'utf8').trim().split('\n'))], ['get_state']);
+          await connector.close();
+        }
+      }
+    }
+    for (const args of runs()) {
+      assert.deepEqual(args.slice(-6), ['pi', '--tui-mode', 'regular', '--continue', '--mode', 'rpc']);
+      assert.ok(!args.some(value => value.includes('web-runtime-code')), 'Trusted host code bundle must not be a sandbox mount.');
+    }
+    assert.equal(fs.existsSync(hookMarker), false, 'Opted-in wrapper must not inherit Node startup hooks.');
+    assert.equal(fs.existsSync(injectedCache), false, 'Opted-in wrapper must not read or write injected compile caches.');
+    browser.terminate(); await server.close();
+  }
+});
+
 test('project connector keeps wrapper and lock alive across network reconnect, then cleans up locally', { skip: process.getuid() === 0 || !fs.existsSync(new URL('../web/node_modules/ws/package.json', import.meta.url)), timeout: 15000 }, async t => {
   const f = await fixture(t);
   const { startWebServer } = await import('../web/server.js');
