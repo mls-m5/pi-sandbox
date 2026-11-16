@@ -40,7 +40,8 @@ API-key providers now use login-only credential sourcing: `pis --login openai|be
 ## Development checks
 
 ```sh
-npm run check
+npm run check         # automatic JS/shell syntax discovery + offline tests
+npm run format:check  # pinned development-only Prettier; npm ci first
 npm run test:web       # optional ws package installed under web/
 PIS_PI_PACKAGE=/path/to/installed/pi-package npm run test:rpc-compat
 npm run test:integration  # explicitly opt-in real rootless Podman/fake services
@@ -49,7 +50,7 @@ npm run test:storage      # separate, disk-heavy legacy/new image benchmark
 
 - During extended-Markdown verification, one full parallel run failed the pre-existing dummy-quota assertion in `test/web-app.test.js` (`resumes` was 2 instead of 1, before the new Markdown event/assertions). The isolated app test and a complete rerun passed; no quota/resume behavior was changed or assertion relaxed. Treat this as an intermittent test/runtime issue to investigate if it recurs, not proof that quota resumption is universally race-free.
 - Ordinary checks use fakes/local sockets/subprocesses, with **no live/paid model calls**. Without optional `web/node_modules/ws`, web transport/CLI tests explicitly skip; pure helpers and core checks remain available.
-- Latest ordinary result after reply usage display: **315 tests, 304 passed, 11 skipped** with the optional web dependency installed. Keep this number current only when reporting a fresh check, not as a permanent coverage guarantee.
+- Latest ordinary result after automatic syntax checks: **318 tests, 307 passed, 11 skipped** with the optional web dependency installed. Keep this number current only when reporting a fresh check, not as a permanent coverage guarantee.
 - The isolated no-model RPC state/history/EOF probe passed against installed **Pi 1.5.0** after this parser change, with no network attempts. Earlier probes ran 1.5.2; source image pin is still 1.5.0. The probe does not exercise giant real session records or container lifecycle.
 - Full rootless Podman image/storage/update/project RPC tests were **not run in the development sandbox**. The new storage layout has unit/fake-engine tests and an opt-in host benchmark, **no measured physical saving** yet. Read its free-space guard/cleanup limits before running it.
 - App tests run the actual browser module through real local HTTP/WebSockets in a DOM shim, not a graphical browser. Host reports confirm some real browser/agent flows; full CSP/cookies/layout/accessibility/mobile and crash/long-running lifecycle still need verification.
