@@ -29,10 +29,11 @@ export async function pairAgent(
           ? AbortSignal.any([signal, AbortSignal.timeout(5000)])
           : AbortSignal.timeout(5000),
       });
+      // Acquire before status checks so refusal/conflict bodies are cancelled too.
+      reader = response.body?.getReader();
       if (response.status === 409)
         throw Object.assign(new Error('Registration conflict.'), { code: 'ENROLLMENT_CONFLICT' });
       assert([200, 201, 202].includes(response.status) && !response.redirected, 'Pairing refused.');
-      reader = response.body?.getReader();
       assert(reader, 'Missing pairing response.');
       const chunks = [];
       let bytes = 0;
@@ -58,6 +59,8 @@ export async function pairAgent(
       if (reader) {
         try {
           await reader.cancel();
+        } catch {
+          // Cleanup must not replace a bounded error or confirmed collection.
         } finally {
           reader.releaseLock();
         }
