@@ -3,6 +3,7 @@ import path from 'node:path';
 import net from 'node:net';
 import dns from 'node:dns/promises';
 import { assert, atomicWrite, withLock } from './util.js';
+import { readTerminalLine } from './terminal-input.js';
 
 export const API_PRESETS = Object.freeze({
   openai: { url: 'https://api.openai.com/v1' },
@@ -258,66 +259,6 @@ export function apiProfileStatus(store) {
   });
 }
 
-function terminalQuestion(input, output, prompt, { hidden = false, defaultValue = '' } = {}) {
-  return new Promise((resolve, reject) => {
-    let value = '';
-    let settled = false;
-    output.write(prompt);
-    input.setRawMode(true);
-    input.resume();
-    const cleanup = () => {
-      if (settled) return;
-      settled = true;
-      input.off('data', onData);
-      input.off('end', onEnd);
-      input.off('error', onEnd);
-      process.off('SIGINT', onSignal);
-      process.off('SIGTERM', onSignal);
-      input.setRawMode(false);
-      input.pause();
-      output.write('\n');
-    };
-    const onSignal = () => {
-      cleanup();
-      reject(new Error('Login cancelled.'));
-    };
-    const onEnd = () => {
-      cleanup();
-      reject(new Error('Login cancelled.'));
-    };
-    const onData = (chunk) => {
-      for (const char of chunk.toString('utf8')) {
-        if (char === '\r' || char === '\n') {
-          cleanup();
-          resolve(value || defaultValue);
-          return;
-        }
-        if (char === '\u0003' || char === '\u0004') {
-          cleanup();
-          reject(new Error('Login cancelled.'));
-          return;
-        }
-        if (char === '\u007f' || char === '\b') {
-          if (value) {
-            value = value.slice(0, -1);
-            if (!hidden) output.write('\b \b');
-          }
-          continue;
-        }
-        if (char >= ' ' && char !== '\u007f') {
-          value += char;
-          if (!hidden) output.write(char);
-        }
-      }
-    };
-    process.once('SIGINT', onSignal);
-    process.once('SIGTERM', onSignal);
-    input.on('data', onData);
-    input.once('end', onEnd);
-    input.once('error', onEnd);
-  });
-}
-
 export async function promptApiProfile(
   store,
   name,
@@ -328,7 +269,15 @@ export async function promptApiProfile(
     input.isTTY && output.isTTY && input.setRawMode,
     'API-key login requires an interactive terminal.',
   );
-  const ask = (prompt, options) => terminalQuestion(input, output, prompt, options);
+  const ask = (prompt, options) =>
+    readTerminalLine({
+      input,
+      output,
+      prompt,
+      hidden: false,
+      cancelError: 'Login cancelled.',
+      ...options,
+    });
   const presetUrl = API_PRESETS[name].url;
   const url =
     name === 'custom'
@@ -360,6 +309,6 @@ export async function promptApiProfile(
       models.push({ id, contextWindow, maxTokens, images, reasoning });
     }
   }
-  const key = await ask('API key (hidden): ', { hidden: true });
+  const key = await ask('API key (hidden): ', { hidden: true, maxBytes: 4096 });
   await saveApiProfile(store, name, url, key, models);
 }

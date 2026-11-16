@@ -7,65 +7,7 @@ import { STARTUP_LABELS, startupFailure } from './public/startup.js';
 import { resolveWebProjects } from '../src/project-rpc.js';
 import { createDiagnostics } from './diagnostics.js';
 
-async function readPassword(piped) {
-  const input = process.stdin,
-    output = process.stderr;
-  if (piped) {
-    let text = '';
-    for await (const chunk of input) {
-      text += chunk;
-      if (Buffer.byteLength(text) > 1026) throw new Error('Password input too large.');
-    }
-    if (/\r?\n$/.test(text)) text = text.replace(/\r?\n$/, '');
-    if (/[\r\n]/.test(text)) throw new Error('Provide one password line.');
-    return text;
-  }
-  if (!input.isTTY || !output.isTTY)
-    throw new Error('Use a terminal or explicit --password-stdin.');
-  output.write(
-    'Adminlösenord (minst 20 tecken, dolt; Enter genererar och visar ett tillfälligt lösenord): ',
-  );
-  return new Promise((resolve, reject) => {
-    let text = '';
-    const wasRaw = input.isRaw;
-    const finish = (error) => {
-      input.off('data', onData);
-      input.off('end', onEnd);
-      for (const signal of ['SIGTERM', 'SIGHUP']) process.off(signal, onSignal);
-      input.setRawMode(Boolean(wasRaw));
-      input.pause();
-      output.write('\n');
-      if (error) reject(error);
-      else resolve(text);
-    };
-    const onEnd = () => finish(new Error('Password input closed.'));
-    const onSignal = () => finish(new Error('Cancelled.'));
-    const onData = (chunk) => {
-      for (const char of chunk) {
-        if (char === '\x03' || char === '\x04') {
-          finish(new Error('Cancelled.'));
-          return;
-        }
-        if (char === '\r' || char === '\n') {
-          finish();
-          return;
-        }
-        if (char === '\x7f' || char === '\b') text = Array.from(text).slice(0, -1).join('');
-        else if (char >= ' ') text += char;
-        if (Buffer.byteLength(text) > 1024) {
-          finish(new Error('Password input too large.'));
-          return;
-        }
-      }
-    };
-    for (const signal of ['SIGTERM', 'SIGHUP']) process.on(signal, onSignal);
-    input.setEncoding('utf8');
-    input.setRawMode(true);
-    input.on('data', onData);
-    input.once('end', onEnd);
-    input.resume();
-  });
-}
+import { readAdminPassword } from './secret-input.js';
 const options = {
   port: 43128,
   agents: 2,
@@ -148,7 +90,7 @@ try {
     console.error(
       'Säker diagnostik aktiverad: dela bara rader med prefixet "pis web diagnostic:". Dela inte lösenordsraden, hela logg-/state-mappar eller råa nätverkssvar.',
     );
-  let password = await readPassword(options.piped),
+  let password = await readAdminPassword({ piped: options.piped }),
     generatedPassword;
   if (password === '') {
     password = randomKey();
