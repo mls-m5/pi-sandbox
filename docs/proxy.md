@@ -1,8 +1,8 @@
-# Host-side API credential proxy
+# Host-side model API proxy
 
-New projects default to the Codex subscription proxy. Existing projects keep their previous credential mode until explicitly edited. OpenAI API keys (`openai`), Berget (`berget`), Mistral API keys (`mistral`), host-managed OpenAI-compatible custom endpoints (`custom`), and ChatGPT/Codex subscription OAuth (`openai-codex`) are supported. This is not a general-purpose HTTP proxy.
+New projects default to the Codex subscription proxy. Existing projects keep their previous credential mode until explicitly edited. OpenAI API keys (`openai`), Berget (`berget`), Mistral API keys (`mistral`), host-managed OpenAI-compatible custom endpoints (`custom`), keyless local Ollama (`ollama`), and ChatGPT/Codex subscription OAuth (`openai-codex`) are supported. This is not a general-purpose HTTP proxy.
 
-This page primarily describes API-key setup and shared policies. For host Codex sign-in/import/refresh and synthetic JWTs, see [Codex subscription setup](codex.md).
+This page describes API-key/local Ollama setup and shared policies. For host Codex sign-in/import/refresh and synthetic JWTs, see [Codex subscription setup](codex.md).
 
 ## Enable it
 
@@ -45,7 +45,8 @@ Manage host-only API-key profiles explicitly:
 pis --login openai       # fixed OpenAI URL, hidden key prompt
 pis --login berget       # Berget URL, hidden key prompt
 pis --login-mistral      # Mistral API key, hidden prompt (alias: pis --login mistral)
-pis --login custom       # trusted custom endpoint and model setup, then hidden key
+pis --login custom       # trusted public HTTPS endpoint/model setup, then hidden key
+pis --login ollama       # keyless model setup for literal loopback HTTP on the agent host
 pis --login-status       # provider/profile presence only, no values
 pis --logout berget      # removes local copy; does not revoke the provider key
 ```
@@ -59,6 +60,50 @@ For Berget, run `pis --login berget`, set `credentials.env` to `[]` and use `{ "
 `pis --login custom` asks for an HTTPS API base URL ending in `/v1`, confirmation of tool-call support, verified model IDs, published context/output limits, image-input and reasoning capabilities, and a hidden API key. Only OpenAI Chat Completions is supported; no discovery, model-list, or live validation request is made. The custom model catalog belongs to the host profile, not `credentials.proxy.models`. Project config only needs `provider: "custom"` (a matching legacy `profile` is optional), never the endpoint or key.
 
 Custom destinations must use HTTPS on port 443, with no URL credentials, query, or fragment, and a safe path prefix ending in `/v1`. IP literals, local hostnames, and DNS results in private/special-use ranges are rejected. DNS answers are resolved and pinned when the host proxy starts; requests use only `/v1/chat/completions` with the configured base path prefix and never follow redirects. Loopback HTTP remains available only to the internal fake-service test seam. This does not constrain container egress generally.
+
+## Local Ollama (explicit host-loopback profile)
+
+Run these on the **host owning the Pi project**, not inside the sandbox. Start/configure Ollama separately on loopback; pis does not install/start Ollama, download models, change its listener/firewall or run a health/inference probe. If the web controller/browser is on another machine, `127.0.0.1` here still means the agent host, not that controller/browser.
+
+```sh
+pis --login ollama
+pis --edit
+```
+
+Accept the default `http://127.0.0.1:11434/v1` or supply another literal loopback HTTP `/v1` address. Enter installed model tags (for example `qwen2.5-coder:7b`), confirm tool/function-call support and give each model's **actual Ollama-configured context window (`num_ctx`) and output budget**, plus image/reasoning capabilities. These are user-provided limits, not discovered/certified model maxima. Wrong limits can make compaction/context percentage misleading or cause rejected/truncated requests. Pi must use a model that genuinely supports streaming/tool calls. No API key is requested or stored, and login makes no model-list, download or completion request.
+
+Use this project configuration:
+
+```json
+"credentials": {
+  "env": [],
+  "proxy": { "provider": "ollama", "models": [], "maxRequests": 1000, "maxConcurrent": 4 }
+}
+```
+
+Select the Ollama model explicitly in Pi (`/model`) or launch interactively with:
+
+```sh
+pis -- --model ollama/qwen2.5-coder:7b
+```
+
+Replace that tag with your installed/profile-configured model. Provider setup does **not** silently change an existing saved Pi model/session. For web RPC, choose/save the model from Pi's terminal UI first (Ctrl+S in the model selector saves the startup choice), then connect the project normally; web runtime startup flags remain fixed. No real credentials or destination URL belong in project JSON or mounted Pi auth files.
+
+The host stores a private 0600 `$PIS_HOME/auth/ollama-local.json` (0700 auth directory) with version/provider, `auth: "none"`, URL and bounded model catalogue, never an API key. `--login-status` reports `profilePresent: true`, `credentialPresent: false`; that is expected and is **not** an online availability check. `pis --logout ollama` removes only this setup, not the Ollama service/models, other providers, active proxy or explicit project selection. Profile changes apply on the next proxy/agent launch.
+
+The URL policy is intentionally separate from public `custom`: only literal `http://127.0.0.1[:PORT]/v1` or `http://[::1][:PORT]/v1` is accepted. DNS names (including `localhost`), LAN/metadata/unspecified/mapped addresses, unusual IP spellings, credentials, queries/fragments, encoded/traversal/other paths and redirects are rejected. The local HTTP agent does not inherit environment/global-agent proxy routing. Public `custom` still requires public-DNS HTTPS/443 plus checked/pinned public resolution; no private-address exception is added there. Authenticated local reverse proxies, arbitrary LAN endpoints and managed SSH tunnels for Ollama are not implemented.
+
+Sandbox clients receive only the usual per-run dummy capability and read-only `ollama` model/auth overlays through the existing Unix relay; no host network mode, engine socket, new mount or direct backend port is exposed. Only `POST /v1/chat/completions` is admitted. No upstream Authorization/cookies/client API keys are forwarded. `/api/pull`, tags/show/create/delete routes, `/v1/models`, Responses, arbitrary URLs and CONNECT/upgrades remain blocked. Empty project `models` means **only configured profile model IDs** for Ollama; a nonempty list must be a subset. Existing request/concurrency/body/response/time limits and generic errors still apply. Startup itself makes no backend request. The OpenAI-compatible overlay uses `max_tokens`, system roles, no `store` or unverified reasoning-effort control; reasoning/vision declarations do not prove hardware/backend support.
+
+Loopback restricts the proxy hop, not Ollama's own behavior: a cloud-backed Ollama tag or modified service could send data elsewhere. Choose genuinely local models if that is required. Local inference can still consume significant CPU/GPU/RAM and permits the model's ordinary sandbox tool capabilities; it does not make tools/web extensions network-offline or provide an unattended host approval mechanism. Ollama does not supply the provider-hosted Responses/web-search API.
+
+Verification: unit/CLI/profile tests and a fake local HTTP upstream cover strict addresses, keyless storage, other-login preservation, private files, exact routes/allowlist, capability authentication, header stripping, stream forwarding and redirect rejection. An opt-in installed-Pi 1.5.2 fake-fetch probe verified `max_tokens`/roles and streamed tool-call parsing with real sockets blocked, without contacting any model (image pin unchanged):
+
+```sh
+PIS_PI_PACKAGE=/path/to/installed/pi-package node --test test/ollama-compatibility.test.js
+```
+
+Actual Ollama/model/hardware behavior and the real-Podman relay remain host verification gates. No live local/paid model was used as a smoke test.
 
 ## Berget model catalogue
 
@@ -146,16 +191,18 @@ Allowed upstream requests:
 | `openai` | GET | `/v1/models` |
 | `berget` | POST | `/v1/chat/completions` |
 | `custom` | POST | `/v1/chat/completions` |
+| `mistral` | POST | `/v1/chat/completions` |
+| `ollama` | POST | `/v1/chat/completions` |
 | `openai-codex` | POST | `/backend-api/codex/responses` |
 | `openai-codex` | GET | `/backend-api/wham/usage` |
 
-Modes are separate: a Codex capability cannot call the standard API routes, or vice versa. Codex routes are fixed to `https://chatgpt.com`; OpenAI routes are fixed to `https://api.openai.com`; Berget routes are fixed to `https://api.berget.ai`. A custom destination is available only through the explicit, private host profile described above.
+Modes are separate: a Codex capability cannot call the standard API routes, or vice versa. Codex routes are fixed to `https://chatgpt.com`; OpenAI routes are fixed to `https://api.openai.com`; Berget routes are fixed to `https://api.berget.ai`. Custom and literal-loopback Ollama destinations are available only through their explicit, private host profiles described above.
 
-All other paths, query strings, absolute URLs, HTTP CONNECT, and WebSocket upgrades are rejected. File management, response retrieval/deletion, images, audio, and Decisions/classifier endpoints are not supported yet. Sandbox requests and project JSON cannot select another upstream; only an explicitly managed host profile can configure a custom destination.
+All other paths, query strings, absolute URLs, HTTP CONNECT, and WebSocket upgrades are rejected. File management, response retrieval/deletion, images, audio, and Decisions/classifier endpoints are not supported yet. Sandbox requests and project JSON cannot select another upstream; only an explicitly managed host profile can configure a custom or local Ollama destination.
 
 The Codex usage endpoint returns only validated numeric quota/reset windows and optional boolean `allowed`/`limit_reached` flags; identity, email, plan metadata, arbitrary fields, and tokens are discarded. A narrow container-only fetch adapter supports usage consumers. The opt-in host [`--wait-codex` startup gate](codex-wait.md) uses the same sanitized usage shape before opening a sandbox. Usage polls use the same capability, host refresh, limits, and request budget; no extra real credential is supplied to extensions.
 
-`credentials.proxy.models` is an exact allowlist for POST request model IDs; an empty array allows any model. `/v1/models` is available only in OpenAI mode and is not filtered, so selecting a model outside the allowlist results in a rejection when generating a response. Berget and custom modes use a host-side Pi model catalog; those definitions are separate from the request allowlist.
+`credentials.proxy.models` is an exact allowlist for POST request model IDs; an empty array allows any model except in Ollama mode, where it selects the configured host-profile catalogue. `/v1/models` is available only in OpenAI mode and is not filtered, so selecting a model outside the allowlist results in a rejection when generating a response. Berget and custom modes use a host-side Pi model catalog; those definitions are separate from the request allowlist.
 
 - `maxRequests`: total upstream attempts per launch, default 1000, configurable 1–100000. Model-list requests, failed upstream attempts, and SDK retries count too.
 - `maxConcurrent`: simultaneous accepted requests/uploads, default 4, configurable 1–64.

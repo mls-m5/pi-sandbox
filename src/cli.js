@@ -84,8 +84,8 @@ Usage:
   pis --codex-auto-switch off|on|NAME,NAME # opt-in quota-confirmed switching
   pis --login-mistral               # global Mistral API-key profile
   pis --logout-mistral
-  pis --login openai|berget|mistral|custom
-  pis --logout openai|berget|mistral|custom
+  pis --login openai|berget|mistral|custom|ollama
+  pis --logout openai|berget|mistral|custom|ollama
   pis --login-status
 
 --server or --connect must be the first argument. It starts the host loopback web server;
@@ -179,11 +179,14 @@ This requires saved sessions/extensions and host-confirmed exhaustion/availabili
 It sends one continuation prompt (uses model quota), not a replay of the original
 prompt/tools. Web/RPC mode does NOT support --auto-wait-codex.
 
-API providers: run --login openai|berget|mistral|custom, then set
+API providers: run --login openai|berget|mistral|custom|ollama, then set
 credentials.proxy.provider to that provider. Host login profiles are selected
 automatically; no keyEnv/environment-key source is supported.
 Mistral also accepts --login-mistral. Custom endpoints use --login custom.
 Only an explicit trusted host profile can select a custom destination.
+--login ollama stores a keyless loopback HTTP /v1 profile on the agent host;
+enter installed tool-capable model IDs and actual configured context limits.
+No live connection/model test, LAN access or public-custom URL relaxation.
 Never run as root. Mounted files and Claude Code's copied login tokens are accessible to the sandbox.
 `;
 
@@ -441,7 +444,7 @@ export async function main(argv = process.argv.slice(2)) {
     const provider = options.action === 'login-mistral' ? 'mistral' : options.target;
     await promptApiProfile(store, provider);
     console.log(
-      `Saved host ${provider} API-key profile. Set credentials.proxy.provider to ${provider} in pis --edit; its login profile is selected automatically. Remove any obsolete keyEnv field.`,
+      `Saved host ${provider} ${provider === 'ollama' ? 'local model' : 'API-key'} profile. Set credentials.proxy.provider to ${provider} in pis --edit; its login profile is selected automatically. Remove any obsolete keyEnv field.`,
     );
     return 0;
   }
@@ -449,7 +452,9 @@ export async function main(argv = process.argv.slice(2)) {
     const provider = options.action === 'logout-mistral' ? 'mistral' : options.target;
     await logoutApiProfile(store, provider);
     console.log(
-      `Removed host ${provider} API-key profile (the key is not revoked at the provider).`,
+      provider === 'ollama'
+        ? 'Removed local Ollama profile; the Ollama server and installed models are unchanged.'
+        : `Removed host ${provider} API-key profile (the key is not revoked at the provider).`,
     );
     return 0;
   }
@@ -647,7 +652,10 @@ export async function main(argv = process.argv.slice(2)) {
         ? { kind: 'host-oauth', provider: 'openai-codex', present: hasCodexCredential(store) }
         : config.credentials.proxy
           ? {
-              kind: 'host-api-key',
+              kind:
+                config.credentials.proxy.provider === 'ollama'
+                  ? 'host-local-model'
+                  : 'host-api-key',
               provider: config.credentials.proxy.provider,
               present: Boolean(readApiProfile(store, config.credentials.proxy.provider)),
             }

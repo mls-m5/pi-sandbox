@@ -164,13 +164,13 @@ export function validate(config, { storage, home = os.homedir(), identity, paths
       'credentials.proxy',
     );
     assert(
-      ['openai', 'openai-codex', 'berget', 'mistral', 'custom'].includes(proxy.provider),
-      'Proxy provider must be openai, berget, mistral, custom or openai-codex.',
+      ['openai', 'openai-codex', 'berget', 'mistral', 'custom', 'ollama'].includes(proxy.provider),
+      'Proxy provider must be openai, berget, mistral, custom, ollama or openai-codex.',
     );
     assert(
       proxy.profile === undefined ||
         (proxy.provider !== 'openai-codex' && proxy.profile === proxy.provider),
-      'Profile must match the API-key provider (openai, berget, mistral or custom).',
+      'Profile must match the host provider (openai, berget, mistral, custom or ollama).',
     );
 
     assert(
@@ -230,7 +230,7 @@ export function validate(config, { storage, home = os.homedir(), identity, paths
     if (config.examples.credentials !== undefined) {
       object(
         config.examples.credentials,
-        ['openai', 'berget', 'mistral', 'codex', 'direct'],
+        ['openai', 'berget', 'mistral', 'ollama', 'codex', 'direct'],
         'examples.credentials',
       );
       // Credential examples are inert JSON objects, not active credential modes.
@@ -304,6 +304,10 @@ export function completeConfig(input) {
     mistral: {
       env: [],
       proxy: { provider: 'mistral', models: [], maxRequests: 1000, maxConcurrent: 4 },
+    },
+    ollama: {
+      env: [],
+      proxy: { provider: 'ollama', models: [], maxRequests: 1000, maxConcurrent: 4 },
     },
     codex: {
       env: [],

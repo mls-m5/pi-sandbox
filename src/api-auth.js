@@ -10,6 +10,7 @@ export const API_PRESETS = Object.freeze({
   berget: { url: 'https://api.berget.ai/v1' },
   mistral: { url: 'https://api.mistral.ai/v1' },
   custom: {},
+  ollama: { url: 'http://127.0.0.1:11434/v1' },
 });
 
 export function validateApiBaseUrl(input) {
@@ -42,6 +43,19 @@ export function validateApiBaseUrl(input) {
   );
   url.pathname = url.pathname.replace(/\/$/, '');
   return url.toString().replace(/\/$/, '');
+}
+
+export function validateOllamaBaseUrl(input) {
+  assert(
+    typeof input === 'string' && input.length <= 256 && !/\s/.test(input),
+    'Invalid local Ollama URL.',
+  );
+  const match = /^http:\/\/(127\.0\.0\.1|\[::1\])(?::([1-9][0-9]{0,4}))?\/v1\/?$/.exec(input);
+  assert(
+    match && Number(match[2] || 80) <= 65535,
+    'Ollama URL must be literal loopback HTTP (127.0.0.1 or [::1]), optional port, and /v1; no credentials or other paths.',
+  );
+  return new URL(input).toString().replace(/\/$/, '');
 }
 
 function publicAddress(address) {
@@ -156,7 +170,7 @@ function validateModels(models) {
 function profilePath(store, name) {
   assert(
     Object.hasOwn(API_PRESETS, name),
-    'Unknown API-key profile. Choose openai, berget, mistral, or custom.',
+    'Unknown API-key profile. Choose openai, berget, mistral, custom, or ollama.',
   );
   const dir = path.join(store.root, 'auth');
   fs.mkdirSync(dir, { mode: 0o700, recursive: true });
@@ -168,7 +182,7 @@ function profilePath(store, name) {
       (stat.mode & 0o077) === 0,
     'Host auth directory must be private and owned by the current user.',
   );
-  return path.join(dir, `${name}-api-key.json`);
+  return path.join(dir, name === 'ollama' ? 'ollama-local.json' : `${name}-api-key.json`);
 }
 
 export function readApiProfile(store, name) {
@@ -197,21 +211,32 @@ export function readApiProfile(store, name) {
     assert(
       record.version === 1 &&
         record.provider === name &&
-        typeof record.key === 'string' &&
-        record.key.length >= 8 &&
-        record.key.length <= 4096,
+        (name === 'ollama'
+          ? record.auth === 'none' &&
+            !Object.hasOwn(record, 'key') &&
+            Object.keys(record).every((key) =>
+              ['version', 'provider', 'url', 'auth', 'api', 'models'].includes(key),
+            )
+          : typeof record.key === 'string' && record.key.length >= 8 && record.key.length <= 4096),
       'Invalid host API-key profile.',
     );
-    if (name === 'custom') {
+    if (name === 'custom' || name === 'ollama') {
       assert(
-        record.url === validateApiBaseUrl(record.url) && record.api === 'openai-completions',
+        record.url ===
+          (name === 'ollama'
+            ? validateOllamaBaseUrl(record.url)
+            : validateApiBaseUrl(record.url)) && record.api === 'openai-completions',
         'Invalid custom API profile.',
       );
       record.models = validateModels(record.models);
     } else assert(record.url === API_PRESETS[name].url, 'Invalid host API-key profile.');
     return record;
   } catch {
-    throw new Error('Cannot read host API-key profile (invalid or unsafe file).');
+    throw new Error(
+      name === 'ollama'
+        ? 'Cannot read local Ollama profile (invalid or unsafe file).'
+        : 'Cannot read host API-key profile (invalid or unsafe file).',
+    );
   } finally {
     fs.closeSync(fd);
   }
@@ -219,8 +244,8 @@ export function readApiProfile(store, name) {
 
 export async function saveApiProfile(store, name, url, key, models) {
   const file = profilePath(store, name);
-  if (name === 'custom') {
-    url = validateApiBaseUrl(url);
+  if (name === 'custom' || name === 'ollama') {
+    url = name === 'ollama' ? validateOllamaBaseUrl(url) : validateApiBaseUrl(url);
     models = validateModels(models);
   } else
     assert(
@@ -228,15 +253,20 @@ export async function saveApiProfile(store, name, url, key, models) {
       `The ${name} preset only permits ${API_PRESETS[name].url}.`,
     );
   assert(
-    typeof key === 'string' && key.length >= 8 && key.length <= 4096 && /^[\x21-\x7e]+$/.test(key),
-    'Invalid API key.',
+    name === 'ollama'
+      ? key === undefined
+      : typeof key === 'string' &&
+          key.length >= 8 &&
+          key.length <= 4096 &&
+          /^[\x21-\x7e]+$/.test(key),
+    name === 'ollama' ? 'Local Ollama profiles do not accept API keys.' : 'Invalid API key.',
   );
   const profile = {
     version: 1,
     provider: name,
     url,
-    ...(name === 'custom' ? { api: 'openai-completions', models } : {}),
-    key,
+    ...(['custom', 'ollama'].includes(name) ? { api: 'openai-completions', models } : {}),
+    ...(name === 'ollama' ? { auth: 'none' } : { key }),
   };
   await withLock(`${file}.lock`, async () => {
     readApiProfile(store, name); // Reject unsafe existing files before replacement.
@@ -255,7 +285,11 @@ export async function logoutApiProfile(store, name) {
 export function apiProfileStatus(store) {
   return Object.keys(API_PRESETS).map((provider) => {
     const profilePresent = Boolean(readApiProfile(store, provider));
-    return { provider, profilePresent, credentialPresent: profilePresent };
+    return {
+      provider,
+      profilePresent,
+      credentialPresent: provider === 'ollama' ? false : profilePresent,
+    };
   });
 }
 
@@ -267,7 +301,9 @@ export async function promptApiProfile(
   profilePath(store, name);
   assert(
     input.isTTY && output.isTTY && input.setRawMode,
-    'API-key login requires an interactive terminal.',
+    name === 'ollama'
+      ? 'Local model setup requires an interactive terminal.'
+      : 'API-key login requires an interactive terminal.',
   );
   const ask = (prompt, options) =>
     readTerminalLine({
@@ -282,14 +318,20 @@ export async function promptApiProfile(
   const url =
     name === 'custom'
       ? await ask('API base URL (HTTPS, public host, /v1 path): ')
-      : await ask(`API URL [${presetUrl}]: `, { defaultValue: presetUrl });
+      : await ask(
+          `${name === 'ollama' ? 'Local Ollama /v1 URL on this agent host' : 'API URL'} [${presetUrl}]: `,
+          { defaultValue: presetUrl },
+        );
+  if (name === 'ollama') validateOllamaBaseUrl(url);
   let models;
-  if (name === 'custom') {
+  if (name === 'custom' || name === 'ollama') {
     output.write(
-      'Custom endpoints must support OpenAI Chat Completions, streaming, and tool calls. No connection test or model discovery request is made.\n',
+      `${name === 'ollama' ? 'Ollama models' : 'Custom endpoints'} must support OpenAI Chat Completions, streaming, and tool calls. No connection test or model discovery request is made.\n`,
     );
     output.write(
-      'Enter verified model IDs; provide published context/output limits and model capabilities.\n',
+      name === 'ollama'
+        ? 'No API key or connection/model test is used. Enter installed Ollama model tags and the ACTUAL configured context (num_ctx) / output limits, not an assumed catalogue maximum.\n'
+        : 'Enter verified model IDs; provide published context/output limits and model capabilities.\n',
     );
     const toolSupport =
       (
@@ -309,6 +351,9 @@ export async function promptApiProfile(
       models.push({ id, contextWindow, maxTokens, images, reasoning });
     }
   }
-  const key = await ask('API key (hidden): ', { hidden: true, maxBytes: 4096 });
+  const key =
+    name === 'ollama'
+      ? undefined
+      : await ask('API key (hidden): ', { hidden: true, maxBytes: 4096 });
   await saveApiProfile(store, name, url, key, models);
 }

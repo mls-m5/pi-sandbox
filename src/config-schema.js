@@ -3,7 +3,7 @@ import { DEFAULT_EXTENSIONS } from './extensions.js';
 export const SCHEMA_REFERENCE = './project.schema.json';
 export const HINTS = {
   credentials:
-    'New projects default to openai-codex host OAuth. Use pis --login openai|berget|mistral|custom, then select that provider; its matching host profile is used automatically. No keys/environment-key sources belong in project configuration. Omit proxy for credential-free launches. Direct credential forwarding is disabled; env must be []. Examples below are inert.',
+    'New projects default to openai-codex host OAuth. Use pis --login openai|berget|mistral|custom|ollama, then select that provider (ollama is keyless host-loopback only); its matching host profile is used automatically. No keys/environment-key sources belong in project configuration. Omit proxy for credential-free launches. Direct credential forwarding is disabled; env must be []. Examples below are inert.',
   extensions:
     'Pi install sources baked into the image, e.g. npm:pi-web-access@0.40.0. Use [] to disable defaults. Changes rebuild the image; no source paths or -e flags are needed.',
   updates:
@@ -90,11 +90,11 @@ export const PROJECT_SCHEMA = {
           required: ['provider'],
           properties: {
             provider: {
-              enum: ['openai', 'berget', 'mistral', 'custom', 'openai-codex'],
-              description: 'API-key or host OAuth proxy.',
+              enum: ['openai', 'berget', 'mistral', 'custom', 'ollama', 'openai-codex'],
+              description: 'API-key, host OAuth or explicitly configured local Ollama proxy.',
             },
             profile: {
-              enum: ['openai', 'berget', 'mistral', 'custom'],
+              enum: ['openai', 'berget', 'mistral', 'custom', 'ollama'],
               description:
                 'Optional legacy alias matching the provider; login profile is selected automatically. Never stores a key.',
             },
@@ -102,7 +102,8 @@ export const PROJECT_SCHEMA = {
               type: 'array',
               items: { type: 'string' },
               default: [],
-              description: 'Exact model allowlist; empty allows any model.',
+              description:
+                'Exact model allowlist; empty allows any model except Ollama, which defaults to its configured host-profile models.',
             },
             discoverModels: {
               type: 'boolean',

@@ -6,6 +6,7 @@ import { Transform, pipeline } from 'node:stream';
 import { zstdDecompressSync } from 'node:zlib';
 import { codexClaims, dummyCodexToken } from './codex-auth.js';
 import { assert } from './util.js';
+import { validateOllamaBaseUrl } from './api-auth.js';
 import { codexUsageSummary } from './codex-usage.js';
 export { codexUsageSummary } from './codex-usage.js';
 
@@ -24,6 +25,10 @@ const BERGET_ROUTES = new Set(['POST /v1/chat/completions']);
 const CODEX_ROUTES = new Set(['POST /backend-api/codex/responses', 'GET /backend-api/wham/usage']);
 
 function credentialFor(provider, apiKey) {
+  if (provider === 'ollama') {
+    assert(apiKey === undefined, 'Local Ollama does not accept a host API key.');
+    return {};
+  }
   if (provider === 'openai-codex') return { apiKey, ...codexClaims(apiKey) };
   assert(
     typeof apiKey === 'string' &&
@@ -118,7 +123,8 @@ function body(req, maxBytes) {
 }
 
 /** Host-only credential service. Production callers use fixed OpenAI/Berget
- * destinations or an explicitly stored, validated custom API profile. The
+ * destinations, a validated custom API profile, or explicit literal-loopback
+ * Ollama (no upstream credentials). The
  * upstream parameter and limit overrides exist only for local fake-service tests.
  * No headers, URLs, payloads, or credentials are logged or included in errors.
  */
@@ -139,9 +145,26 @@ export async function startOpenAIProxy({
   timeoutMs = 300_000,
 }) {
   assert(
-    ['openai', 'openai-codex', 'berget', 'mistral', 'custom'].includes(provider),
+    ['openai', 'openai-codex', 'berget', 'mistral', 'custom', 'ollama'].includes(provider),
     'Unsupported proxy provider.',
   );
+  const localOllama = provider === 'ollama';
+  if (localOllama) {
+    assert(
+      !upstream && !lookup && !getCredentials,
+      'Local Ollama cannot override transport or credential lookup.',
+    );
+    assert(
+      upstreamBaseUrl && validateOllamaBaseUrl(upstreamBaseUrl) === upstreamBaseUrl,
+      'Local Ollama requires an explicit canonical loopback /v1 profile URL.',
+    );
+    assert(
+      Array.isArray(models) &&
+        models.length > 0 &&
+        models.every((model) => typeof model === 'string' && model.length > 0),
+      'Local Ollama requires a nonempty configured model allowlist.',
+    );
+  }
   const initialCredential = credentialFor(provider, apiKey);
   token ??=
     provider === 'openai-codex' ? dummyCodexToken() : `sk-pis-${randomBytes(32).toString('hex')}`;
@@ -152,7 +175,7 @@ export async function startOpenAIProxy({
   const routes =
     provider === 'openai-codex'
       ? CODEX_ROUTES
-      : ['berget', 'mistral', 'custom'].includes(provider)
+      : ['berget', 'mistral', 'custom', 'ollama'].includes(provider)
         ? BERGET_ROUTES
         : API_ROUTES;
   const fixedBase =
@@ -172,8 +195,10 @@ export async function startOpenAIProxy({
   );
   assert(
     origin.protocol === 'https:' ||
-      (testUpstream && origin.protocol === 'http:' && origin.hostname === '127.0.0.1'),
-    'Upstream requires HTTPS (loopback HTTP is test-only).',
+      ((testUpstream || localOllama) &&
+        origin.protocol === 'http:' &&
+        ['127.0.0.1', ...(localOllama ? ['[::1]'] : [])].includes(origin.hostname)),
+    'Upstream requires HTTPS or an explicitly configured local Ollama endpoint.',
   );
   if (provider === 'openai-codex')
     assert(origin.pathname === '/', 'Codex upstream must be an origin.');
@@ -192,6 +217,10 @@ export async function startOpenAIProxy({
           : '/v1'
         : origin.pathname;
   const upstreamLookup = lookup ? { lookup } : {};
+  // Do not let host HTTP_PROXY/global-agent settings turn loopback into a remote hop.
+  const localAgent = localOllama
+    ? new http.Agent({ keepAlive: false, maxSockets: maxConcurrent, proxyEnv: {} })
+    : undefined;
   const expected = Buffer.from(`Bearer ${token}`);
   const active = new Set(),
     sockets = new Set();
@@ -316,8 +345,9 @@ export async function startOpenAIProxy({
         {
           method: req.method,
           ...upstreamLookup,
+          ...(localAgent ? { agent: localAgent } : {}),
           headers: {
-            authorization: `Bearer ${credential.apiKey}`,
+            ...(!localOllama ? { authorization: `Bearer ${credential.apiKey}` } : {}),
             ...(provider === 'openai-codex'
               ? {
                   'chatgpt-account-id': credential.accountId,
@@ -383,7 +413,9 @@ export async function startOpenAIProxy({
               : 'application/json',
             'cache-control': 'no-store',
           });
-          pipeline(upstreamResponse, new SecretRedactor(credential.apiKey), res, () => finish());
+          pipeline(upstreamResponse, new SecretRedactor(credential.apiKey || token), res, () =>
+            finish(),
+          );
         },
       );
       active.add(outgoing);
@@ -424,6 +456,7 @@ export async function startOpenAIProxy({
     token,
     async close() {
       for (const outgoing of active) outgoing.destroy();
+      localAgent?.destroy();
       for (const socket of sockets) socket.destroy();
       await new Promise((resolve) => server.close(resolve));
       fs.rmSync(socketPath, { force: true });

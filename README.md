@@ -2,7 +2,7 @@
 
 `pis` is a Linux-only CLI that runs the entire [Pi coding agent](https://pi.dev) inside a rootless Podman container. An experimental `--agent claude` mode runs official Claude Code with separate state and a different credential boundary.
 
-**Status: working initial implementation.** Project registration, editable configuration, custom images, additional mounts, persistent Pi state, shell/exec modes, and diagnostics are implemented. Host-side OpenAI and Berget API-key proxy modes and ChatGPT/Codex OAuth proxy mode are implemented. JSON extension install sources, build-time installation, and automatic configuration hints/schema completion are implemented.
+**Status: working initial implementation.** Project registration, editable configuration, custom images, additional mounts, persistent Pi state, shell/exec modes, and diagnostics are implemented. Host-side API-key proxy modes, ChatGPT/Codex OAuth and explicit keyless local Ollama profiles are implemented. JSON extension install sources, build-time installation, and automatic configuration hints/schema completion are implemented.
 
 ## Requirements
 
@@ -179,6 +179,14 @@ Then run `pis --fresh -- --model berget/google/gemma-4-31B-it`, or use `/model` 
 
 For Mistral API-key access (not a subscription), run `pis --login-mistral` on the host and change the project's `credentials.proxy` to `{ "provider": "mistral", "models": [] }` in `pis --edit`. Remove `keyEnv` and retain `credentials.env: []`. Use `pis --fresh` and select a `mistral` model in `/model`. The key stays in private shared host storage and only native `POST /v1/chat/completions` is proxied; `pis --logout-mistral` removes the local copy without revoking it. A future subscription login would require a separate authentication flow. Other API-key profiles can be managed with `pis --login openai` / `pis --logout openai`. For an OpenAI-compatible custom endpoint, `pis --login custom` asks for an HTTPS base URL ending in `/v1`, tool-call support, verified model IDs and metadata, then a hidden key. Custom profiles support only OpenAI Chat Completions, require public DNS addresses on port 443, and reject local/private destinations. Project config selects `provider: "custom"`, whose saved login profile is used automatically; the URL, model catalog, and key are not stored in project JSON. There is no automatic model discovery or connection test. See [proxy behavior and limits](docs/proxy.md#host-api-key-profiles).
 
+## Local Ollama
+
+Run `pis --login ollama` on the agent host. It defaults to `http://127.0.0.1:11434/v1` and asks for installed tool-capable model tags and **actual configured** context/output limits, not an API key. Start Ollama separately; setup makes no connection/inference/download request.
+
+In `pis --edit`, set `credentials.env` to `[]` and `credentials.proxy` to `{ "provider": "ollama", "models": [] }`. Then select the model explicitly, e.g. `pis -- --model ollama/qwen2.5-coder:7b` (replace the tag with yours). Existing saved model/session choices are not automatically replaced. For web use, select/save it in Pi's terminal model picker first.
+
+Only literal host-loopback HTTP `/v1` is allowed (`127.0.0.1` or `[::1]`, optional port); public `custom` HTTPS rules remain unchanged. The sandbox uses the existing capability/Unix relay, not direct host networking. Only Chat Completions and configured profile models are admitted; Ollama management/download routes are blocked and no upstream auth is sent. `pis --logout ollama` removes the private setup, not the service/models or other logins. A loopback endpoint does not prove a tag is locally hosted—avoid cloud tags if required. See [setup, limits and verification gaps](docs/proxy.md#local-ollama-explicit-host-loopback-profile).
+
 ## Project discovery
 
 Projects are explicitly registered, not inferred from Git repositories.
@@ -243,7 +251,7 @@ Generated configuration also contains an **inert `examples` section**. Copy exam
 - Changes to image settings or extension install sources trigger a build on the next launch; mounts, credentials, hints, and formatting do not.
 - Tools installed into the disposable root filesystem disappear with the container. Manual Pi packages installed into the persistent sandbox home remain in project state.
 - Credential configuration selects a provider, never key values or environment-key sources. New projects default to the `openai-codex` host OAuth proxy; run `pis --login-codex` before launching. Proxy mode never falls back to exposing credentials. Direct host credential forwarding is disabled: `credentials.env` must be `[]`, even without a proxy. For OpenAI API-key access, run `pis --login openai` and use `credentials.proxy: { "provider": "openai" }`. Old `keyEnv` fields must be explicitly removed; environment API keys are no longer read. Matching legacy `profile` fields are optional compatibility aliases. Legacy direct configurations must be updated explicitly; see [migration instructions](docs/proxy.md#enable-it).
-- OpenAI API-key mode supports Responses, Chat Completions, and model listing; Berget, Mistral and custom profiles support Chat Completions only; Codex mode supports its separate ChatGPT Responses endpoint with host OAuth refresh. API providers use only their matching saved login profile; missing profiles fail closed without environment fallback. All modes have per-run request/concurrency limits; POST model allowlists are optional. See [proxy behavior and limitations](docs/proxy.md).
+- OpenAI API-key mode supports Responses, Chat Completions, and model listing; Berget, Mistral, custom and local Ollama profiles support Chat Completions only; Codex mode supports its separate ChatGPT Responses endpoint with host OAuth refresh. API providers use only their matching saved login profile; missing profiles fail closed without environment fallback. All modes have per-run request/concurrency limits; POST model allowlists are optional except that Ollama always restricts to its configured host-profile models. See [proxy behavior and limitations](docs/proxy.md).
 
 ```sh
 pis --check                    # Validate configuration and active paths
@@ -339,6 +347,7 @@ Default: `~/.local/share/pis/`. Override with `$PIS_HOME`, or `$XDG_DATA_HOME/pi
   auth/openai-api-key.json       # Optional private API-key profile; NEVER mounted
   auth/berget-api-key.json       # Optional private API-key profile; NEVER mounted
   auth/custom-api-key.json       # Optional private endpoint/model/key profile; NEVER mounted
+  auth/ollama-local.json         # Optional private keyless local URL/model setup; NEVER mounted
   projects/k7m2q/
     project.json
     project.schema.json         # Generated editor descriptions/completions
@@ -462,7 +471,7 @@ The [offline dummy backend](docs/dummy-agent.md) speaks the same local JSONL RPC
 
 Integration tests require the runtime prerequisites plus `script` from util-linux. They use fake credentials and a local fake OpenAI upstream, make no paid/external model API requests, remove temporary containers/project data/image tags, and may leave reusable Podman build caches/base images.
 
-Real-container coverage includes package/custom instruction builds, absolute working directories, UID/GID ownership, extra mount permissions, credential selection, persistent state, Pi startup, pipes, exit codes, PTY Bash, project exclusivity, bounded shutdown, the Unix socket proxy, Pi API-key/Codex streaming against fake upstreams, host OAuth refresh, and TypeScript extensions seeing only dummy credentials. Berget/custom profiles have fast fake-upstream route/streaming coverage but no real-container tool-round-trip coverage yet. The Codex integration runs without container networking.
+Real-container coverage includes package/custom instruction builds, absolute working directories, UID/GID ownership, extra mount permissions, credential selection, persistent state, Pi startup, pipes, exit codes, PTY Bash, project exclusivity, bounded shutdown, the Unix socket proxy, Pi API-key/Codex streaming against fake upstreams, host OAuth refresh, and TypeScript extensions seeing only dummy credentials. Berget/custom/Ollama profiles have fast fake-upstream route/streaming coverage but no real-container tool-round-trip coverage yet. Ollama also has an opt-in installed-Pi fake-fetch tool-call/encoding probe, not actual model/hardware certification. The Codex integration runs without container networking.
 
 ## Further documentation
 
@@ -474,7 +483,7 @@ Real-container coverage includes package/custom instruction builds, absolute wor
 - [Planned host Git identity defaults](docs/git-identity-plan.md)
 - [Known issues and resolved CNI warning](docs/known-issues.md)
 - [GNOME Codex quota indicator](gnome-codex-usage/README.md)
-- [API proxy: OpenAI, Berget, Mistral, custom profiles, and security](docs/proxy.md)
+- [API proxy: API-key profiles, local Ollama, OAuth, and security](docs/proxy.md)
 - [Berget/API-key implementation notes](docs/berget-plan.md)
 - [Codex subscription sign-in and proxy](docs/codex.md)
 - [Wait for Codex quota, then resume a saved task](docs/codex-wait.md)

@@ -62,6 +62,7 @@ export async function prepareProxy(
 ) {
   const settings = { ...DEFAULT_PROXY, ...config.credentials.proxy };
   const isCodex = settings.provider === 'openai-codex';
+  const isOllama = settings.provider === 'ollama';
   assert(
     !Object.hasOwn(settings, 'keyEnv'),
     'Remove keyEnv; use pis --login PROVIDER. Environment API keys are no longer supported.',
@@ -74,7 +75,7 @@ export async function prepareProxy(
   const apiProfile = !isCodex ? readApiProfile(store, settings.provider) : undefined;
   const apiKey = isCodex ? credential.access : apiProfile?.key;
   assert(
-    apiKey,
+    isOllama ? apiProfile?.auth === 'none' : apiKey,
     `Host profile ${settings.provider} is missing. Run pis --login ${settings.provider}.`,
   );
   const baseUrl = isCodex
@@ -95,8 +96,18 @@ export async function prepareProxy(
       settings.provider === 'custom' && !upstream
         ? await publicHostLookup(new URL(apiProfile.url).hostname)
         : undefined;
+    const modelAllowlist =
+      isOllama && !settings.models.length
+        ? apiProfile.models.map((model) => model.id)
+        : settings.models;
+    if (isOllama)
+      assert(
+        modelAllowlist.every((id) => apiProfile.models.some((model) => model.id === id)),
+        'Ollama allowlist must use configured host-profile models.',
+      );
     proxy = await startOpenAIProxy({
       ...settings,
+      models: modelAllowlist,
       socketPath: path.join(runtimeDir, 'api.sock'),
       apiKey,
       getCredentials,
@@ -131,8 +142,21 @@ export async function prepareProxy(
         : undefined;
     const providerModels = catalog
       ? { api: 'openai-completions', models: catalog.models }
-      : settings.provider === 'custom'
-        ? { api: apiProfile.api, models: apiProfile.models }
+      : ['custom', 'ollama'].includes(settings.provider)
+        ? {
+            api: apiProfile.api,
+            models: isOllama
+              ? apiProfile.models.map((model) => ({
+                  ...model,
+                  compat: {
+                    supportsStore: false,
+                    supportsDeveloperRole: false,
+                    supportsReasoningEffort: false,
+                    maxTokensField: 'max_tokens',
+                  },
+                }))
+              : apiProfile.models,
+          }
         : {};
     const modelSnapshot = {
       ...models,
