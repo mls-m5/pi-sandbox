@@ -38,29 +38,32 @@ async function requestHostAction(data, ctx) {
 
 export default function (pi) {
   if (!process.env.PIS_APT_SOCKET) return;
-  pi.registerTool({
-    name: 'request_apt_packages',
-    label: 'Request apt packages',
-    exposure: 'model-only',
-    description:
-      'If a task requires missing Debian apt packages, request their installation. Supply only exact apt package names and a short reason. This pauses Pi; the user reviews and approves or rejects the request outside the sandbox. Never claim packages were installed before the next start.',
-    parameters: Type.Object({
-      packages: Type.Array(
-        Type.String({ description: 'Debian apt package name, not a shell command' }),
-        { minItems: 1, maxItems: 10 },
-      ),
-      reason: Type.String({ description: 'Why these packages are necessary for the current task' }),
-    }),
-    async execute(_id, params, _signal, _update, ctx) {
-      return requestHostAction({ type: 'apt-packages', ...params }, ctx);
-    },
-  });
+  if (process.env.PIS_HOST_GIT_ONLY !== '1')
+    pi.registerTool({
+      name: 'request_apt_packages',
+      label: 'Request apt packages',
+      exposure: 'model-only',
+      description:
+        'If a task requires missing Debian apt packages, request their installation. Supply only exact apt package names and a short reason. This pauses Pi; the user reviews and approves or rejects the request outside the sandbox. Never claim packages were installed before the next start.',
+      parameters: Type.Object({
+        packages: Type.Array(
+          Type.String({ description: 'Debian apt package name, not a shell command' }),
+          { minItems: 1, maxItems: 10 },
+        ),
+        reason: Type.String({
+          description: 'Why these packages are necessary for the current task',
+        }),
+      }),
+      async execute(_id, params, _signal, _update, ctx) {
+        return requestHostAction({ type: 'apt-packages', ...params }, ctx);
+      },
+    });
   pi.registerTool({
     name: 'request_host_git',
     label: 'Request host Git command',
     exposure: 'model-only',
     description:
-      'Request ONE Git operation on the host, using host authentication only after the user approves it there. Pi stops for approval. Currently only args ["push", "REMOTE", "FULL_40_HEX_COMMIT:refs/heads/BRANCH"] are allowed: no shell, force, aliases or other commands. repo is relative to the registered project; use "." for its root. Inspect and commit changes inside the sandbox first. Do not claim the push succeeded until pis confirms it after restarting.',
+      'Request ONE Git operation on the host, using host authentication only after the user approves it there. Pi stops for approval. Currently only args ["push", "REMOTE", "FULL_40_HEX_COMMIT:refs/heads/BRANCH"] are allowed: no shell, force, aliases or other commands. repo is relative to the registered project; use "." for its root. Inspect and commit changes inside the sandbox first. Submodules inside the project can be proposed individually using their relative path, never an automatic recursive push. In web mode the sandbox stops for an explicit admin approval on the opted-in host; there is no automatic restart or continuation. Do not claim success until the host reports it.',
     parameters: Type.Object({
       repo: Type.String({
         description:

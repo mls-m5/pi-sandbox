@@ -5,6 +5,7 @@ import { PiRpc, JsonlDecoder } from '../src/pi-rpc.js';
 import { PiView } from '../src/pi-view.js';
 import { ID_PATTERN } from '../src/config.js';
 import { connectView } from './connector.js';
+import { createProjectHostPush } from './project-host-push.js';
 import { startupPhase, startupFailure } from './public/startup.js';
 
 // Only the local host supplies a descriptor resolved from its registered Store.
@@ -18,6 +19,7 @@ export async function startProjectConnector({
   onProgress = () => {},
   diagnostic,
   createConnection,
+  allowWebGit = false,
 }) {
   if (
     !project ||
@@ -38,14 +40,20 @@ export async function startProjectConnector({
     [fileURLToPath(new URL('../bin/pis-project-rpc.js', import.meta.url)), project.id],
     {
       cwd: project.root,
-      stdio: ['pipe', 'pipe', 'pipe', 'pipe'],
+      stdio: ['pipe', 'pipe', 'pipe', 'pipe', ...(allowWebGit ? ['ipc'] : [])],
       // Host credentials may be needed by the existing local provider proxy. They
       // never enter network envelopes or new mounts; launchArgs retains its rules.
-      env: { ...process.env, PIS_HOME: project.storeRoot, PIS_WEB_PROGRESS: '1' },
+      env: {
+        ...process.env,
+        PIS_HOME: project.storeRoot,
+        PIS_WEB_PROGRESS: '1',
+        PIS_ALLOW_WEB_GIT: allowWebGit ? '1' : '0',
+      },
     },
   );
   const rpc = new PiRpc(child, { timeoutMs: startupTimeoutMs }),
     view = new PiView(rpc);
+  const hostPush = allowWebGit ? createProjectHostPush(child, rpc) : undefined;
   const progress = new JsonlDecoder(
     (record) => {
       if (
@@ -64,6 +72,7 @@ export async function startProjectConnector({
   const close = () =>
     (closing ||= (async () => {
       network?.close();
+      hostPush?.close();
       view.detach();
       let deadline;
       try {
@@ -99,8 +108,8 @@ export async function startProjectConnector({
     if (closing || !state.success) throw new Error('Project RPC initialization failed.');
     rpc.timeoutMs = 30_000;
     report('rpc_ready');
-    network = connectView({ view, origin, token, diagnostic, createConnection });
-    rpc.once('closed', () => network.close());
+    network = connectView({ view, origin, token, diagnostic, createConnection, hostPush });
+    rpc.once('closed', () => setTimeout(() => network.close(), allowWebGit ? 150 : 0));
     await new Promise((resolve, reject) => {
       const finish = (error) => {
         clearTimeout(timer);

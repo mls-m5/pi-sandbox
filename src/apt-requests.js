@@ -41,7 +41,7 @@ export function validateAptProposal(data, config, store) {
 }
 
 // Only a proposal crosses the socket. The host never accepts an "approve" message.
-export async function startAptRequestServer(config, store) {
+export async function startAptRequestServer(config, store, { gitOnly = false } = {}) {
   const directory = fs.mkdtempSync('/tmp/pis-apt-');
   privateDir(directory);
   const socketPath = path.join(directory, 'request.sock');
@@ -66,6 +66,8 @@ export async function startAptRequestServer(config, store) {
         if (proposal || data.indexOf('\n') !== data.length - 1)
           throw new Error('Only one proposal is allowed.');
         const request = JSON.parse(data.slice(0, -1));
+        if (gitOnly && request?.type !== 'git-command')
+          throw new Error('Only Git proposals are enabled.');
         proposal =
           request?.type === 'git-command'
             ? validateHostGitRequest(request)
@@ -94,6 +96,7 @@ export async function startAptRequestServer(config, store) {
   }
   return {
     directory,
+    gitOnly,
     get proposal() {
       return proposal;
     },

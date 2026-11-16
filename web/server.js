@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { WebSocketServer } from 'ws';
 import { validateControlCommand } from '../src/pi-rpc.js';
 import { ENROLLMENT_MS, validateEnrollment, labelValid } from './enrollment.js';
+import { createHostPushes } from './host-push.js';
 import { createAgentRegistry } from './server-registration.js';
 import { createWebSessions } from './server-sessions.js';
 import { handlePairingRoute } from './server-pairing.js';
@@ -29,6 +30,8 @@ const assets = new Map([
   ['/message-queue.js', ['message-queue.js', 'text/javascript; charset=utf-8']],
   ['/server-update.js', ['server-update.js', 'text/javascript; charset=utf-8']],
   ['/agent-drawer.js', ['agent-drawer.js', 'text/javascript; charset=utf-8']],
+  ['/host-push.js', ['host-push.js', 'text/javascript; charset=utf-8']],
+  ['/delegations.js', ['delegations.js', 'text/javascript; charset=utf-8']],
   ['/pairing-ui.js', ['pairing-ui.js', 'text/javascript; charset=utf-8']],
   ['/activity.js', ['activity.js', 'text/javascript; charset=utf-8']],
   ['/pending-commands.js', ['pending-commands.js', 'text/javascript; charset=utf-8']],
@@ -419,6 +422,12 @@ export async function startWebServer({
   const broadcastRoster = () => {
     for (const ws of browsers) send(ws, { v: 1, type: 'roster', agents: roster() });
   };
+  const hostPushes = createHostPushes({
+    send,
+    broadcast: (id, value) => {
+      for (const browser of browsers) if (browser.selected === id) send(browser, value);
+    },
+  });
   const errorResult = (ws, agentId, command, error, trace = randomUUID()) => {
     diagnostic({
       component: 'server',
@@ -471,6 +480,7 @@ export async function startWebServer({
     persist([...registrations.values()].filter((agent) => agent.id !== id));
     const peer = connected.get(id);
     registrations.delete(id);
+    hostPushes.forget(id);
     connected.delete(id);
     for (const [route, entry] of pending)
       if (entry.agentId === id) removePending(route, 'outcome_unknown');
@@ -491,6 +501,7 @@ export async function startWebServer({
     ) {
       for (const [route, entry] of pending)
         if (entry.browser === ws) removePending(route, 'outcome_unknown');
+      hostPushes.release(ws);
       ws.selected = value.agentId;
       const peer = connected.get(value.agentId);
       send(ws, {
@@ -502,6 +513,34 @@ export async function startWebServer({
         seq: peer?.seq || 0,
         status: peer?.status || 'offline',
       });
+      hostPushes.snapshot(ws, value.agentId);
+      return;
+    }
+    if (['host_push_review', 'host_push_decision'].includes(value.type)) {
+      const keys = [
+        'v',
+        'type',
+        'agentId',
+        'generation',
+        'id',
+        ...(value.type === 'host_push_decision' ? ['reviewId', 'approved', 'code'] : []),
+      ];
+      if (
+        !exact(value, keys) ||
+        value.agentId !== ws.selected ||
+        !generationValid(value.generation) ||
+        !generationValid(value.id) ||
+        (value.type === 'host_push_decision' &&
+          (!generationValid(value.reviewId) ||
+            typeof value.approved !== 'boolean' ||
+            typeof value.code !== 'string' ||
+            value.code.length > 2))
+      )
+        throw new Error('Protocol.');
+      const peer = connected.get(value.agentId);
+      if (!peer || peer.generation !== value.generation) return;
+      if (value.type === 'host_push_review') hostPushes.review(ws, peer, value);
+      else hostPushes.decide(ws, peer, value);
       return;
     }
     if (
@@ -582,6 +621,23 @@ export async function startWebServer({
       clearTimeout(ws.helloTimer);
       send(ws, { v: 1, type: 'registered', generation: ws.generation });
       broadcastRoster();
+      return;
+    }
+    if (
+      exact(value, ['v', 'type', 'generation', 'proposal']) &&
+      value.type === 'host_push' &&
+      value.generation === ws.generation
+    ) {
+      if (registrations.get(ws.agentId)?.kind !== 'pi') throw new Error('Protocol.');
+      hostPushes.announce(ws, value.proposal);
+      return;
+    }
+    if (
+      exact(value, ['v', 'type', 'generation', 'id', 'phase']) &&
+      value.type === 'host_push_outcome' &&
+      value.generation === ws.generation
+    ) {
+      hostPushes.outcome(ws, value.id, value.phase);
       return;
     }
     if (exact(value, ['v', 'type', 'frame']) && value.type === 'frame') {
@@ -743,6 +799,8 @@ export async function startWebServer({
         });
         clearTimeout(ws.helloTimer);
         browsers.delete(ws);
+        hostPushes.release(ws);
+        if (registration) hostPushes.disconnect(ws);
         if (registration && connected.get(registration.id) === ws) {
           connected.delete(registration.id);
           broadcastRoster();
@@ -773,6 +831,7 @@ export async function startWebServer({
     sessions.expire();
     registry.expireTickets();
     pairing.expire();
+    hostPushes.expire();
     for (const ws of wss.clients) {
       if (!ws.alive) ws.terminate();
       else {
@@ -796,6 +855,7 @@ export async function startWebServer({
     close() {
       return (closing ||= (async () => {
         clearInterval(heartbeat);
+        hostPushes.clear();
         for (const route of pending.keys()) removePending(route, 'outcome_unknown');
         for (const ws of wss.clients) ws.terminate();
         await new Promise((resolve) => wss.close(resolve));

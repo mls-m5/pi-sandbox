@@ -241,6 +241,7 @@ export function launchArgs(
       '--volume',
       `${aptRequests.directory}:/pis/apt:ro${sharedLabel}`,
     );
+  if (aptRequests?.gitOnly) args.push('--env', 'PIS_HOST_GIT_ONLY=1');
   if (codexAuto)
     args.push(
       '--env',
@@ -463,6 +464,8 @@ async function launchOnce(store, config, options) {
             1,
             command.indexOf('--') === -1 ? command.length : command.indexOf('--'),
           );
+          if (options.webRpc && options.webGitApproval)
+            aptRequests = await startAptRequestServer(config, store, { gitOnly: true });
           if (
             !isClaude &&
             options.mode === 'pi' &&
@@ -526,8 +529,25 @@ async function launchOnce(store, config, options) {
             'Cannot confirm sandbox shutdown; no host action was performed.',
           );
           if (proposal.type === 'git-push') {
-            const push = await prepareGitPush(config, proposal);
+            const push = await prepareGitPush(config, proposal, {
+              nonInteractive: options.webRpc === true,
+            });
             try {
+              if (options.webRpc) {
+                assert(options.webGitApproval, 'Web Git approval was not enabled on this host.');
+                if (!(await options.webGitApproval.approve(push))) {
+                  options.webGitApproval.report('declined');
+                  return status;
+                }
+                try {
+                  await push.push();
+                  options.webGitApproval.report('succeeded');
+                } catch {
+                  options.webGitApproval.report('unknown');
+                }
+                // A new runtime requires a fresh connector/generation. No automatic paid continuation.
+                return status;
+              }
               if (await approveGitPush(push)) {
                 await push.push();
                 console.error('pis: host Git push succeeded. Restarting Pi…');

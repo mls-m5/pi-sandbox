@@ -20,6 +20,7 @@ export async function startServer(args) {
     '--password-stdin',
     '--diagnostics',
     '--standalone',
+    '--allow-web-git',
     '--help',
     '-h',
   ]);

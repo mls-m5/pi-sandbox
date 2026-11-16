@@ -20,7 +20,20 @@ async function main() {
   process.umask(0o077);
   const { Store } = await import('../src/store.js');
   const { runProjectRpc } = await import('../src/project-rpc.js');
-  process.exitCode = await runProjectRpc(new Store(), process.argv[2], { startupProgress: report });
+  let webGitApproval;
+  if (process.env.PIS_ALLOW_WEB_GIT === '1' && process.send) {
+    const { createWebGitApproval } = await import('../src/web-git-approval.js');
+    webGitApproval = createWebGitApproval(process);
+  }
+  try {
+    process.exitCode = await runProjectRpc(new Store(), process.argv[2], {
+      startupProgress: report,
+      webGitApproval,
+    });
+  } finally {
+    webGitApproval?.dispose();
+    if (process.connected) process.disconnect();
+  }
 }
 main().catch((error) => {
   const phase =

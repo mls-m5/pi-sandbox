@@ -29,6 +29,17 @@ function send(file, data) {
   });
 }
 
+test('web Git-only proposal socket refuses apt and approval fields without retaining a proposal', async t => {
+  const { store, config } = await fixture(t), server = await startAptRequestServer(config, store, { gitOnly: true });
+  try {
+    assert.equal(server.gitOnly, true);
+    assert.deepEqual(await send(path.join(server.directory, 'request.sock'), { type: 'apt-packages', packages: ['curl'], reason: 'Not allowed' }), { ok: false });
+    assert.equal(server.proposal, undefined);
+    assert.deepEqual(await send(path.join(server.directory, 'request.sock'), { type: 'git-command', repo: '.', args: ['push', 'origin', 'a'.repeat(40) + ':refs/heads/main'], reason: 'Test', approved: true }), { ok: false });
+    assert.equal(server.proposal, undefined);
+  } finally { await server.close(); }
+});
+
 test('approval formatting provides full-width separators and optional terminal colors', () => {
   const proposal = { packages: ['curl', 'python3-venv'], reason: 'Run project tests' };
   const plain = formatAptApproval(proposal, '42', { columns: 32 });

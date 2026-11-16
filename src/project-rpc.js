@@ -61,7 +61,7 @@ export function resolveConnectProject(selector, store = new Store()) {
   return resolveWebProjects([matches[0].id], store)[0];
 }
 
-export async function runProjectRpc(store, id, { startupProgress } = {}) {
+export async function runProjectRpc(store, id, { startupProgress, webGitApproval } = {}) {
   assert(typeof id === 'string' && ID_PATTERN.test(id), 'Expected one registered project ID.');
   const config = store.load(id);
   assert(config.agent === 'pi', 'Web RPC does not override a project configured for Claude.');
@@ -73,5 +73,6 @@ export async function runProjectRpc(store, id, { startupProgress } = {}) {
     args: ['--mode', 'rpc'],
     webRpc: true,
     startupProgress,
+    webGitApproval,
   });
 }

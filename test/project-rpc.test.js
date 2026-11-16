@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import net from 'node:net';
 import { once } from 'node:events';
 import { Store } from '../src/store.js';
@@ -101,6 +101,36 @@ test('unconfirmed container shutdown fails wrapper and retains the project lock'
   await rpc.request('get_state');
   await rpc.shutdown({ graceMs: 1000, killMs: 1000 });
   assert.equal(child.exitCode, 1); assert.ok(fs.existsSync(f.lock));
+});
+
+test('opted-in web Git proposal waits for verified sandbox shutdown and host IPC approval; decline never pushes', { skip: process.getuid() === 0, timeout: 15000 }, async t => {
+  for (const unknown of [false, true]) {
+  const f = await fixture(t);
+  const git = args => execFileSync('/usr/bin/git', ['-C', f.root, ...args], { env: { PATH: '/usr/bin:/bin', HOME: f.base, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' }, stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8' }).trim();
+  git(['init']); fs.writeFileSync(path.join(f.root, 'hello'), 'test'); git(['add', 'hello']); git(['-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-m', 'test']); git(['remote', 'add', 'origin', 'git@example.invalid:owner/project.git']);
+  const commit = git(['rev-parse', 'HEAD']);
+  const child = spawn(process.execPath, [wrapper, f.config.id], { cwd: f.root, env: { ...f.env, PIS_ALLOW_WEB_GIT: '1', TEST_UNKNOWN_CONTAINER: unknown ? '1' : '0' }, stdio: ['pipe', 'pipe', 'pipe', 'ignore', 'ipc'] });
+  const rpc = new PiRpc(child, { timeoutMs: 3000 });
+  t.after(async () => { if (!rpc.closed) await rpc.shutdown({ graceMs: 500, killMs: 1000 }); });
+  const messages = []; child.on('message', value => messages.push(value));
+  assert.equal((await rpc.request('get_state')).success, true);
+  const calls = () => fs.readFileSync(f.trace, 'utf8').trim().split('\n').map(JSON.parse);
+  const args = calls().find(value => value[0] === 'run'); assert.ok(args.includes('PIS_HOST_GIT_ONLY=1'));
+  const volume = args.find(value => value.includes(':/pis/apt:ro')); assert.ok(volume);
+  const socket = net.createConnection(path.join(volume.split(':')[0], 'request.sock'));
+  await once(socket, 'connect'); const reply = once(socket, 'data');
+  socket.end(JSON.stringify({ type: 'git-command', repo: '.', args: ['push', 'origin', `${commit}:refs/heads/main`], reason: 'Test decline, never push' }) + '\n');
+  assert.equal(JSON.parse((await reply)[0].toString()).ok, true);
+  assert.equal(messages.length, 0, 'No approval before the container has exited.');
+  const closed = once(child, 'close'); child.stdin.end();
+  if (unknown) { await closed; assert.equal(child.exitCode, 1); assert.ok(fs.existsSync(f.lock)); assert.equal(messages.length, 0, 'Unconfirmed shutdown must never expose host approval.'); continue; }
+  for (let i = 0; i < 300 && !messages.some(value => value.type === 'web_git_proposal'); i++) await new Promise(resolve => setTimeout(resolve, 10));
+  const proposal = messages.find(value => value.type === 'web_git_proposal')?.proposal; assert.ok(proposal); assert.equal(proposal.commit, commit);
+  assert.ok(calls().some(value => value[0] === 'rm')); assert.ok(calls().some(value => value[0] === 'container' && value[1] === 'exists'));
+  assert.ok(fs.existsSync(f.lock), 'Project stays locked during review.');
+  child.send({ type: 'web_git_decision', id: proposal.id, approved: false, code: '' }); await closed;
+  assert.equal(child.exitCode, 0); assert.equal(fs.existsSync(f.lock), false); assert.ok(messages.some(value => value.phase === 'declined'));
+  }
 });
 
 test('web runtime rejects mutable launch controls under the project lock before Podman starts', async t => {

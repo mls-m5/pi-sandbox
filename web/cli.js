@@ -59,6 +59,7 @@ try {
     if (seen.has(flag) && flag !== '--project') throw new Error('Duplicate option.');
     seen.add(flag);
     if (flag === '--standalone' && mode === 'start') options.standalone = true;
+    else if (flag === '--allow-web-git' && mode === 'start') options.allowWebGit = true;
     else if (flag === '--password-stdin') options.piped = true;
     else if (flag === '--diagnostics') options.diagnostics = true;
     else if (flag === '--project' && mode === 'start') {
@@ -76,6 +77,8 @@ try {
     throw new Error('Invalid local demo port/agent count.');
   if (options.standalone && (options.projects.length || seen.has('--agents')))
     throw new Error('Standalone mode does not start agents.');
+  if (options.allowWebGit && !options.projects.length)
+    throw new Error('Web Git requires locally selected Pi projects.');
   if (options.projects.length && seen.has('--agents'))
     throw new Error('Choose real projects or dummy agents, not both.');
   let projects = [];
@@ -90,7 +93,11 @@ try {
   }
   if (projects.length)
     console.error(
-      'EXPERIMENTAL: Starting real registered Pi sandboxes. Saved sessions/configured extensions and browser prompts may use model quota or incur API costs. Git/apt host approvals and quota-auto are unavailable.',
+      'EXPERIMENTAL: Starting real registered Pi sandboxes. Saved sessions/configured extensions and browser prompts may use model quota or incur API costs. Git push approval requires explicit --allow-web-git; apt approvals and quota-auto are unavailable.',
+    );
+  if (options.allowWebGit)
+    console.error(
+      'Web Git opt-in: authenticated server admins may approve exact non-force pushes on this host after each requesting sandbox stops. No automatic agent resume or push retry.',
     );
   const diagnostic = createDiagnostics({ enabled: options.diagnostics });
   if (options.diagnostics)
@@ -209,6 +216,7 @@ try {
           origin: server.origin,
           token: agent.token,
           project: agent.project,
+          allowWebGit: options.allowWebGit === true,
           signal: startupController.signal,
           onProgress,
           diagnostic,

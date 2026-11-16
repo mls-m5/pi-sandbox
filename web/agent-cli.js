@@ -73,7 +73,11 @@ forget removes only the local key; revoke in the web panel to invalidate it.
 Direct HTTP remains loopback-only. Explicit ssh:// provides encrypted host-to-host
 forwarding without a public HTTP listener; direct LAN/TLS remains unsupported.
 The registered server can prompt/read history/stop this agent; trust it as a
-controller. Real project prompts can cost tokens. No Git/apt web approvals.`;
+controller. Real project prompts can cost tokens. Apt web approvals remain unavailable.
+Optional --allow-web-git (connect/run, real Pi only) trusts this server's authenticated
+admins to approve exact non-force Git pushes on THIS host after sandbox shutdown.
+Not saved in profiles; opt in on every launch. Supports individual in-project submodules.
+No automatic push, recursive push, credential prompt, model continuation or retry.`;
 export function parseAgentOptions(args) {
   const explicit = ['register', 'run', 'forget'].includes(args[0]);
   const action = explicit ? args[0] : 'connect';
@@ -110,6 +114,8 @@ export function parseAgentOptions(args) {
       options[flag.slice(2)] = true;
     else if (['run', 'connect'].includes(action) && flag === '--diagnostics')
       options.diagnostics = true;
+    else if (['run', 'connect'].includes(action) && flag === '--allow-web-git')
+      options.allowWebGit = true;
     else throw new Error('Unknown agent option.');
   }
   if (options.setServer) {
@@ -121,7 +127,8 @@ export function parseAgentOptions(args) {
       options['key-stdin'] ||
       options['enrollment-key'] ||
       options.replace ||
-      options.diagnostics
+      options.diagnostics ||
+      options.allowWebGit
     )
       throw new Error('--set-server cannot be combined with connection options.');
     options.server = serverAddress(options.setServer).address;
@@ -142,9 +149,10 @@ export function parseAgentOptions(args) {
     )
       throw new Error('Choose exactly one project or dummy.');
   }
+  if (options.allowWebGit && options.dummy) throw new Error('Web Git requires a real Pi project.');
   return options;
 }
-async function runProfile(store, name, diagnostic, transport, signal) {
+async function runProfile(store, name, diagnostic, transport, signal, allowWebGit = false) {
   signal?.throwIfAborted();
   const record = readAgentProfile(store.root, name);
   if (!record) throw new Error('Missing agent profile.');
@@ -156,6 +164,7 @@ async function runProfile(store, name, diagnostic, transport, signal) {
     throw new Error('Registration mismatch.');
   const project =
     record.kind === 'pi' ? resolveWebProjects([record.projectId], store)[0] : undefined;
+  if (allowWebGit && !project) throw new Error('Web Git requires a real Pi project.');
   {
     let connector, finish;
     const controller = new AbortController(),
@@ -172,11 +181,16 @@ async function runProfile(store, name, diagnostic, transport, signal) {
       signal?.throwIfAborted();
       if (project)
         console.error(
-          'EXPERIMENTAL: Startar lokalt Pi-projekt i Podman. Servern kan läsa historik, skicka promptar (kan kosta tokens) och stoppa agentarbete. Inga Git/apt-godkännanden eller quota-auto.',
+          'EXPERIMENTAL: Startar lokalt Pi-projekt i Podman. Servern kan läsa historik, skicka promptar (kan kosta tokens) och stoppa agentarbete. Git kräver separat --allow-web-git; inga apt-godkännanden eller quota-auto.',
+        );
+      if (allowWebGit)
+        console.error(
+          'Web Git opt-in: authenticated admins of this server may approve one exact non-force push after this sandbox stops. SSH host authentication stays local; no automatic resume or retry.',
         );
       connector = project
         ? await startProjectConnector({
             project,
+            allowWebGit,
             origin: transport.origin,
             token: record.token,
             createConnection: transport.createConnection,
@@ -205,7 +219,7 @@ async function runProfile(store, name, diagnostic, transport, signal) {
           'pis agent: registreringen nekades. Automatisk återanslutning stoppad, men lokal agent kan fortfarande arbeta. Stoppa här med Ctrl-C och kör pis --connect igen med en ny kod som godkänns i GUI:t.',
         ),
       );
-      connector.rpc.once('closed', finish);
+      connector.rpc.once('closed', () => (allowWebGit ? setTimeout(finish, 150) : finish()));
       if (project) ready();
       if (connector.rpc.closed) finish();
       if (controller.signal.aborted) finish();
@@ -356,6 +370,7 @@ async function connectedAction(store, options, transport, signal) {
       createDiagnostics({ enabled: options.diagnostics }),
       transport,
       signal,
+      options.allowWebGit,
     );
     return;
   }
@@ -393,6 +408,7 @@ async function connectedAction(store, options, transport, signal) {
     createDiagnostics({ enabled: options.diagnostics }),
     transport,
     signal,
+    options.allowWebGit,
   );
 }
 if (process.argv[1] === fileURLToPath(import.meta.url))

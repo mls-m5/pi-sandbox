@@ -9,7 +9,14 @@ import { resultCode } from './public/diagnostics.js';
 
 // Network lifecycle is independent of local runtime lifecycle. No arbitrary
 // executable, filesystem path, native RPC method or host action crosses this API.
-export function connectView({ view, origin, token, diagnostic = () => {}, createConnection }) {
+export function connectView({
+  view,
+  origin,
+  token,
+  diagnostic = () => {},
+  createConnection,
+  hostPush,
+}) {
   const url = new URL(origin);
   if (
     url.protocol !== 'http:' ||
@@ -35,6 +42,29 @@ export function connectView({ view, origin, token, diagnostic = () => {}, create
   const onClosed = (code) => diagnostic({ component: 'connector', event: 'rpc_closed', code });
   view.rpc.on('fault', onFault);
   view.rpc.on('closed', onClosed);
+  const proposal = (value) => {
+    if (
+      !socket ||
+      !send(socket, {
+        v: 1,
+        type: 'host_push',
+        generation: view.control.generation,
+        proposal: value,
+      })
+    )
+      hostPush.cancel();
+  };
+  const outcome = (value) => {
+    if (socket)
+      send(socket, {
+        v: 1,
+        type: 'host_push_outcome',
+        generation: view.control.generation,
+        ...value,
+      });
+  };
+  hostPush?.events.on('proposal', proposal);
+  hostPush?.events.on('outcome', outcome);
   function connect() {
     if (stopped) return;
     const ws = new WebSocket(`${url.origin.replace('http:', 'ws:')}/agent`, {
@@ -89,6 +119,21 @@ export function connectView({ view, origin, token, diagnostic = () => {}, create
           return;
         }
         if (
+          hostPush &&
+          exact(message, ['v', 'type', 'generation', 'id', 'approved', 'code']) &&
+          message.v === 1 &&
+          message.type === 'host_push_decision' &&
+          message.generation === view.control.generation &&
+          typeof message.id === 'string' &&
+          /^[a-f0-9-]{36}$/.test(message.id) &&
+          typeof message.approved === 'boolean' &&
+          typeof message.code === 'string' &&
+          message.code.length <= 2
+        ) {
+          hostPush.decide(message);
+          return;
+        }
+        if (
           !exact(message, ['v', 'type', 'routeId', 'command']) ||
           message.v !== 1 ||
           message.type !== 'command' ||
@@ -132,6 +177,7 @@ export function connectView({ view, origin, token, diagnostic = () => {}, create
       }
     });
     ws.on('close', () => {
+      hostPush?.cancel();
       diagnostic({ component: 'connector', event: 'agent_disconnected' });
       clearInterval(watchdog);
       if (socket === ws) socket = undefined;
@@ -153,6 +199,9 @@ export function connectView({ view, origin, token, diagnostic = () => {}, create
       stopped = true;
       clearTimeout(timer);
       socket?.terminate();
+      hostPush?.cancel();
+      hostPush?.events.off('proposal', proposal);
+      hostPush?.events.off('outcome', outcome);
       view.off('frame', onFrame);
       view.rpc.off('fault', onFault);
       view.rpc.off('closed', onClosed);
