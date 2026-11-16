@@ -8,6 +8,7 @@ export function createAgentRegistry({
   sessionExpires,
   isConnected,
   onTicketCleared,
+  saveRegistrations = () => {},
 }) {
   const tickets = new Map();
   function clearTicket(hash) {
@@ -35,7 +36,9 @@ export function createAgentRegistry({
       token = randomKey(),
       kind = value.kind;
     const label = uniqueAgentLabel(registrations, value.label, id);
-    registrations.set(id, { id, label, kind, clientId: value.clientId, tokenHash: digest(token) });
+    const registration = { id, label, kind, clientId: value.clientId, tokenHash: digest(token) };
+    saveRegistrations([...registrations.values()].filter((a) => a.id !== id).concat(registration));
+    registrations.set(id, registration);
     return { id, token, kind, label };
   }
   return {

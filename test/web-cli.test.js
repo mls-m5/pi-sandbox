@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import net from 'node:net';
+import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
@@ -35,10 +36,11 @@ test('empty password input generates a fresh one-time displayed password that ac
   assert.ok(passwords[0] !== passwords[1], 'Restarting with empty input must rotate the generated password.');
 });
 
-test('pis --server --standalone starts an empty ephemeral roster with no local runtimes', { skip: !installed, timeout: 15000 }, async t => {
+test('pis --server --standalone starts a private empty registry with no local runtimes', { skip: !installed, timeout: 15000 }, async t => {
   const reservation = net.createServer(); await new Promise(resolve => reservation.listen(0, '127.0.0.1', resolve));
   const port = reservation.address().port; await new Promise(resolve => reservation.close(resolve));
-  const child = spawn(process.execPath, [fileURLToPath(new URL('../bin/pis.js', import.meta.url)), '--server', '--standalone', '--password-stdin', '--port', String(port)], { stdio: ['pipe', 'pipe', 'pipe'], env: { PATH: `${path.dirname(process.execPath)}:${process.env.PATH}`, HOME: '/nonexistent-pis-web-test-home' } });
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pis-standalone-')); t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const child = spawn(process.execPath, [fileURLToPath(new URL('../bin/pis.js', import.meta.url)), '--server', '--standalone', '--password-stdin', '--port', String(port)], { stdio: ['pipe', 'pipe', 'pipe'], env: { PATH: `${path.dirname(process.execPath)}:${process.env.PATH}`, HOME: root, PIS_HOME: root } });
   t.after(() => { if (child.exitCode === null) child.kill('SIGKILL'); });
   let output = ''; child.stderr.on('data', data => { output += data; }); child.stdout.resume();
   const password = randomKey(); child.stdin.end(`${password}\n`);

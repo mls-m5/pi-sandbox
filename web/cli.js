@@ -6,6 +6,8 @@ import { startProjectConnector } from './project-connector.js';
 import { STARTUP_LABELS, startupFailure } from './public/startup.js';
 import { resolveWebProjects } from '../src/project-rpc.js';
 import { createDiagnostics } from './diagnostics.js';
+import { Store } from '../src/store.js';
+import { openRegistrationStore } from './registration-store.js';
 
 import { readAdminPassword } from './secret-input.js';
 const options = {
@@ -19,6 +21,7 @@ const options = {
 const args = process.argv.slice(2),
   seen = new Set(),
   startupController = new AbortController();
+let registrationStore;
 let server,
   connectors = [],
   stopping,
@@ -35,6 +38,7 @@ async function stop() {
         ...(startup ? [startup.then((connector) => connector.close())] : []),
       ]);
       await server?.close();
+      registrationStore?.close();
       if (results.some((result) => result.status === 'rejected')) process.exitCode = 1;
     } finally {
       clearTimeout(deadline);
@@ -114,16 +118,28 @@ try {
           kind: 'dummy',
           token: randomKey(),
         }));
+  if (options.standalone) {
+    try {
+      registrationStore = openRegistrationStore(new Store().root, options.port);
+    } catch {
+      throw Object.assign(new Error('Registration storage unavailable.'), {
+        code: 'WEB_REGISTRATION_STORAGE',
+      });
+    }
+  }
   server = await startWebServer({
     passwordHash,
     port: options.port,
     diagnostic,
-    agents: agents.map((agent) => ({
-      id: agent.id,
-      label: agent.label,
-      kind: agent.kind,
-      tokenHash: digest(agent.token),
-    })),
+    saveRegistrations: registrationStore ? (next) => registrationStore.save(next) : undefined,
+    agents:
+      registrationStore?.agents ||
+      agents.map((agent) => ({
+        id: agent.id,
+        label: agent.label,
+        kind: agent.kind,
+        tokenHash: digest(agent.token),
+      })),
   });
   if (generatedPassword !== undefined) {
     console.error(
@@ -202,7 +218,7 @@ try {
     );
   if (!stopping && options.standalone)
     console.error(
-      `Fristående lokal webbserver: ${server.origin}\nLogga in och skapa agentnycklar i webbpanelen. Registreringar och inloggningar finns bara i minnet och försvinner vid serveromstart.\nInga lokala agenter startas. Endast loopback; inte TLS/LAN eller en servercontainer. Ctrl-C stänger servern, inte självständiga agenter.`,
+      `Fristående lokal webbserver: ${server.origin}\nLogga in och skapa agentnycklar i webbpanelen. Agentregistreringar sparas privat per serverport och återläses vid omstart. Webbinloggningar och väntande godkännanden försvinner vid omstart.\nInga lokala agenter startas. Endast loopback; inte TLS/LAN eller en servercontainer. Ctrl-C stänger servern, inte självständiga agenter.`,
     );
   if (!stopping && !projects.length && !options.standalone)
     console.error(
@@ -214,11 +230,13 @@ try {
       ? `Webbservern kunde inte starta: port ${options.port} används redan. Välj --port 43129 eller stäng den andra servern.`
       : error.code === 'EACCES'
         ? 'Webbservern saknar behörighet att öppna den valda porten.'
-        : error.code === 'WEB_PROJECT_SELECTION'
-          ? 'Kan inte välja registrerat Pi-projekt. Kör pis --list och pis --project NAMN --check på värden; Claude, okända/dubbla projekt och ogiltig konfiguration stöds inte här.'
-          : error.message?.startsWith('Usage:')
-            ? error.message
-            : 'Webbservern kunde inte starta. Kontrollera alternativ, web-beroenden och att lösenordet är minst 20 tecken. Inga råa fel eller inloggningsuppgifter skrivs ut.',
+        : error.code === 'WEB_REGISTRATION_STORAGE'
+          ? 'Kan inte öppna privat agentregister. Kontrollera ägare/rättigheter och att ingen annan server använder registret. Efter en krasch kan ett kvarvarande registrations-PORT.json.lock behöva tas bort manuellt, men bara efter kontroll att den tidigare serverprocessen är stoppad. Radera inte registreringsfilen.'
+          : error.code === 'WEB_PROJECT_SELECTION'
+            ? 'Kan inte välja registrerat Pi-projekt. Kör pis --list och pis --project NAMN --check på värden; Claude, okända/dubbla projekt och ogiltig konfiguration stöds inte här.'
+            : error.message?.startsWith('Usage:')
+              ? error.message
+              : 'Webbservern kunde inte starta. Kontrollera alternativ, web-beroenden och att lösenordet är minst 20 tecken. Inga råa fel eller inloggningsuppgifter skrivs ut.',
   );
   process.exitCode = 1;
   await stop();

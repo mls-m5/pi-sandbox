@@ -44,7 +44,7 @@ fi
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
   printf '%s\n' \
     'Usage: ./start_server.sh [--standalone | --project NAME (repeatable) | --agents 1..8] [--port PORT] [--password-stdin] [--diagnostics]' \
-    '--standalone starts only the ephemeral server. Register separate agents in its web panel; use pis --connect --help.' \
+    '--standalone starts only the server; agent registrations persist privately per port. Use pis --connect --help.' \
     'Default: dummy-only demo, no model calls. --project starts real registered Pi sandboxes; prompts may cost tokens.' \
     '--diagnostics emits bounded safe request metadata; share only pis web diagnostic: lines, never passwords/state folders.' \
     'Empty password input generates a strong password shown once on stderr (visible in terminal/log captures).' \

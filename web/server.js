@@ -51,6 +51,7 @@ export async function startWebServer({
   enrollmentMs = ENROLLMENT_MS,
   pairingMs = PAIRING_MS,
   diagnostic = () => {},
+  saveRegistrations = () => {},
 } = {}) {
   if (!/^[a-f0-9]{64}$/.test(passwordHash?.salt) || !/^[a-f0-9]{128}$/.test(passwordHash?.hash))
     throw new Error('Invalid admin password hash.');
@@ -81,7 +82,20 @@ export async function startWebServer({
       throw new Error('Invalid agent registration.');
     registrations.set(agent.id, { ...agent, kind: agent.kind || 'dummy' });
   }
-  let registry, pairing;
+  let registry,
+    pairing,
+    storageFailed = false;
+  function persist(next) {
+    if (storageFailed) throw new Error('Registration storage unavailable.');
+    try {
+      saveRegistrations(next);
+    } catch {
+      storageFailed = true;
+      for (const peer of connected.values()) peer.terminate();
+      for (const ws of browsers) ws.terminate();
+      throw new Error('Registration storage unavailable.');
+    }
+  }
   const browsers = new Set(),
     connected = new Map(),
     pending = new Map();
@@ -143,6 +157,10 @@ export async function startWebServer({
   };
   const logout = (key) => sessions.logout(key);
   async function handle(req, res) {
+    if (storageFailed) {
+      json(res, 503, { error: 'registration_storage_unavailable' });
+      return;
+    }
     if (!validHost(req)) {
       json(res, 403, { error: 'invalid_host' });
       return;
@@ -326,12 +344,14 @@ export async function startWebServer({
       }
       const id = randomUUID(),
         token = randomKey();
-      registrations.set(id, {
+      const registration = {
         id,
         label: value.label.trim(),
         kind: value.kind,
         tokenHash: digest(token),
-      });
+      };
+      persist([...registrations.values(), registration]);
+      registrations.set(id, registration);
       // Only this creation response includes the plaintext. Never retain/re-list it.
       json(res, 201, { id, token, kind: value.kind });
       broadcastRoster();
@@ -394,6 +414,7 @@ export async function startWebServer({
   }
   registry = createAgentRegistry({
     registrations,
+    saveRegistrations: persist,
     sessionExpires: (key) => sessions.get(key)?.expires,
     isConnected: (id) => connected.has(id),
     onTicketCleared: (id) => {
@@ -412,6 +433,7 @@ export async function startWebServer({
   });
   const authenticateAgent = registry.authenticate;
   function revokeAgent(id) {
+    persist([...registrations.values()].filter((agent) => agent.id !== id));
     const peer = connected.get(id);
     registrations.delete(id);
     connected.delete(id);
@@ -421,6 +443,10 @@ export async function startWebServer({
     broadcastRoster();
   }
   function browserMessage(ws, value) {
+    if (storageFailed) {
+      ws.terminate();
+      return;
+    }
     if (!object(value) || value.v !== 1) throw new Error('Protocol.');
     if (
       value.type === 'select' &&
@@ -599,6 +625,10 @@ export async function startWebServer({
     throw new Error('Protocol.');
   }
   server.on('upgrade', (req, socket, head) => {
+    if (storageFailed) {
+      socket.destroy();
+      return;
+    }
     const refuse = (code = '403 Forbidden') =>
       socket.end(`HTTP/1.1 ${code}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
     if (!validHost(req)) {
