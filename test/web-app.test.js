@@ -198,6 +198,16 @@ test('actual browser app module logs in, selects, chats, recovers dummy quota an
   await until(() => element('pending-clients').children.length === 0);
   await element('register-agent').dispatch('submit');
   assert.match(element('registration-secret').value, /^[A-Za-z0-9_-]{43}$/);
+  const pagehideResponse = await realFetch(`${server.origin}/agent/requests`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Pis-Web': '1' }, body: JSON.stringify({ clientId: crypto.randomUUID(), label: 'Pagehide client', kind: 'dummy', previousToken: null }) });
+  const pagehideRequest = await pagehideResponse.json();
+  await until(() => element('pending-clients').children.length === 1);
+  const pagehideCode = nodes(element('pending-clients')).find(node => node.tag === 'input');
+  pagehideCode.value = pagehideRequest.code;
+  pageEvents.get('pagehide')();
+  assert.equal(element('registration-secret').value, '');
+  assert.equal(element('registration-secret-label').hidden, true);
+  assert.equal(pagehideCode.value, '');
+  assert.equal(element('pending-clients').children.length, 0);
   await element('logout').dispatch('click');
   await until(() => element('workspace').hidden);
   assert.equal(element('login').hidden, false);
