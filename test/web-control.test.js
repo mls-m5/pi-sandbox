@@ -37,6 +37,14 @@ async function login(origin) {
   assert.equal(response.status, 200);
   return { cookie: response.headers['set-cookie'][0].split(';')[0], csrf: response.json().csrf };
 }
+async function enrollmentKey(origin, credentials) {
+  const response = await request(origin, '/enrollment-keys', { method: 'POST', headers: { Origin: origin, Cookie: credentials.cookie, 'X-CSRF-Token': credentials.csrf }, value: {} });
+  assert.equal(response.status, 201);
+  return response.json();
+}
+async function redeemEnrollmentKey(origin, key) {
+  return request(origin, '/agent/enroll', { method: 'POST', headers: { Authorization: `Bearer ${key}` }, value: { clientId: randomUUID(), label: 'session-owned', kind: 'dummy', previousToken: null } });
+}
 async function peer(t, origin, path, headers) {
   const ws = new WebSocket(`${origin.replace('http:', 'ws:')}${path}`, { headers, perMessageDeflate: false });
   ws.on('error', () => {});
@@ -293,6 +301,56 @@ webTest('revoking a unique machine key closes its connection and prevents reauth
   const closed = once(agent.ws, 'close'); f.server.revokeAgent('dummy-1'); await closed;
   assert.equal(await denied(f.origin, '/agent', { Authorization: `Bearer ${f.keys[0]}` }), 403);
   assert.equal(f.server.roster().length, 1);
+});
+
+webTest('logout closes only its browser and invalidates only its unused enrollment key', async t => {
+  const f = await fixture(t), agent = await manual(t, f, 0);
+  const credentialsA = await login(f.origin), credentialsB = await login(f.origin);
+  const keyA = await enrollmentKey(f.origin, credentialsA), keyB = await enrollmentKey(f.origin, credentialsB);
+  const browserA = await browser(t, f.origin, credentialsA), browserB = await browser(t, f.origin, credentialsB);
+  await Promise.all([browserA.wait(value => value.type === 'roster'), browserB.wait(value => value.type === 'roster')]);
+
+  const closedA = once(browserA.ws, 'close');
+  const logout = await request(f.origin, '/logout', { method: 'POST', headers: { Origin: f.origin, Cookie: credentialsA.cookie, 'X-CSRF-Token': credentialsA.csrf }, value: {} });
+  assert.equal(logout.status, 200);
+  await closedA;
+  assert.equal(browserB.ws.readyState, WebSocket.OPEN);
+  const selected = await select(browserB);
+  assert.equal(selected.agentId, 'dummy-1');
+
+  const deniedA = await redeemEnrollmentKey(f.origin, keyA.token);
+  assert.equal(deniedA.status, 403);
+  const acceptedB = await redeemEnrollmentKey(f.origin, keyB.token);
+  assert.equal(acceptedB.status, 201);
+  assert.equal((await acceptedB.json()).label, 'session-owned');
+  assert.equal(browserB.ws.readyState, WebSocket.OPEN);
+  assert.equal(f.server.roster().filter(value => value.online).length, 1);
+  assert.ok(agent.ws.readyState === WebSocket.OPEN);
+});
+
+webTest('heartbeat expires an idle browser session and clears only its enrollment key', async t => {
+  const f = await fixture(t, { sessionMs: 1000, heartbeatMs: 20 });
+  let now = 1_000_000;
+  t.mock.method(Date, 'now', () => now);
+  const credentialsA = await login(f.origin), keyA = await enrollmentKey(f.origin, credentialsA);
+  const browserA = await browser(t, f.origin, credentialsA);
+  await browserA.wait(value => value.type === 'roster');
+
+  now += 900;
+  const credentialsB = await login(f.origin), keyB = await enrollmentKey(f.origin, credentialsB);
+  const browserB = await browser(t, f.origin, credentialsB);
+  await browserB.wait(value => value.type === 'roster');
+  now += 150;
+  const closedA = once(browserA.ws, 'close');
+  await closedA;
+
+  assert.equal(browserB.ws.readyState, WebSocket.OPEN);
+  const deniedA = await redeemEnrollmentKey(f.origin, keyA.token);
+  assert.equal(deniedA.status, 403);
+  const acceptedB = await redeemEnrollmentKey(f.origin, keyB.token);
+  assert.equal(acceptedB.status, 201);
+  assert.equal((await acceptedB.json()).label, 'session-owned');
+  assert.equal(browserB.ws.readyState, WebSocket.OPEN);
 });
 
 webTest('expired sessions cannot submit commands even before a heartbeat sweep', async t => {
