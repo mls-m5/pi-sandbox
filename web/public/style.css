@@ -57,6 +57,38 @@ aside,
 aside {
   border-right: 1px solid #344154;
 }
+#agent-panel {
+  position: static;
+  margin: 0;
+  padding: 0;
+  width: auto;
+  max-width: none;
+  max-height: none;
+  border: 0;
+  background: var(--bg);
+  color: inherit;
+  min-width: 0;
+}
+#agent-panel[open] {
+  display: block;
+}
+#agent-menu-close {
+  display: none;
+}
+#agent-menu {
+  margin-left: auto;
+}
+#mode-note,
+.menu-warning {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+#agent-panel::backdrop {
+  background: rgb(0 0 0 / 65%);
+}
+body:has(#agent-panel:modal) {
+  overflow: hidden;
+}
 #login {
   max-width: 540px;
   margin: 2rem auto;
@@ -435,23 +467,48 @@ footer {
     grid-template-columns: 1fr;
   }
   aside {
-    border-right: 0;
-    border-bottom: 1px solid #344154;
+    border: 0;
+  }
+  #agent-panel.drawer-supported:not(:modal) {
+    display: none;
+  }
+  #agent-panel.drawer-supported:modal {
+    position: fixed;
+    inset: 0 auto auto 0;
+    width: min(90vw, 25rem);
+    height: 100dvh;
+    max-height: 100dvh;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    box-shadow: 0 0 2rem #0008;
+  }
+  #agent-menu-close {
+    display: inline-block;
+  }
+  #agent-menu,
+  #agent-menu-close {
+    min-height: 44px;
+    font-size: 0.85rem;
+    padding: 0.45rem 0.6rem;
   }
   header {
-    padding: 1rem;
+    padding: 0.65rem 1rem;
+    gap: 0.75rem;
+  }
+  header h1 span {
+    display: none;
   }
   .chat,
   aside {
     padding: 1rem;
   }
   #agents {
-    display: flex;
-    gap: 0.5rem;
-    overflow: auto;
+    display: block;
   }
   .agent-button {
-    min-width: 170px;
+    min-width: 0;
+    min-height: 44px;
+    overflow-wrap: anywhere;
   }
   #messages {
     max-height: 45vh;

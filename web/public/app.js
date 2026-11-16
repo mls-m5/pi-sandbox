@@ -9,8 +9,10 @@ import { createPendingCommands } from './pending-commands.js';
 import { createPairingUI } from './pairing-ui.js';
 import { createMessageQueue } from './message-queue.js';
 import { createServerUpdateUI } from './server-update.js';
+import { createAgentDrawer } from './agent-drawer.js';
 
 const byId = (id) => document.getElementById(id);
+const agentDrawer = createAgentDrawer({ document });
 const model = new ChatModel(),
   commands = createPendingCommands(),
   diagnosticLines = [];
@@ -134,7 +136,10 @@ function draw() {
       button.type = 'button';
       button.className = `agent-button${agent.id === selected ? ' selected' : ''}`;
       button.textContent = `${agent.label}\n${agent.online ? agent.status : startupText(agent.startup) || 'offline'} · ${agent.kind}`;
-      button.addEventListener('click', () => choose(agent.id));
+      button.addEventListener('click', () => {
+        choose(agent.id);
+        agentDrawer.close();
+      });
       return button;
     });
     byId('agents').replaceChildren(...buttons);
@@ -442,6 +447,7 @@ function retryConnect() {
 }
 enrollment.bind();
 function showLogin() {
+  agentDrawer.setActive(false);
   enrollment.clear();
   pairing.clear();
   messageQueue.clear();
@@ -462,6 +468,7 @@ function showLogin() {
   byId('login').hidden = false;
 }
 function showWorkspace() {
+  agentDrawer.setActive(true);
   byId('login').hidden = true;
   byId('workspace').hidden = false;
   byId('logout').hidden = false;
@@ -555,6 +562,7 @@ const startupTick = setInterval(() => {
   if (connected && agents.some((agent) => !agent.online && agent.startup)) draw();
 }, 1000);
 globalThis.addEventListener('pagehide', () => {
+  agentDrawer.destroy();
   clearInterval(startupTick);
   enrollment.clear();
   pairing.clear();

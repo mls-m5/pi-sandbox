@@ -10,8 +10,16 @@
   <body>
     <header>
       <h1>pis <span>lokal kontroll</span></h1>
-      <p id="mode-note">Lokala agenter · inga värdgodkännanden</p>
-      <button id="logout" hidden>Logga ut</button>
+      <button
+        id="agent-menu"
+        type="button"
+        aria-controls="agent-panel"
+        aria-expanded="false"
+        aria-haspopup="dialog"
+        hidden
+      >
+        ☰ Agenter och meny
+      </button>
     </header>
     <section id="login">
       <h2>Logga in</h2>
@@ -29,48 +37,75 @@
       <p id="login-note" role="status"></p>
     </section>
     <main id="workspace" hidden>
-      <aside>
-        <h2>Agenter</h2>
-        <p id="connection" role="status">Ansluter…</p>
-        <div id="agents"></div>
-        <section aria-label="Väntande klienter">
-          <h3>Väntande klienter</h3>
-          <p>
-            Kör pis --connect i projektets värdterminal. Välj rätt förfrågan här och ange den
-            tvåsiffriga koden från klienten. Godkänn bara klienter du litar på.
+      <dialog id="agent-panel" aria-labelledby="agent-menu-title" open>
+        <aside>
+          <div class="toolbar">
+            <h2 id="agent-menu-title">Agenter</h2>
+            <button id="agent-menu-close" type="button">Stäng meny</button>
+          </div>
+          <p id="mode-note">Lokala agenter · inga värdgodkännanden</p>
+          <p id="connection" role="status">Ansluter…</p>
+          <div id="agents"></div>
+          <section aria-label="Väntande klienter">
+            <h3>Väntande klienter</h3>
+            <p>
+              Kör pis --connect i projektets värdterminal. Välj rätt förfrågan här och ange den
+              tvåsiffriga koden från klienten. Godkänn bara klienter du litar på.
+            </p>
+            <div id="pending-clients"></div>
+            <p id="pairing-note" role="status"></p>
+          </section>
+          <details>
+            <summary>Avancerat · äldre anslutningsnyckel</summary>
+            <form id="register-agent">
+              <button id="register-submit">Skapa anslutningsnyckel</button>
+            </form>
+            <p id="register-note" role="status"></p>
+            <label id="registration-secret-label" hidden
+              >Engångsnyckel · giltig i 10 minuter<textarea
+                id="registration-secret"
+                readonly
+                rows="3"
+                autocomplete="off"
+                spellcheck="false"
+              ></textarea></label
+            ><button id="clear-registration" type="button" hidden>Dölj och rensa nyckeln</button>
+            <p>
+              Kör pis --connect PROJEKT --server ADRESS --enrollment-key i en värdterminal. Klistra
+              nyckeln i den dolda frågan. Agenten namnges och visas först när registreringen lyckas.
+              Nyckeln rensas när den används.
+            </p>
+          </details>
+          <details>
+            <summary>Serverunderhåll</summary>
+            <button id="server-update" type="button" disabled>
+              Uppdatera och starta om servern
+            </button>
+            <p id="server-update-note" role="status"></p>
+          </details>
+          <button id="revoke-agent" type="button" disabled>Återkalla vald agentnyckel</button>
+          <p id="registration-action" role="status"></p>
+          <div class="chat-details">
+            <details>
+              <summary>Vald agents verktygshändelser</summary>
+              <div id="tools"></div>
+            </details>
+            <details>
+              <summary>Anslutningsdiagnostik</summary>
+              <pre id="diagnostics"></pre>
+              <p>
+                Dela bara kommando, kod och referens här. Skicka inte logg-/state-mappar, lösenord
+                eller råa nätverkssvar.
+              </p>
+            </details>
+          </div>
+          <button id="logout" hidden>Logga ut</button>
+          <p class="menu-warning">
+            Lokal testversion. Agentinnehåll är opålitligt. Riktiga Pi-projekt kan använda
+            modellkvot. Ingen publik serverkonfiguration stöds.
           </p>
-          <div id="pending-clients"></div>
-          <p id="pairing-note" role="status"></p>
-        </section>
-        <details>
-          <summary>Avancerat · äldre anslutningsnyckel</summary>
-          <form id="register-agent">
-            <button id="register-submit">Skapa anslutningsnyckel</button>
-          </form>
-          <p id="register-note" role="status"></p>
-          <label id="registration-secret-label" hidden
-            >Engångsnyckel · giltig i 10 minuter<textarea
-              id="registration-secret"
-              readonly
-              rows="3"
-              autocomplete="off"
-              spellcheck="false"
-            ></textarea></label
-          ><button id="clear-registration" type="button" hidden>Dölj och rensa nyckeln</button>
-          <p>
-            Kör pis --connect PROJEKT --server ADRESS --enrollment-key i en värdterminal. Klistra
-            nyckeln i den dolda frågan. Agenten namnges och visas först när registreringen lyckas.
-            Nyckeln rensas när den används.
-          </p>
-        </details>
-        <details>
-          <summary>Serverunderhåll</summary>
-          <button id="server-update" type="button" disabled>Uppdatera och starta om servern</button>
-          <p id="server-update-note" role="status"></p>
-        </details>
-        <button id="revoke-agent" type="button" disabled>Återkalla vald agentnyckel</button>
-        <p id="registration-action" role="status"></p>
-      </aside>
+        </aside>
+      </dialog>
       <section class="chat">
         <div class="toolbar">
           <h2 id="agent-title">Välj en agent</h2>
@@ -83,20 +118,6 @@
           >Kontext: okänd</small
         >
         <p id="sync-note"></p>
-        <div class="chat-details">
-          <details>
-            <summary>Senaste verktygshändelser</summary>
-            <div id="tools"></div>
-          </details>
-          <details>
-            <summary>Anslutningsdiagnostik · utan chattinnehåll</summary>
-            <pre id="diagnostics"></pre>
-            <p>
-              Dela bara kommando, kod och referens här. Skicka inte logg-/state-mappar, lösenord
-              eller råa nätverkssvar.
-            </p>
-          </details>
-        </div>
         <div id="messages" aria-label="Konversation"></div>
         <section class="message-queue" aria-label="Meddelandekö">
           <details>
@@ -179,9 +200,5 @@
         </form>
       </section>
     </main>
-    <footer>
-      Lokal testversion. Innehåll från agenter är opålitlig text. Ingen publik serverkonfiguration
-      stöds ännu. Riktiga Pi-projekt kan använda modellkvot; bara dummyn är tokenfri.
-    </footer>
   </body>
 </html>

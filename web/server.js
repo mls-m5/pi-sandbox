@@ -28,6 +28,7 @@ const assets = new Map([
   ['/app.js', ['app.js', 'text/javascript; charset=utf-8']],
   ['/message-queue.js', ['message-queue.js', 'text/javascript; charset=utf-8']],
   ['/server-update.js', ['server-update.js', 'text/javascript; charset=utf-8']],
+  ['/agent-drawer.js', ['agent-drawer.js', 'text/javascript; charset=utf-8']],
   ['/pairing-ui.js', ['pairing-ui.js', 'text/javascript; charset=utf-8']],
   ['/activity.js', ['activity.js', 'text/javascript; charset=utf-8']],
   ['/pending-commands.js', ['pending-commands.js', 'text/javascript; charset=utf-8']],
