@@ -10,6 +10,8 @@ import { createPairingUI } from './pairing-ui.js';
 import { createMessageQueue } from './message-queue.js';
 import { createServerUpdateUI } from './server-update.js';
 import { createAgentDrawer } from './agent-drawer.js';
+import { createHostPushUI } from './host-push.js';
+import { createDelegationsUI } from './delegations.js';
 
 const byId = (id) => document.getElementById(id);
 const agentDrawer = createAgentDrawer({ document });
@@ -38,6 +40,28 @@ const online = () =>
   agents.some(
     (agent) => agent.id === selected && agent.online && agent.generation === model.generation,
   );
+const hostPush = createHostPushUI({
+  document,
+  getContext: () => ({ agentId: selected, generation: model.generation, online: online() }),
+  send: (fields) => {
+    if (!online()) return false;
+    try {
+      socket.send(
+        JSON.stringify({ v: 1, agentId: selected, generation: model.generation, ...fields }),
+      );
+      return true;
+    } catch {
+      return false;
+    }
+  },
+});
+const delegations = createDelegationsUI({
+  document,
+  getContext: () => ({ online: online(), synchronized: model.stateKnown }),
+  refresh: () => {
+    void refreshDelegations(selection);
+  },
+});
 const enrollment = createEnrollmentUI({
   document,
   isConnected: () => connected,
@@ -100,7 +124,7 @@ function draw() {
         ? `Kontext: ${Math.max(0, 100 - remaining).toFixed(1)} % kvar · senast rapporterat`
         : 'Kontext: okänd';
     byId('mode-note').textContent = agents.some((agent) => agent.kind === 'pi')
-      ? 'Riktiga Pi-projekt · modell-anrop kan kosta · inga värdgodkännanden'
+      ? 'Riktiga Pi-projekt · modell-anrop kan kosta · Git kräver separat opt-in på värden'
       : 'Bara dummy · inga modelltokens · inga värdgodkännanden';
     byId('prompt').placeholder =
       selectedAgent?.kind === 'pi' ? 'Skriv till Pi i sandboxen…' : 'Skriv till dummy-agenten…';
@@ -127,6 +151,8 @@ function draw() {
         : 'Pi-kön är inte läst. Hämta tillbaka kvarvarande kö för att redigera; detta tömmer Pi-kön.';
     messageQueue.draw();
     serverUpdate.draw();
+    hostPush.draw();
+    delegations.draw();
     byId('stop').disabled = !online() || mutation;
     byId('refresh').disabled = !online() || syncing;
     byId('revoke-agent').disabled = !connected || !selected;
@@ -231,6 +257,7 @@ async function synchronize({ history: loadHistory = false } = {}) {
       return;
     }
     void refreshContext(version);
+    void refreshDelegations(version);
     if (!loadHistory) {
       model.note = model.historyLoaded
         ? 'Livevy redo. Hämtad historik är en begränsad ögonblicksbild; läs igen vid behov.'
@@ -257,6 +284,13 @@ async function synchronize({ history: loadHistory = false } = {}) {
     }
   }
 }
+async function refreshDelegations(version) {
+  const generation = model.generation;
+  const result = await command('delegations');
+  if (version !== selection || generation !== model.generation) return;
+  if (result.data?.success === true && result.stable === true && result.endSeq === model.seq)
+    delegations.update(result.data.snapshot);
+}
 async function refreshContext(version) {
   const generation = model.generation;
   const result = await command('stats');
@@ -279,6 +313,8 @@ async function refreshContext(version) {
 }
 function choose(id) {
   if (!connected) return;
+  hostPush.clear();
+  delegations.clear();
   failPending();
   selected = id;
   selectToken = crypto.randomUUID();
@@ -355,6 +391,7 @@ function receive(value) {
     if (value.id !== selectToken) return;
     model.reset(value.generation, value.seq);
     contextUsage = null;
+    delegations.clear();
     model.status = value.status;
     if (value.generation) void synchronize({ history: true });
     else {
@@ -363,6 +400,7 @@ function receive(value) {
     }
   } else if (value.type === 'frame') {
     if (model.frame(value.frame)) {
+      if (value.frame.event?.type === 'delegations') delegations.update(value.frame.event.snapshot);
       if (value.frame.event?.type === 'queue_update') {
         const event = value.frame.event;
         nativeQueue =
@@ -380,6 +418,8 @@ function receive(value) {
       if (value.frame.event?.type === 'agent_settled') scheduleSync();
       draw();
     }
+  } else if (['host_push', 'host_push_review'].includes(value.type)) {
+    hostPush.receive(value);
   } else if (value.type === 'accepted') {
     commands.accepted(value);
   } else if (value.type === 'result') {
@@ -448,6 +488,8 @@ function retryConnect() {
 enrollment.bind();
 function showLogin() {
   agentDrawer.setActive(false);
+  hostPush.clear();
+  delegations.clear();
   enrollment.clear();
   pairing.clear();
   messageQueue.clear();
@@ -563,6 +605,8 @@ const startupTick = setInterval(() => {
 }, 1000);
 globalThis.addEventListener('pagehide', () => {
   agentDrawer.destroy();
+  hostPush.clear();
+  delegations.clear();
   clearInterval(startupTick);
   enrollment.clear();
   pairing.clear();

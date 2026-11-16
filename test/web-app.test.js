@@ -134,6 +134,11 @@ test('actual browser app module logs in, selects, chats, recovers dummy quota an
   await until(() => !element('quota').disabled); // Send is now also enabled for steer while working.
   await until(() => element('context-usage').textContent.includes('70.0 % kvar'));
   assert.ok(!element('context-usage').textContent.includes('DO_NOT_PROJECT'));
+  connector.rpc.emit('event', { type: 'extension_ui_request', method: 'setWidget', widgetKey: 'subagent-async', widgetLines: ['PI_SUBAGENT_ASYNC_JSON:' + JSON.stringify({ kind: 'pi-subagents.async-status-snapshot', version: 1, runs: [{ id: 'run-1', kind: 'subagent', label: 'Luna worker', model: 'openai-codex/gpt-6-luna', state: 'running', sessionFile: 'CHILD_PRIVATE' }] })] });
+  await until(() => element('delegations-summary').textContent.includes('1 rapporterade'));
+  assert.ok(nodes(element('delegations')).some(node => node.textContent.includes('Luna worker')));
+  assert.ok(!nodes(element('delegations')).some(node => node.textContent.includes('CHILD_PRIVATE')));
+  await element('refresh-delegations').dispatch('click');
   // Use a short timed episode through the actual input handler (button uses 5s).
   element('prompt').value = '/dummy quota 1'; await element('prompt-form').dispatch('submit');
   await until(() => content(element('state')).includes('waiting'));

@@ -198,6 +198,24 @@ aside details {
     animation: none;
   }
 }
+.delegation-node {
+  border-left: 2px solid #52637b;
+  padding: 0.4rem 0.65rem;
+  margin: 0.5rem 0;
+  overflow-wrap: anywhere;
+}
+.delegation-node p {
+  margin: 0.2rem 0;
+}
+#host-push pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 0.8rem;
+}
+#host-push button {
+  min-height: 44px;
+  margin: 0.25rem;
+}
 .tool-card {
   background: #101b2a;
   border: 2px dashed #718198;

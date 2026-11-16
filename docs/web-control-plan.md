@@ -2,14 +2,14 @@
 
 ## GUI follow-ups and implementation status
 
-- Improve the GUI's view of **how agents are working**, including delegated/parallel activity, rather than only the existing lifecycle/status/chat projection. Define bounded, content-safe activity information and distinguish running/waiting/idle from task completion; do not expose arbitrary worker state/auth/transcripts through diagnostics.
+- **A bounded structured subagent overview is implemented** for compatible pi-subagents async RPC widgets: nested run/step labels, lifecycle, model and last-reported tool, with omitted/unknown states and reconnect-safe sanitized status cache. Foreground-only progress still uses tool cards. No private child transcript/paths/prompts, arbitrary extension UI or control/scheduling authority. See [supported format and limits](web-control.md#structured-subagent-overview).
 - **Queued, editable steer/follow-up messages are now implemented** through bounded browser drafts and explicit native queue retrieval. Pi RPC has no atomic single-item queue edit: the user confirms taking the whole remaining queue back as drafts, then manually delivers reviewed text. Scope is agent/generation; unknown/duplicate deliveries remain locked, no automatic replay or supervisor. See [the implemented workflow, limits and verification gates](web-control.md#steering-and-editable-message-queues).
 
-The richer agent/delegated-work dashboard is still a future request; steering queue support is implemented separately from the experimental SSH transport. No unattended supervisor or host approval changes are implied.
+Broader fleet/foreground inventory, richer structured progress and per-child context/quota remain future work. The read-only overview and steering queue are separate from SSH transport, explicit host Git approval and any unattended supervisor.
 
-## Requested: agent-proposed non-force Git push from the web workflow
+## Implemented first slice: agent-proposed non-force Git push
 
-The user requests a way for an agent to propose a Git push (never force) while using the web workflow. Existing terminal `request_host_git` already supports exact-commit non-force pushes with host approval, but is unavailable in web RPC. Web support remains unimplemented: design an authenticated, explicit host-side approval for the exact repository/remote/commit/destination branch, preserving the existing snapshot isolation, fast-forward checks, credential boundary, lifecycle and no-retry-on-ambiguity contract in host-actions.md. Never expose unrestricted Git/shell commands or host credentials to the agent. A server update button must remain separate from agent Git authorization.
+Implemented as explicit per-launch `--allow-web-git` on the owning Pi host (connect/run or local --server --project). The existing image-owned `request_host_git` proposes one exact-commit non-force push; only after independently verified container shutdown does a private snapshot reach host IPC and an authenticated session/runtime/proposal-bound GUI review. Individual in-project absorbed submodules, including nested layouts, are supported; no automatic recursive push. Noninteractive host SSH/auth, one-use approval/code/expiry, no retry or model continuation. Default web, dummy and standalone-only modes still grant no host push authority. See [current contracts and host verification gaps](host-actions.md#explicit-web-git-push-approval-opt-in-on-the-agent-host). No unrestricted Git/shell or host credentials reach the agent. Server updates remain a separate authority.
 
 ## Server update button: first guarded implementation
 

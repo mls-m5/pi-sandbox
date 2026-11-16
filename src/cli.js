@@ -53,6 +53,7 @@ Usage:
   pis --server --help                # server startup options
   pis --server --standalone          # private persistent registry, no local agents
   pis --connect                     # request code approval for this local project
+  pis --connect --allow-web-git     # opt in to reviewed exact-commit host pushes
   pis --connect --help               # saved server/overrides and advanced commands
   pis --forward ssh://[USER@]HOST    # Browser link via SSH; defaults 22/43128
   pis --forward --help              # Ports, known hosts and shutdown details

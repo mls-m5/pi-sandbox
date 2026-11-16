@@ -99,6 +99,7 @@
               </p>
             </details>
           </div>
+          <section id="host-push" aria-label="Värdgodkännande för Git-push"></section>
           <button id="logout" hidden>Logga ut</button>
           <p class="menu-warning">
             Lokal testversion. Agentinnehåll är opålitligt. Riktiga Pi-projekt kan använda
@@ -118,6 +119,11 @@
           >Kontext: okänd</small
         >
         <p id="sync-note"></p>
+        <details class="delegations-panel">
+          <summary id="delegations-summary">Subagenter · okänd översikt</summary>
+          <button id="refresh-delegations" type="button" disabled>Uppdatera översikt</button>
+          <div id="delegations"></div>
+        </details>
         <div id="messages" aria-label="Konversation"></div>
         <section class="message-queue" aria-label="Meddelandekö">
           <details>
