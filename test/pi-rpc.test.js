@@ -160,6 +160,40 @@ test('generation binding, bounded duplicate tombstones and payload conflicts pre
   assert.equal(sent.length, 2);
 });
 
+test('steer and follow-up validate prompt text, require known working state and send only native messages', async t => {
+  const { rpc, sent, reply } = fixture(t);
+  const control = new PiControl(rpc);
+  for (const action of ['steer', 'follow_up']) {
+    rpc.setStatus('unknown');
+    assert.throws(() => validateControlCommand(command(control, `bad-${action}`, action)), /control_invalid/);
+    await assert.rejects(control.execute(command(control, `unknown-${action}`, action, { message: 'x' })), /control_state_unknown/);
+    rpc.setStatus('idle');
+    await assert.rejects(control.execute(command(control, `idle-${action}`, action, { message: 'x' })), /control_not_working/);
+    rpc.setStatus('working');
+    const pending = control.execute(command(control, `working-${action}`, action, { message: ' exact ' }));
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(sent.at(-1), { type: action, message: ' exact ', id: sent.at(-1).id });
+    reply(sent.at(-1), { disposition: 'queued' });
+    assert.equal((await pending).data.disposition, 'queued');
+    assert.deepEqual(await control.execute(command(control, `working-${action}`, action, { message: ' exact ' })), { duplicate: true });
+  }
+});
+
+test('take_queue requires known idle or working and only clears without aborting', async t => {
+  const { rpc, sent, reply } = fixture(t);
+  const control = new PiControl(rpc);
+  await assert.rejects(control.execute(command(control, 'unknown', 'take_queue')), /control_state_unknown/);
+  for (const status of ['idle', 'working']) {
+    rpc.setStatus(status);
+    const pending = control.execute(command(control, status, 'take_queue'));
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(sent.at(-1).type, 'clear_queue');
+    reply(sent.at(-1), { steering: ['a'], followUp: ['b'] });
+    assert.deepEqual((await pending).data, { steering: ['a'], followUp: ['b'] });
+    assert.equal(sent.some(item => item.type === 'abort'), false);
+  }
+});
+
 test('prompts reject busy time, reserve idle before acceptance and do not imply completion', async t => {
   const { rpc, sent, reply, receive } = fixture(t);
   const control = new PiControl(rpc);

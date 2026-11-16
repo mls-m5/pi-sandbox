@@ -304,6 +304,43 @@ export function projectEvent(source) {
   return null;
 }
 
+function projectQueue(source) {
+  if (!Array.isArray(source?.steering) || !Array.isArray(source?.followUp))
+    throw Object.assign(new Error('queue_invalid_reply'), { code: 'queue_invalid_reply' });
+  const queue = [];
+  let omitted = 0;
+  let inspected = 0;
+  for (const [field, kind] of [
+    ['steering', 'steer'],
+    ['followUp', 'follow_up'],
+  ]) {
+    const values = Array.isArray(source?.[field]) ? source[field] : [];
+    for (let index = 0; index < values.length; index++) {
+      if (inspected >= 64) {
+        omitted += values.length - index;
+        break;
+      }
+      inspected++;
+      const message = values[index];
+      if (
+        typeof message !== 'string' ||
+        !message.trim() ||
+        Buffer.byteLength(message) > 64 * 1024
+      ) {
+        omitted++;
+        continue;
+      }
+      const entry = { kind, message };
+      if (queue.length >= 32 || Buffer.byteLength(JSON.stringify([...queue, entry])) > 128 * 1024) {
+        omitted++;
+        continue;
+      }
+      queue.push(entry);
+    }
+  }
+  return { queue, omitted };
+}
+
 const errors = new Set([
   'view_detached',
   'control_invalid_command',
@@ -313,6 +350,9 @@ const errors = new Set([
   'control_id_limit',
   'control_mutation_pending',
   'control_not_idle',
+  'control_not_working',
+  'control_state_unknown',
+  'queue_invalid_reply',
   'rpc_unavailable',
   'rpc_pending_limit',
   'rpc_write_limit',
@@ -384,14 +424,18 @@ export class PiView extends EventEmitter {
           success: true,
           history: projectHistory(response.data?.messages, response.data?.historyWindow),
         };
-      else if (command.action === 'prompt') {
+      else if (['prompt', 'steer', 'follow_up'].includes(command.action)) {
         const disposition = response.data?.disposition;
         data = {
           success: true,
-          disposition: ['started', 'queued', 'handled'].includes(disposition)
-            ? disposition
-            : 'unknown',
+          disposition:
+            (command.action === 'prompt' && disposition === 'started') ||
+            ['queued', 'handled'].includes(disposition)
+              ? disposition
+              : 'unknown',
         };
+      } else if (command.action === 'take_queue') {
+        data = { success: true, ...projectQueue(response.data) };
       } else data = { success: true };
     } catch (error) {
       data = { success: false, error: errors.has(error.code) ? error.code : 'control_failed' };

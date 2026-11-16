@@ -16,6 +16,8 @@ export async function createDummyAgent(
   const sessionId = randomUUID(),
     messages = [];
   let historyBytes = 0,
+    steering = [],
+    followUp = [],
     leaf = 0,
     epoch = 0,
     active,
@@ -65,6 +67,24 @@ export async function createDummyAgent(
     leaf++;
     while (messages.length > 100 || historyBytes > 512 * 1024)
       historyBytes -= Buffer.byteLength(JSON.stringify(messages.shift()));
+  };
+  const emitQueue = () => output({ type: 'queue_update', steering, followUp });
+  const clearQueues = () => {
+    const queued = {
+      steering: steering.map((item) => item.message),
+      followUp: followUp.map((item) => item.message),
+    };
+    steering = [];
+    followUp = [];
+    emitQueue();
+    return queued;
+  };
+  const enqueue = (queue, message) => {
+    const bytes = queue.reduce((total, item) => total + Buffer.byteLength(item.message), 0);
+    if (queue.length >= 32 || bytes + Buffer.byteLength(message) > 128 * 1024) return false;
+    queue.push({ message });
+    emitQueue();
+    return true;
   };
   const cancel = () => {
     epoch++;
@@ -158,6 +178,15 @@ export async function createDummyAgent(
               assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta },
             });
           }
+          const steered = steering.splice(0);
+          if (steered.length) {
+            for (const item of steered) {
+              const user = { role: 'user', content: item.message, timestamp: Date.now() };
+              append(user);
+              output({ type: 'message_end', message: user });
+            }
+            emitQueue();
+          }
           assistant = {
             role: 'assistant',
             provider: 'openai-codex',
@@ -175,9 +204,14 @@ export async function createDummyAgent(
       } finally {
         if (active === turn) active = undefined;
         output({ type: 'agent_end', messages: [], willRetry: false });
-        output({ type: 'agent_settled', aborted });
+        if (aborted || !followUp.length) output({ type: 'agent_settled', aborted });
       }
       if (!aborted && isCodexQuotaError(assistant) && autoResume && !closed) wait();
+      else if (!aborted && !closed && followUp.length) {
+        const next = followUp.shift().message;
+        emitQueue();
+        startTurn(next);
+      }
     })();
     // Transport owners must close on output failure, never leave a rejected task.
     void turn.promise.catch(() => {
@@ -212,7 +246,9 @@ export async function createDummyAgent(
       response(false, undefined, 'Invalid dummy command.');
       return;
     }
-    const fields = record.type === 'prompt' ? ['type', 'id', 'message'] : ['type', 'id'];
+    const fields = ['prompt', 'steer', 'follow_up'].includes(record.type)
+      ? ['type', 'id', 'message']
+      : ['type', 'id'];
     if (Object.keys(record).some((key) => !fields.includes(key))) {
       response(false, undefined, 'Unsupported dummy command fields.');
       return;
@@ -224,7 +260,7 @@ export async function createDummyAgent(
         model: { id: 'dummy-lorem', name: 'Offline dummy', provider: 'openai-codex' },
         isStreaming: Boolean(active),
         isCompacting: false,
-        pendingMessageCount: 0,
+        pendingMessageCount: steering.length + followUp.length,
         messageCount: messages.length,
         dummy: true,
         autoResume,
@@ -237,10 +273,11 @@ export async function createDummyAgent(
       return;
     }
     if (record.type === 'clear_queue') {
-      response(true, { steering: [], followUp: [] });
+      response(true, clearQueues());
       return;
     }
     if (record.type === 'abort') {
+      clearQueues();
       cancel();
       const turn = active;
       turn?.controller.abort();
@@ -249,7 +286,7 @@ export async function createDummyAgent(
       return;
     }
     if (
-      record.type !== 'prompt' ||
+      !['prompt', 'steer', 'follow_up'].includes(record.type) ||
       typeof record.message !== 'string' ||
       !record.message.trim() ||
       Buffer.byteLength(record.message) > 64 * 1024
@@ -258,6 +295,14 @@ export async function createDummyAgent(
       return;
     }
     const text = record.message.trim();
+    if (record.type === 'steer' || record.type === 'follow_up') {
+      if (!active || !enqueue(record.type === 'steer' ? steering : followUp, record.message)) {
+        response(false, undefined, 'Dummy queue unavailable or full.');
+        return;
+      }
+      response(true, { disposition: 'queued' });
+      return;
+    }
     // Simulator controls do not append a conversation message/change the leaf.
     // Refill is intentionally out-of-band, like quota changing at the provider.
     if (text === '/dummy refill') {

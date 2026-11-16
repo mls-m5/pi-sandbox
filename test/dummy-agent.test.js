@@ -48,6 +48,29 @@ test('dummy runs real subprocess/RPC/view with lorem ipsum and fake tools, requi
   assert.equal(history.data.messages[0].content, 'hello');
 });
 
+test('dummy queues steering for delivery before completion and follow-ups for a subsequent turn', { timeout: 5000 }, async t => {
+  const f = await fixture(t, false);
+  const steer = message => f.view.execute({ v: 1, generation: f.view.control.generation, id: 's1', action: 'steer', message });
+  const follow = message => f.view.execute({ v: 1, generation: f.view.control.generation, id: 'f1', action: 'follow_up', message });
+  const accepted = await f.prompt('initial');
+  assert.equal(accepted.data.disposition, 'started');
+  await f.until(event => event.type === 'agent_start');
+  const steered = await steer('steering text');
+  assert.deepEqual(steered.data, { success: true, disposition: 'queued' });
+  assert.equal((await follow('follow-up text')).data.disposition, 'queued');
+  assert.ok(f.events.some(event => event.type === 'queue_update' && event.steering.length === 1 && event.followUp.length === 1));
+  await f.until(event => event.type === 'message_end' && event.message.role === 'user' && event.message.content === 'steering text');
+  await f.until(event => event.type === 'message_end' && event.message.role === 'user' && event.message.content === 'follow-up text');
+  const followupIndex = f.events.length;
+  await f.until(event => event.type === 'message_end' && event.message.role === 'assistant' && event.message.stopReason === 'stop' && f.events.indexOf(event) >= followupIndex);
+  await f.until(event => event.type === 'agent_settled' && event.aborted === false && f.events.indexOf(event) >= followupIndex);
+  assert.equal((await f.rpc.request('get_state')).data.isStreaming, false);
+  assert.equal(f.events.filter(event => event.type === 'agent_settled').length, 1, 'Queued follow-up work must not report an intermediate idle settlement.');
+  const history = (await f.rpc.request('get_messages')).data.messages;
+  assert.ok(history.some(message => message.role === 'user' && message.content === 'steering text'));
+  assert.ok(history.some(message => message.role === 'user' && message.content === 'follow-up text'));
+});
+
 test('quota then timed refill crosses real host wait socket and resumes exactly once in the same session', { timeout: 5000 }, async t => {
   const f = await fixture(t);
   const session = (await f.rpc.request('get_state')).data.sessionId;

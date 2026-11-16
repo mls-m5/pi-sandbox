@@ -172,7 +172,17 @@ export class PiRpc extends EventEmitter {
   }
 
   request(type, fields = {}) {
-    if (!['get_state', 'get_messages', 'prompt', 'clear_queue', 'abort'].includes(type))
+    if (
+      ![
+        'get_state',
+        'get_messages',
+        'prompt',
+        'steer',
+        'follow_up',
+        'clear_queue',
+        'abort',
+      ].includes(type)
+    )
       return Promise.reject(failure('rpc_command_forbidden'));
     if (this.closed || this.faulted || this.stopping)
       return Promise.reject(failure('rpc_unavailable'));
@@ -245,7 +255,9 @@ export function validateControlCommand(value) {
     value.generation.length > 64 ||
     typeof value.id !== 'string' ||
     !/^[A-Za-z0-9_-]{1,64}$/.test(value.id) ||
-    !['state', 'history', 'prompt', 'stop'].includes(value.action)
+    !['state', 'history', 'prompt', 'steer', 'follow_up', 'take_queue', 'stop'].includes(
+      value.action,
+    )
   )
     throw failure('control_invalid_command');
   const keys = [
@@ -253,12 +265,12 @@ export function validateControlCommand(value) {
     'generation',
     'id',
     'action',
-    ...(value.action === 'prompt' ? ['message'] : []),
+    ...(['prompt', 'steer', 'follow_up'].includes(value.action) ? ['message'] : []),
   ];
   if (Object.keys(value).some((key) => !keys.includes(key)))
     throw failure('control_invalid_command');
   if (
-    value.action === 'prompt' &&
+    ['prompt', 'steer', 'follow_up'].includes(value.action) &&
     (typeof value.message !== 'string' ||
       !value.message.trim() ||
       Buffer.byteLength(value.message) > 64 * 1024)
@@ -269,7 +281,7 @@ export function validateControlCommand(value) {
     generation: value.generation,
     id: value.id,
     action: value.action,
-    ...(value.action === 'prompt' ? { message: value.message } : {}),
+    ...(['prompt', 'steer', 'follow_up'].includes(value.action) ? { message: value.message } : {}),
   };
 }
 
@@ -299,6 +311,12 @@ export class PiControl {
     if (this.mutating) throw failure('control_mutation_pending');
     if (command.action === 'prompt' && this.rpc.status !== 'idle')
       throw failure('control_not_idle');
+    if (['steer', 'follow_up'].includes(command.action) && this.rpc.status !== 'working')
+      throw failure(
+        this.rpc.status === 'unknown' ? 'control_state_unknown' : 'control_not_working',
+      );
+    if (command.action === 'take_queue' && !['working', 'idle'].includes(this.rpc.status))
+      throw failure(this.rpc.status === 'unknown' ? 'control_state_unknown' : 'rpc_unavailable');
     this.mutating = true;
     try {
       if (command.action === 'stop') {
@@ -306,10 +324,16 @@ export class PiControl {
         if (!cleared.success) return cleared;
         return await this.rpc.request('abort');
       }
-      this.rpc.setStatus('working'); // Reserve before awaiting acceptance, preventing double submit.
-      const result = await this.rpc.request('prompt', { message: command.message });
-      // Acceptance is not completion. A handled prompt may have started independent extension work.
-      if (!result.success || result.data?.disposition === 'handled') this.rpc.setStatus('unknown');
+      if (command.action === 'take_queue') return await this.rpc.request('clear_queue');
+      if (command.action === 'prompt') this.rpc.setStatus('working'); // Reserve before awaiting acceptance.
+      const type = command.action === 'prompt' ? 'prompt' : command.action;
+      const result = await this.rpc.request(type, { message: command.message });
+      // Acceptance is not completion. Unknown/handled dispositions cannot prove task state.
+      if (
+        command.action === 'prompt' &&
+        (!result.success || result.data?.disposition === 'handled')
+      )
+        this.rpc.setStatus('unknown');
       return result;
     } catch (error) {
       if (!this.rpc.closed && !this.rpc.faulted) this.rpc.setStatus('unknown');

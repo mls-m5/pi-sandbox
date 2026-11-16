@@ -130,6 +130,38 @@ test('hostile HTML and terminal escapes stay untrusted plain text, not interpret
   // A later UI MUST use textContent, never innerHTML/Markdown/terminal rendering.
 });
 
+test('take_queue projects only bounded exact text and marks every omitted entry', async () => {
+  const large = '🙂'.repeat(17000);
+  const { view, command } = fixture(async type => type === 'clear_queue'
+    ? { success: true, data: { steering: ['exact\\ntext', large, 7, ' '.repeat(2)], followUp: ['later'], arbitrary: secret } }
+    : { success: true, data: {} });
+  const result = await view.execute(command('take', 'take_queue'));
+  assert.deepEqual(result.data, { success: true, queue: [
+    { kind: 'steer', message: 'exact\\ntext' }, { kind: 'follow_up', message: 'later' },
+  ], omitted: 3 });
+  assert.ok(bytes(result) <= VIEW_LIMITS.historyBytes);
+  assert.ok(!JSON.stringify(result).includes(secret));
+  view.detach();
+});
+
+test('take_queue never truncates resendable text and bounds count and JSON escaping', async () => {
+  for (const source of [
+    { steering: Array.from({ length: 100 }, (_, index) => `item-${index}`), followUp: ['last'] },
+    { steering: Array(4).fill('\\'.repeat(64000)), followUp: ['final'] },
+  ]) {
+    const { view, command } = fixture(async () => ({ success: true, data: source }));
+    const result = await view.execute(command('bounded-take', 'take_queue'));
+    assert.equal(result.data.success, true); assert.ok(result.data.queue.length <= 32);
+    assert.ok(Buffer.byteLength(JSON.stringify(result.data.queue)) <= 128 * 1024);
+    assert.equal(result.data.queue.length + result.data.omitted, source.steering.length + source.followUp.length);
+    for (const entry of result.data.queue) assert.ok([...source.steering, ...source.followUp].includes(entry.message));
+    assert.ok(bytes(result) <= VIEW_LIMITS.historyBytes); view.detach();
+  }
+  const { view, command } = fixture(async () => ({ success: true, data: { steering: 'not-an-array', arbitrary: secret } }));
+  assert.deepEqual((await view.execute(command('invalid-take', 'take_queue'))).data, { success: false, error: 'queue_invalid_reply' });
+  view.detach();
+});
+
 test('view sanitizes command results and errors, binds generation and does not echo prompts or raw failures', async () => {
   const { view, command, rpc } = fixture(async type => type === 'get_state' ? { success: true, data: { isStreaming: false, sessionFile: secret } } : { success: false, error: secret });
   const state = await view.execute(command('state', 'state'));
