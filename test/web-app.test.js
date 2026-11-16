@@ -57,6 +57,9 @@ test('actual browser app module logs in, selects, chats, recovers dummy quota an
     constructor(url) { super(url, { headers: { Origin: server.origin, Cookie: cookie } }); browser = this; }
     send(payload, ...args) { sent.push(JSON.parse(payload)); return super.send(payload, ...args); }
   };
+  const enrollmentAsset = await realFetch(`${server.origin}/enrollment-ui.js`);
+  assert.equal(enrollmentAsset.status, 200, 'The extracted browser module must be present in the static asset allowlist.');
+  assert.match(await enrollmentAsset.text(), /createEnrollmentUI/);
   await import(`../web/public/app.js?test=${Date.now()}`);
   element('password').value = password; await element('login-form').dispatch('submit');
   await until(() => element('agents').children.length === 2);

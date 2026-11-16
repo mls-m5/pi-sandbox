@@ -25,6 +25,7 @@ const assets = new Map([
   ['/', ['index.html', 'text/html; charset=utf-8']],
   ['/app.js', ['app.js', 'text/javascript; charset=utf-8']],
   ['/activity.js', ['activity.js', 'text/javascript; charset=utf-8']],
+  ['/enrollment-ui.js', ['enrollment-ui.js', 'text/javascript; charset=utf-8']],
   ['/markdown.js', ['markdown.js', 'text/javascript; charset=utf-8']],
   ['/view-model.js', ['view-model.js', 'text/javascript; charset=utf-8']],
   ['/render.js', ['render.js', 'text/javascript; charset=utf-8']],

@@ -4,6 +4,7 @@ import { renderChat, renderTools, renderActivity } from './render.js';
 import { handlePromptKey } from './keybindings.js';
 import { startupText, startupFailure } from './startup.js';
 import { diagnosticLine, requestFailure, resultCode, safeTrace } from './diagnostics.js';
+import { createEnrollmentUI } from './enrollment-ui.js';
 
 const byId = (id) => document.getElementById(id);
 const model = new ChatModel(),
@@ -23,16 +24,20 @@ let reconnectTimer,
   syncing = false,
   syncAttempts = 0,
   mutation = false,
-  drawing = false,
-  registering = false,
-  enrollmentId,
-  enrollmentTimer,
-  enrollmentVersion = 0;
+  drawing = false;
 const online = () =>
   connected &&
   agents.some(
     (agent) => agent.id === selected && agent.online && agent.generation === model.generation,
   );
+const enrollment = createEnrollmentUI({
+  document,
+  isConnected: () => connected,
+  isSessionActive: (session) => wantConnection && connected && csrf === session,
+  getSession: () => csrf,
+  getSelected: () => selected,
+  draw: () => draw(),
+});
 function draw() {
   if (drawing) return;
   drawing = true;
@@ -66,7 +71,7 @@ function draw() {
     byId('stop').disabled = !online() || mutation;
     byId('refresh').disabled = !online() || syncing;
     byId('revoke-agent').disabled = !connected || !selected;
-    byId('register-submit').disabled = registering || !connected;
+    byId('register-submit').disabled = enrollment.isRegistering() || !connected;
     const buttons = agents.map((agent) => {
       const button = document.createElement('button');
       button.type = 'button';
@@ -250,13 +255,7 @@ async function submit(message, clearDraft = false) {
 }
 function receive(value) {
   if (value?.v !== 1) return;
-  if (value.type === 'enrollment_cleared') {
-    if (value.id === enrollmentId) {
-      clearRegistration();
-      byId('register-note').textContent = 'Engångsnyckeln har använts eller upphört att gälla.';
-    }
-    return;
-  }
+  if (enrollment.receive(value)) return;
   if (value.type === 'roster' && Array.isArray(value.agents)) {
     const previous = agents.find((agent) => agent.id === selected);
     agents = value.agents.slice(0, 32);
@@ -339,7 +338,7 @@ async function connect() {
     };
     ws.onclose = () => {
       if (ws !== socket) return;
-      clearRegistration();
+      enrollment.clear();
       connected = false;
       model.status = 'unknown';
       model.stateKnown = false;
@@ -367,79 +366,9 @@ function retryConnect() {
       Math.min(10_000, 500 * 2 ** Math.min(retry++, 5)) + Math.random() * 200,
     );
 }
-function clearRegistration() {
-  enrollmentVersion++;
-  enrollmentId = undefined;
-  clearTimeout(enrollmentTimer);
-  byId('registration-secret').value = '';
-  byId('registration-secret-label').hidden = true;
-  byId('clear-registration').hidden = true;
-}
-async function registrationRequest(path, value) {
-  const result = await fetch(path, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Pis-Web': '1', 'X-CSRF-Token': csrf },
-    body: JSON.stringify(value),
-    cache: 'no-store',
-    redirect: 'error',
-  });
-  if (!result.ok) throw new Error('registration_failed');
-  return result.json();
-}
-byId('register-agent').addEventListener('submit', async (event) => {
-  event.preventDefault();
-  if (registering || !connected) return;
-  clearRegistration();
-  registering = true;
-  const session = csrf,
-    version = enrollmentVersion;
-  draw();
-  try {
-    const value = await registrationRequest('/enrollment-keys', {});
-    if (!wantConnection || !connected || csrf !== session || version !== enrollmentVersion) return;
-    enrollmentId = value.id;
-    enrollmentTimer = setTimeout(
-      () => {
-        clearRegistration();
-        byId('register-note').textContent = 'Engångsnyckeln har upphört att gälla. Skapa en ny.';
-      },
-      Math.max(0, Math.min(600000, value.expiresAt - Date.now())),
-    );
-    byId('registration-secret').value = value.token;
-    byId('registration-secret-label').hidden = false;
-    byId('clear-registration').hidden = false;
-    byId('register-note').textContent =
-      'Kopiera engångsnyckeln till den dolda frågan i pis --connect. Den byts mot en privat anslutningsnyckel och kan bara användas en gång. Servern får kontroll över ansluten agent; välj rätt server och projekt.';
-  } catch {
-    byId('register-note').textContent =
-      'Engångsnyckeln kunde inte skapas eller visas. Försök skapa en ny; det skapar ingen agentpost.';
-  } finally {
-    registering = false;
-    draw();
-  }
-});
-byId('clear-registration').addEventListener('click', clearRegistration);
-byId('revoke-agent').addEventListener('click', async () => {
-  const id = selected;
-  if (
-    !id ||
-    !globalThis.confirm(
-      'Återkalla vald agents anslutningsnyckel? Agentprocessen stoppas inte, men webbanslutningen stängs.',
-    )
-  )
-    return;
-  clearRegistration();
-  try {
-    await registrationRequest('/agents/revoke', { id });
-    byId('registration-action').textContent =
-      'Nyckeln är återkallad. Agenten kan fortfarande arbeta lokalt; den stoppades inte.';
-  } catch {
-    byId('registration-action').textContent =
-      'Återkallelsen kunde inte bekräftas. Kontrollera agentlistan.';
-  }
-});
+enrollment.bind();
 function showLogin() {
-  clearRegistration();
+  enrollment.clear();
   csrf = undefined;
   wantConnection = false;
   connected = false;
@@ -539,7 +468,7 @@ const startupTick = setInterval(() => {
 }, 1000);
 globalThis.addEventListener('pagehide', () => {
   clearInterval(startupTick);
-  clearRegistration();
+  enrollment.clear();
   wantConnection = false;
   selection++;
   clearTimeout(reconnectTimer);
