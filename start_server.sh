@@ -12,17 +12,30 @@ if [[ "${1:-}" == "--connect" ]]; then
   MODE=()
   if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
     printf '%s\n' \
-      'Usage: pis --connect [NAME] [--server http://127.0.0.1:43128] [--project PROJECT | --dummy] [--diagnostics]' \
+      'Usage: pis --connect [NAME] [--server ADDRESS] [--project PROJECT | --dummy] [--diagnostics]' \
+      '       pis --connect --set-server ssh://[USER@]HOST[:SSH_PORT][/PIS_PORT]' \
       '       pis --connect --set-server http://127.0.0.1:43128' \
       '       pis --connect register NAME --server http://127.0.0.1:43128 (--project PROJECT | --dummy) [--replace] [--key-stdin]' \
       '       pis --connect run NAME [--diagnostics]' \
       '       pis --connect forget NAME' \
       'Default connect: enter the client-displayed two-digit code under Väntande klienter in the authenticated server UI.' \
-      'Bare connect uses the current registered Pi project and saved global server. --server overrides the address without saving.' \
+      'Bare connect uses the current registered Pi project and saved global server; if absent, it asks and saves the address (TTY only).' \
+      '--server overrides the address for one invocation without saving. --set-server saves only; it starts no SSH/runtime.' \
+      'SSH defaults: port 22, remote pis port 43128. USER defaults to your client host login name.' \
+      'Examples: pis --connect --set-server ssh://192.0.2.10' \
+      '          pis --connect --set-server ssh://alice@server.example' \
+      '          pis --connect --server ssh://alice@server.example:2222/43129' \
+      'Run pis --server --standalone on the SSH host (127.0.0.1:PIS_PORT). Each client owns one ssh -N -L until exit.' \
+      'Forwarding uses a private Unix socket, avoiding local TCP-port clashes without relaxing Host/Origin checks.' \
+      'Requires OpenSSH on the client host, key login, and an independently verified known_hosts entry.' \
+      'Test ssh -p SSH_PORT USER@HOST first. Tunnels require BatchMode=yes and StrictHostKeyChecking=yes.' \
+      'No password prompts or automatic host-key acceptance; host ~/.ssh/config aliases/ProxyCommand are not loaded.' \
+      'Default host key files/SSH agent remain usable; no SSH credentials or agent sockets are mounted in Pi containers.' \
+      'A public HTTPS/CDN domain is usable only if SSH is also separately reachable there.' \
       'NAME selects registered ID/name or unique final folder component unless --project is supplied. Existing work is never killed.' \
       'Advanced GUI keys use --enrollment-key (hidden input) or --key-stdin. The default no longer asks for a GUI key.' \
       'Legacy register/run commands remain available for direct agent keys. Never put keys in command arguments.' \
-      'Host-private profiles under PIS_HOME/web-agents; keys never mounted into the sandbox. Loopback only, no TLS/LAN yet.' \
+      'Host-private profiles under PIS_HOME/web-agents; keys never mounted into the sandbox. Direct HTTP remains loopback-only.' \
       'After server restart repeat connect with a fresh approved code. Ctrl-C stops the local agent, not the server.'
     exit 0
   fi

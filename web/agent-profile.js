@@ -4,6 +4,7 @@ import { NAME_PATTERN, ID_PATTERN } from '../src/config.js';
 import { assert, atomicWrite, withLock } from '../src/util.js';
 import { validateEnrollment, labelValid } from './enrollment.js';
 import { exact, idValid, generationValid } from './common.js';
+import { serverAddress } from './server-address.js';
 
 export function localServerOrigin(value) {
   assert(typeof value === 'string' && value.length <= 256, 'Invalid local server origin.');
@@ -43,7 +44,7 @@ export function validateAgentProfile(record) {
     'Invalid client identity.',
   );
   assert(
-    record.origin === localServerOrigin(record.origin) &&
+    record.origin === serverAddress(record.origin).address &&
       typeof record.token === 'string' &&
       record.token.length === 43 &&
       /^[A-Za-z0-9_-]{43}$/.test(record.token) &&
@@ -115,10 +116,10 @@ export function readDefaultServer(root) {
   const value = readPrivateJson(file);
   if (value === undefined) return undefined;
   assert(exact(value, ['origin']), 'Invalid default server preference.');
-  return localServerOrigin(value.origin);
+  return serverAddress(value.origin).address;
 }
 export async function saveDefaultServer(root, origin) {
-  origin = localServerOrigin(origin);
+  origin = serverAddress(origin).address;
   const file = preferencePath(root);
   await withLock(`${file}.lock`, () => {
     readPrivateJson(file);

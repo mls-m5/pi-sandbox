@@ -9,7 +9,7 @@ import { resultCode } from './public/diagnostics.js';
 
 // Network lifecycle is independent of local runtime lifecycle. No arbitrary
 // executable, filesystem path, native RPC method or host action crosses this API.
-export function connectView({ view, origin, token, diagnostic = () => {} }) {
+export function connectView({ view, origin, token, diagnostic = () => {}, createConnection }) {
   const url = new URL(origin);
   if (
     url.protocol !== 'http:' ||
@@ -42,6 +42,7 @@ export function connectView({ view, origin, token, diagnostic = () => {} }) {
       followRedirects: false,
       handshakeTimeout: 5000,
       headers: { Authorization: `Bearer ${token}` },
+      ...(createConnection ? { createConnection } : {}),
     });
     socket = ws;
     let pending = 0,
@@ -159,7 +160,13 @@ export function connectView({ view, origin, token, diagnostic = () => {} }) {
   };
 }
 
-export async function startDummyConnector({ origin, token, autoResume = true, diagnostic }) {
+export async function startDummyConnector({
+  origin,
+  token,
+  autoResume = true,
+  diagnostic,
+  createConnection,
+}) {
   const child = spawn(
     process.execPath,
     [
@@ -176,7 +183,7 @@ export async function startDummyConnector({ origin, token, autoResume = true, di
   try {
     const state = await rpc.request('get_state');
     if (!state.success) throw new Error('Dummy initialization failed.');
-    const network = connectView({ view, origin, token, diagnostic });
+    const network = connectView({ view, origin, token, diagnostic, createConnection });
     rpc.once('closed', () => network.close());
     return {
       network,

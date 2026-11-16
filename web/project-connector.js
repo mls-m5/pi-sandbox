@@ -17,6 +17,7 @@ export async function startProjectConnector({
   startupTimeoutMs = 600_000,
   onProgress = () => {},
   diagnostic,
+  createConnection,
 }) {
   if (
     !project ||
@@ -98,7 +99,7 @@ export async function startProjectConnector({
     if (closing || !state.success) throw new Error('Project RPC initialization failed.');
     rpc.timeoutMs = 30_000;
     report('rpc_ready');
-    network = connectView({ view, origin, token, diagnostic });
+    network = connectView({ view, origin, token, diagnostic, createConnection });
     rpc.once('closed', () => network.close());
     await new Promise((resolve, reject) => {
       const finish = (error) => {

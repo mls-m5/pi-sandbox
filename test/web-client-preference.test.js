@@ -47,7 +47,7 @@ test('default server preference reports invalid schemas and origins without echo
     [
       'credential-bearing origin',
       JSON.stringify({ origin: 'http://synthetic-user:synthetic-password@127.0.0.1:43128' }),
-      'Only http://127.0.0.1:PORT is supported',
+      'Invalid server address',
     ],
   ];
   for (const [label, contents, expected] of cases) {
