@@ -5,10 +5,11 @@ import { handlePromptKey } from './keybindings.js';
 import { startupText, startupFailure } from './startup.js';
 import { diagnosticLine, requestFailure, resultCode, safeTrace } from './diagnostics.js';
 import { createEnrollmentUI } from './enrollment-ui.js';
+import { createPendingCommands } from './pending-commands.js';
 
 const byId = (id) => document.getElementById(id);
 const model = new ChatModel(),
-  pending = new Map(),
+  commands = createPendingCommands(),
   diagnosticLines = [];
 let socket,
   csrf,
@@ -103,7 +104,7 @@ function command(action, extra = {}) {
     draw();
     return annotated;
   };
-  if (!online() || pending.size >= 8 || socket.bufferedAmount > 128 * 1024)
+  if (!online() || !commands.isAvailable(socket))
     return Promise.resolve(finish({ data: { success: false, error: 'not_connected_or_busy' } }));
   const message = {
     v: 1,
@@ -114,31 +115,10 @@ function command(action, extra = {}) {
   const payload = JSON.stringify(message);
   if (new TextEncoder().encode(payload).length > 256 * 1024)
     return Promise.resolve(finish({ data: { success: false, error: 'message_too_large' } }));
-  return new Promise((resolve) => {
-    const timer = setTimeout(() => {
-      const trace = pending.get(id)?.diagnosticTrace;
-      pending.delete(id);
-      resolve({ diagnosticTrace: trace, data: { success: false, error: 'outcome_unknown' } });
-    }, 40_000);
-    pending.set(id, { agentId, resolve, timer });
-    try {
-      socket.send(payload);
-    } catch {
-      clearTimeout(timer);
-      pending.delete(id);
-      resolve({ data: { success: false, error: 'outcome_unknown' } });
-    }
-  }).then(finish);
+  return commands.send({ id, agentId, payload, socket }).then(finish);
 }
 function failPending() {
-  for (const entry of pending.values()) {
-    clearTimeout(entry.timer);
-    entry.resolve({
-      diagnosticTrace: entry.diagnosticTrace,
-      data: { success: false, error: 'outcome_unknown' },
-    });
-  }
-  pending.clear();
+  commands.failAll();
 }
 function scheduleSync() {
   clearTimeout(syncTimer);
@@ -297,15 +277,9 @@ function receive(value) {
       draw();
     }
   } else if (value.type === 'accepted') {
-    const entry = pending.get(value.id);
-    if (entry?.agentId === value.agentId) entry.diagnosticTrace = safeTrace(value.trace);
+    commands.accepted(value);
   } else if (value.type === 'result') {
-    const entry = pending.get(value.result?.id);
-    if (entry?.agentId === value.agentId) {
-      clearTimeout(entry.timer);
-      pending.delete(value.result.id);
-      entry.resolve({ ...value.result, diagnosticTrace: safeTrace(value.trace) });
-    }
+    commands.result(value);
   }
 }
 async function connect() {
