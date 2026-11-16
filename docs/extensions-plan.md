@@ -57,6 +57,26 @@ Existing project arrays are not migrated or appended to, including `extensions: 
 
 Pi's npm child resolver selects the Pi package root from the actual Pi CLI entry point (rather than the `pi` wrapper), and the image wrapper resolves foreground `pi` launches directly to `/usr/local/bin/pis-pi-real`. The npm Pi child/peer-SDK execution paths have been inspected, but foreground/background execution has not been validated in a real image/container. Do not infer standalone Pi behavior from this npm setup. No host state, credentials, or Podman access is added for children. This availability change applies to Pi sessions only, not Claude Code mode.
 
+## Parallel worktrees: bounded sandbox trial
+
+A two-worker trial succeeded after configuring the installed extension's native worktree root inside existing writable sandbox state. The package default is a `worktrees` sibling of the repository; that parent directory may be outside the writable project mount. Allocation then fails before agents start, rather than silently sharing the main checkout.
+
+Inside the Pi sandbox, merge this setting into its existing `$PI_CODING_AGENT_DIR/extensions/subagent/config.json` (normally `/pis/home/.pi/agent/extensions/subagent/config.json`), retaining other explicit values:
+
+```json
+{
+  "worktreeBaseDir": "/pis/home/.pi/agent/worktrees"
+}
+```
+
+Use a writable directory outside both the project checkout and the extension directory. Reload Pi (`/reload`) after changing it: the already-loaded extension retained its previous value in the trial. This is a tested **local configuration**, not an automatically installed pis default or a host-directory permission change. Do not mount host home, expose credentials or broaden container privileges to fix allocation.
+
+The tested workflow uses explicit Luna workers with `worktree: true`, a clean committed base, one writer per worktree and disjoint test-file responsibilities. Workers validate without committing; the supervisor checks handoff base commits and file scope, reviews captured patches, applies them explicitly and runs the combined tests before a local commit. No automatic merge/push to `main` is enabled. Generated dependency links must not enter patches. Missing optional test dependencies mean skips, not transport/browser verification.
+
+The trial confirmed separate Git branches/working directories, unchanged main checkout while workers ran, and conflict-free patch transfer. It gives **working-tree separation within the same sandbox**, not distinct OS/container/credential isolation. Worktrees share Git metadata and can still interfere with refs/config/other accessible files; instructions and patch review remain necessary. Separate per-agent containers, mount design and project-lock interactions need a later reviewed design, not an assumption that Git worktrees provide a security boundary. Paths under `/pis/home` are container-local: the host must not assume those worktree paths are directly usable, or prune their shared Git registrations while workers/retained sessions still depend on them.
+
+Managed handoffs may preserve completed worktrees for retained-session resume. Inspect their manifests and use the extension's reviewed cleanup/discard flow; never force-delete uncaptured changes or sweep arbitrary worktrees. Core tests and DOM-shim/loopback tests are useful gates, not real Podman or graphical-browser certification.
+
 ## Supported specifications
 
 - `npm:package-name`
