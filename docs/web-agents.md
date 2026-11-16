@@ -58,6 +58,18 @@ No model tokens are used by dummy runtimes. Their history exists only until that
 
 The controller can read permitted history, prompt the connected agent and stop work: trust it as a controller, not merely a status receiver. Agent messages remain scoped to their own identity/routes, with no inter-agent API. Idle is not task success.
 
+## Requested future simplified connection (not implemented)
+
+The user requested a simpler connection flow for future design/implementation. This section records requirements only; the current GUI-issued one-use enrollment key and `pis --connect NAME --server ORIGIN` behavior above remain unchanged.
+
+- Save a host-global default server address (IP/host and port), shared across the client's projects, in host-private client configuration; allow an explicit server override. A saved address is only a destination preference: it does not approve a server, authorize enrollment, reconnect automatically, or certify LAN deployment.
+- Bare `pis --connect` should resolve a locally registered Pi project from the current working directory, without requiring a project/profile name or `--project`. It must not guess when resolution is ambiguous, auto-register a project, or accept a project path supplied by the server. Fail with helpful guidance when no eligible local registration exists or resolution is ambiguous.
+- Replace copying a GUI enrollment key with a client-initiated outward request that displays a short-lived two-digit confirmation code at the client. An authenticated administrator UI should list **Pending clients**, allow the administrator to select the exact request and enter the client-displayed code, then approve it. The code confirms the intended client/request; it is not sole authentication or proof of identity.
+- Bind approval to an opaque, exact pending request. Define strict expiry, bounded attempts/rates and atomic one-use consumption. Preserve protected machine-key issuance, role separation, prior-key proof for offline identity reuse, and refusal to evict live identities. Never automatically replay an ambiguous enrollment/approval outcome.
+- A globally reachable IP/LAN connection requires a separately reviewed TLS/WSS and secure-deployment design. Do not enable public/global binding or treat the current loopback-only HTTP server as LAN-safe. Persistent server-address preference does not imply persistent server enrollment or automatic reconnect approval.
+
+Do not implement this flow by weakening the current ticket/key protections or changing current defaults. Review the existing browser/machine role, origin, session, ticket and ambiguous-outcome contracts before proposing an implementation.
+
 ## Memory-only server and private client configuration
 
 The server keeps admin password hashes, sessions, enrollment-key hashes/expiry and at most 32 agent registrations (only hashes of their 256-bit connection keys) **in memory**. It has no persistent secret/registration volume or transcript database. History is fetched from connected clients; routing and network buffers still transiently contain sensitive conversation data. Real Pi's normal saved sessions persist independently and are not deleted by registration/restart.
