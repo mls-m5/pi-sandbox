@@ -1,6 +1,6 @@
 # Cache-friendly images and storage verification
 
-The image-storage optimization is implemented for **future builds**, not applied in place to existing images/containers. The host exhaustion diagnosis and historical measurements remain in [image-storage-plan.md](image-storage-plan.md). No host images/cache/state or lockfiles were deleted while implementing this change. **No before/after physical saving has been measured here: Podman is unavailable in this sandbox.**
+The image-storage optimization is implemented for **future builds**, not applied in place to existing images/containers. The host exhaustion diagnosis and historical measurements remain in [image-storage-plan.md](image-storage-plan.md). No host images/cache/state or lockfiles were deleted while implementing this change. **No before/after physical saving has been measured here: a usable rootless Podman engine is unavailable in this sandbox (installed CLI alone is insufficient; see the nested-engine boundary below).**
 
 ## Planner and lifecycle boundary
 
@@ -54,6 +54,14 @@ There are no new shared named images to prune. Normal pruning still only removes
 ## Verification and host benchmark
 
 `npm run check` exercises pure recipe/identity tests, temporary fake-npm cache cleanup on success/failure, existing managed build/probe/lease/rollback tests and conservative mutex recovery including real CLI/flock. The fast tests make no model calls, apt/npm downloads or engine requests. The new lock recovery coverage does not assume Podman is present. Existing opt-in real-Podman integration suites continue to cover packages, state, image extensions, approval/proxy and managed update workflows against fake services; **not rerun here**.
+
+### Nested Podman is not an available verification backend in the tested sandbox
+
+A user-approved project-local package installation supplied Podman 4.3.1, uidmap, fuse-overlayfs, slirp4netns, crun and catatonit. A simple new user namespace succeeded, but an isolated local `podman info` probe failed before image use: `newuidmap` could not write the UID map (`Operation not permitted`). The configured subordinate range was outside the outer namespace's mapped IDs, and normal pis retains `--cap-drop=all` / `--security-opt=no-new-privileges`. `/dev/fuse` was absent too. Package presence therefore does not establish a usable nested rootless engine or verify project/container lifecycle.
+
+No images were downloaded/built and no host engine/socket, credentials, privileged mode or relaxed security settings were used. The probe's own empty storage/config was removed; existing Podman storage was not touched. This is a boundary of the tested sandbox, not a claim that Podman-in-Podman is universally impossible. A separate nested-test mode would need explicit UID/storage/security design and disk budgeting; do not silently relax production sandbox protections to make tests pass. Real-engine validation remains a host gate.
+
+### Host storage benchmark
 
 For a controlled four-image legacy/new-layout comparison, run on an idle **host** with local rootless Podman and **at least 10 GiB free** (a benchmark guard, not a universal guarantee):
 
