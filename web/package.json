@@ -6,7 +6,7 @@
   "engines": { "node": ">=22.19.0" },
   "scripts": {
     "demo": "node cli.js demo",
-    "test": "node --test ../test/web-control.test.js ../test/web-ui.test.js ../test/web-app.test.js ../test/web-cli.test.js ../test/web-diagnostics.test.js ../test/web-markdown.test.js ../test/web-agent-profile.test.js ../test/web-enrollment.test.js"
+    "test": "node --test ../test/web-control.test.js ../test/web-ui.test.js ../test/web-activity.test.js ../test/web-app.test.js ../test/web-cli.test.js ../test/web-diagnostics.test.js ../test/web-markdown.test.js ../test/web-agent-profile.test.js ../test/web-enrollment.test.js"
   },
   "dependencies": { "ws": "8.23.0" }
 }
