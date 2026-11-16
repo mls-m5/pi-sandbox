@@ -1,9 +1,10 @@
 import http from 'node:http';
 import fs from 'node:fs/promises';
-import { randomUUID, timingSafeEqual } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { WebSocketServer } from 'ws';
 import { validateControlCommand } from '../src/pi-rpc.js';
-import { ENROLLMENT_MS, validateEnrollment, uniqueAgentLabel, labelValid } from './enrollment.js';
+import { ENROLLMENT_MS, validateEnrollment, labelValid } from './enrollment.js';
+import { createAgentRegistry } from './server-registration.js';
 import { createWebSessions } from './server-sessions.js';
 import { startupPhase } from './public/startup.js';
 import { resultCode, safeTrace } from './public/diagnostics.js';
@@ -70,7 +71,7 @@ export async function startWebServer({
       throw new Error('Invalid agent registration.');
     registrations.set(agent.id, { ...agent, kind: agent.kind || 'dummy' });
   }
-  const tickets = new Map();
+  let registry;
   const browsers = new Set(),
     connected = new Map(),
     pending = new Map();
@@ -96,7 +97,7 @@ export async function startWebServer({
   wss.on('error', () => {});
   server.on('clientError', (_error, socket) => socket.destroy());
   const sessions = createWebSessions(sessionMs, (key) => {
-    for (const [hash, ticket] of tickets) if (ticket.owner === key) clearTicket(hash);
+    registry.clearOwnerTickets(key);
     for (const ws of browsers) if (ws.sessionKey === key) ws.terminate();
   });
   const sessionFor = (req) => sessions.sessionFor(req);
@@ -129,29 +130,6 @@ export async function startWebServer({
     }
     return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks)));
   };
-  const authenticateAgent = (req) => {
-    if (req.headers.origin || req.headers.cookie) return;
-    const match = /^Bearer ([A-Za-z0-9_-]{43})$/.exec(req.headers.authorization || '');
-    if (!match) return;
-    const hash = Buffer.from(digest(match[1]), 'hex');
-    for (const candidate of registrations.values())
-      if (timingSafeEqual(hash, Buffer.from(candidate.tokenHash, 'hex'))) return candidate;
-  };
-  function revokeAgent(id) {
-    const peer = connected.get(id);
-    registrations.delete(id);
-    connected.delete(id);
-    for (const [route, entry] of pending)
-      if (entry.agentId === id) removePending(route, 'outcome_unknown');
-    peer?.terminate();
-    broadcastRoster();
-  }
-  function clearTicket(hash) {
-    const ticket = tickets.get(hash);
-    if (!ticket) return;
-    tickets.delete(hash);
-    for (const ws of browsers) send(ws, { v: 1, type: 'enrollment_cleared', id: ticket.id });
-  }
   const logout = (key) => sessions.logout(key);
   async function handle(req, res) {
     if (!validHost(req)) {
@@ -226,10 +204,7 @@ export async function startWebServer({
           ? /^Bearer ([A-Za-z0-9_-]{43})$/.exec(req.headers.authorization || '')
           : null;
       const hash = bearer ? digest(bearer[1]) : null;
-      const validTicket = () =>
-        tickets.has(hash) &&
-        tickets.get(hash).expires > Date.now() &&
-        (sessions.get(tickets.get(hash).owner)?.expires || 0) > Date.now();
+      const validTicket = () => registry.validTicket(hash);
       if (!validTicket()) {
         json(res, 403, { error: 'enrollment_invalid' });
         return;
@@ -245,37 +220,13 @@ export async function startWebServer({
         json(res, 400, { error: 'invalid_enrollment' });
         return;
       }
-      const proof = value.previousToken ? digest(value.previousToken) : null;
-      const proofMatches = (agent) =>
-        proof && timingSafeEqual(Buffer.from(agent.tokenHash, 'hex'), Buffer.from(proof, 'hex'));
-      let existing = [...registrations.values()].find((agent) => agent.clientId === value.clientId);
-      if (!existing && proof)
-        existing = [...registrations.values()].find(
-          (agent) => !agent.clientId && proofMatches(agent),
-        );
-      if (
-        existing &&
-        (!proofMatches(existing) || existing.kind !== value.kind || connected.has(existing.id))
-      ) {
-        json(res, 409, { error: 'enrollment_conflict' });
+      const enrolled = registry.enroll(hash, value);
+      if (enrolled.error) {
+        json(res, enrolled.status, { error: enrolled.error });
         return;
       }
-      if (!existing && registrations.size >= 32) {
-        json(res, 429, { error: 'agent_limit' });
-        return;
-      }
-      const id = existing?.id || randomUUID(),
-        token = randomKey();
-      const label = uniqueAgentLabel(registrations, value.label, id);
-      registrations.set(id, {
-        id,
-        label,
-        kind: value.kind,
-        clientId: value.clientId,
-        tokenHash: digest(token),
-      });
-      clearTicket(hash); // Consumed atomically, no async work between validation and commit.
-      json(res, 201, { id, token, kind: value.kind, label });
+      const { id, token, kind, label } = enrolled;
+      json(res, 201, { id, token, kind, label });
       broadcastRoster();
       return;
     }
@@ -310,16 +261,12 @@ export async function startWebServer({
           json(res, 400, { error: 'invalid_enrollment' });
           return;
         }
-        for (const [hash, ticket] of tickets)
-          if (ticket.expires <= Date.now() || ticket.owner === session.key) clearTicket(hash);
-        if (tickets.size >= 32) {
+        registry.prepareTicketIssue(session.key);
+        if (registry.ticketCount >= 32) {
           json(res, 429, { error: 'enrollment_limit' });
           return;
         }
-        const token = randomKey(),
-          id = randomUUID(),
-          expiresAt = Date.now() + enrollmentMs;
-        tickets.set(digest(token), { id, owner: session.key, expires: expiresAt });
+        const { token, id, expiresAt } = registry.issueTicket(session.key, enrollmentMs);
         json(res, 201, { id, token, expiresAt });
         return;
       }
@@ -415,6 +362,24 @@ export async function startWebServer({
     clearTimeout(entry.timer);
     pending.delete(route);
     if (error) errorResult(entry.browser, entry.agentId, entry.command, error, route);
+  }
+  registry = createAgentRegistry({
+    registrations,
+    sessionExpires: (key) => sessions.get(key)?.expires,
+    isConnected: (id) => connected.has(id),
+    onTicketCleared: (id) => {
+      for (const ws of browsers) send(ws, { v: 1, type: 'enrollment_cleared', id });
+    },
+  });
+  const authenticateAgent = registry.authenticate;
+  function revokeAgent(id) {
+    const peer = connected.get(id);
+    registrations.delete(id);
+    connected.delete(id);
+    for (const [route, entry] of pending)
+      if (entry.agentId === id) removePending(route, 'outcome_unknown');
+    peer?.terminate();
+    broadcastRoster();
   }
   function browserMessage(ws, value) {
     if (!object(value) || value.v !== 1) throw new Error('Protocol.');
@@ -701,7 +666,7 @@ export async function startWebServer({
   origin = `http://127.0.0.1:${server.address().port}`;
   const heartbeat = setInterval(() => {
     sessions.expire();
-    for (const [hash, ticket] of tickets) if (ticket.expires <= Date.now()) clearTicket(hash);
+    registry.expireTickets();
     for (const ws of wss.clients) {
       if (!ws.alive) ws.terminate();
       else {
@@ -733,7 +698,7 @@ export async function startWebServer({
         sessions.clear();
         registrations.clear();
         connected.clear();
-        tickets.clear();
+        registry.clearTickets();
       })());
     },
   };

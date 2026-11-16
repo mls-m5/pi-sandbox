@@ -151,6 +151,24 @@ webTest('one-use tickets create no placeholders, cannot authenticate as agents, 
   const adoption = await redeem(server, adoptionTicket.token, { ...body, clientId: randomUUID(), previousToken: legacy.token });
   assert.equal(adoption.status, 201); assert.equal((await adoption.json()).id, legacy.id); assert.equal(server.roster().length, before, 'Existing direct-key clients can migrate without a duplicate post.');
 });
+webTest('simultaneous browser sessions own independent enrollment tickets', async t => {
+  const server = await startWebServer({ port: 0, passwordHash }); t.after(() => server.close());
+  const ownerA = await login(server), ownerB = await login(server);
+  const ticketA = await ticket(server, ownerA), ticketB = await ticket(server, ownerB);
+  const bodyA = { clientId: randomUUID(), label: 'owner-a', kind: 'dummy', previousToken: null };
+  const bodyB = { clientId: randomUUID(), label: 'owner-b', kind: 'pi', previousToken: null };
+
+  const logoutA = await api(server, '/logout', { ...ownerA, value: {} });
+  assert.equal(logoutA.status, 200); await logoutA.text();
+  const deniedA = await redeem(server, ticketA.token, bodyA); assert.equal(deniedA.status, 403); await deniedA.text();
+  const registeredB = await redeem(server, ticketB.token, bodyB); assert.equal(registeredB.status, 201);
+  const agentB = await registeredB.json();
+  assert.equal(server.roster().length, 1); assert.equal(server.roster()[0].label, 'owner-b');
+  const identity = await api(server, '/agent/identity', { token: agentB.token });
+  assert.equal(identity.status, 200);
+  assert.deepEqual(await identity.json(), { id: agentB.id, kind: 'pi' });
+});
+
 webTest('ticket replacement/expiry/logout and browser roles prevent unauthorized redemption', async t => {
   const server = await startWebServer({ port: 0, passwordHash, enrollmentMs: 150 }); t.after(() => server.close());
   const credentials = await login(server), first = await ticket(server, credentials), second = await ticket(server, credentials);
