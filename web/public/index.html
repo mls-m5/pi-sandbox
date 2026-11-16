@@ -95,7 +95,10 @@
               aria-describedby="prompt-help"
               placeholder="Skriv till dummy-agenten…"
             ></textarea></label
-          ><small id="prompt-help">Enter skickar · Shift+Enter ger ny rad.</small>
+          ><small id="prompt-help"
+            >Enter skickar prompt när agenten vilar, steer när den arbetar · Shift+Enter ger ny rad.
+            Steer levereras vid nästa säkra Pi-gräns, inte som hårt avbrott.</small
+          >
           <div class="actions">
             <button id="send" disabled>Skicka</button
             ><button id="stop" type="button" disabled>Stoppa</button>
@@ -106,6 +109,23 @@
           ><button id="refill" disabled>Fyll på dummy-kvot</button>
         </div>
         <p id="command-note" role="status"></p>
+        <section aria-label="Meddelandekö">
+          <h3>Meddelandekö</h3>
+          <p>
+            Utkast lagras bara i denna flik och för denna agentkörning. Redigera innan du levererar;
+            ingen automatisk omsändning. Oskickade utkast försvinner vid utloggning eller sidans
+            stängning.
+          </p>
+          <div class="actions">
+            <button id="queue-steer" type="button" disabled>Köa steerutkast</button>
+            <button id="queue-follow-up" type="button" disabled>Köa uppföljningsutkast</button>
+            <button id="take-queue" type="button" disabled>Hämta tillbaka Pi-kön</button>
+            <button id="clear-queue-drafts" type="button" disabled>Rensa alla lokala utkast</button>
+          </div>
+          <p id="native-queue-state"></p>
+          <p id="queue-note" role="status"></p>
+          <div id="queued-messages"></div>
+        </section>
       </section>
     </main>
     <footer>

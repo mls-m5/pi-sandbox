@@ -34,7 +34,7 @@ Click **Simulera kvotstopp 5 s** to see the failed message, synthetic waiting st
 /dummy error
 ```
 
-See [the dummy's exact semantics and limitations](dummy-agent.md). Simulator controls can require a state refresh before the next prompt; the UI does this for handled commands. Busy-time messages are rejected/disabled rather than queued. **Stoppa** clears queues before aborting and cancels a pending synthetic quota continuation.
+See [the dummy's exact semantics and limitations](dummy-agent.md). Simulator controls can require a state refresh before the next prompt; the UI does this for handled commands. The form now sends `prompt` only while known idle and native `steer` while known working; unknown/offline controls remain disabled. Editable local steer/follow-up drafts and explicit native-queue recovery are described below. **Stoppa** clears queues before aborting and cancels a pending synthetic quota continuation.
 
 Options:
 
@@ -141,6 +141,20 @@ This is not a full CommonMark parser: raw HTML, arbitrary styles/attributes, ima
 - `web/cli.js`: temporary local setup, memory-only random distinct connector keys and a hidden password prompt. It starts two outbound dummy connections by default, or explicitly selected local Pi projects in `start --project` mode.
 
 The core CLI remains dependency-free. The **optional `web/` package** pins maintained `ws@8.23.0` with a committed SHA-512 npm lock entry; it does not implement WebSocket framing itself. Only `ws` is installed, with scripts/optional native peers omitted in the documented install command. Normal `pis` and container images do not import this package or install its dependencies. Registry/version and API were checked against [npm metadata](https://registry.npmjs.org/ws/8.23.0) and [ws API documentation](https://github.com/websockets/ws/blob/master/doc/ws.md) during implementation. This is not a promise that the version will remain current or vulnerability-free; review updates before future Internet deployment.
+
+## Steering and editable message queues
+
+The prompt form/Enter sends a normal prompt while the selected agent is known idle, or a **steer** while it is known working (the button label changes). Shift+Enter remains newline. Steer is a cooperative instruction at Pi's next safe boundary, not an immediate abort. A queued/handled acceptance does not mean the instruction was processed or that the task finished. Real Pi input handlers/skills/templates may transform queued text; the web UI does not bypass them or host approvals.
+
+**Köa steerutkast** / **Köa uppföljningsutkast** move the editor text into a local editable draft card, without contacting Pi. Edit or delete each card and explicitly deliver it: while working, its kind selects steer/follow-up; while idle, the clearly labelled button sends it as a new prompt. Follow-up is native Pi's after-current-work queue, not a web supervisor. Drafts are not automatically drained or submitted merely because a runtime becomes idle.
+
+**Hämta tillbaka Pi-kön** asks confirmation, then uses native `clear_queue` to retrieve and remove the **whole remaining steer/follow-up queue** as editable local drafts. It is not a harmless refresh and cannot take back already-delivered instructions. Pi RPC has no atomic individual edit/remove or read-only full-queue command, so this clear-and-restore workflow is deliberate. Native queue events show only last-reported counts, which can already be stale. Retrieved post-handler/expanded text is not replayed automatically; review before manually resubmitting. **Stoppa** still clears native queues then aborts; it does not delete unsent browser drafts.
+
+Limits are 32 local drafts, 64 KiB UTF-8 each and 128 KiB serialized total, across all retained agent/generation scopes. Each draft belongs to the selected agent **and runtime generation**; switching/reconnecting never transfers or sends it to another runtime. Offline drafts can be edited but cannot be delivered. **Rensa alla lokala utkast** explicitly discards drafts including old-generation/unknown copies, not Pi's queue. Logout/pagehide clears all local drafts; no browser storage/server persistence is added. Closing/reloading the page loses them. The main prompt editor remains distinct from queued cards.
+
+A successful native queue recovery returns at most 32 exact text entries within 128 KiB; omitted oversized/invalid/excess messages are counted with a visible warning, not silently truncated/requeued. If browser draft capacity is insufficient, additional recovered items are also reported omitted. **Because retrieval clears Pi's queue, do not use it as an archival/export path for unusually large queues.** A native record limit or lost reply can make the recovery outcome unknown; there is no automatic retry or reconstruction from session files.
+
+Unknown/duplicate send results preserve the local draft as locked/unknown rather than falsely marking delivery or retrying. Inspect native queue/history before composing a fresh instruction. State readiness, history failure independence, generation/sequence checks, bounded control reservations and ID tombstones still apply. Fixed action/error diagnostics include no draft bodies. Unit and actual app DOM-shim/loopback tests cover editing, explicit sends, native recovery, scope changes, bounds, cancellation/duplicates and page cleanup. Dummy tests simulate queue delivery without model calls; real Pi/graphical-browser steering timing remains a host verification gate. Restart the host controller/connectors to load the updated adapters/UI; do not interrupt active work just to reload without considering normal cleanup/locks.
 
 ## Isolation boundary and pending hardening
 

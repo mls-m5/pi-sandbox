@@ -7,6 +7,7 @@ import { diagnosticLine, requestFailure, resultCode, safeTrace } from './diagnos
 import { createEnrollmentUI } from './enrollment-ui.js';
 import { createPendingCommands } from './pending-commands.js';
 import { createPairingUI } from './pairing-ui.js';
+import { createMessageQueue } from './message-queue.js';
 
 const byId = (id) => document.getElementById(id);
 const model = new ChatModel(),
@@ -26,7 +27,8 @@ let reconnectTimer,
   syncing = false,
   syncAttempts = 0,
   mutation = false,
-  drawing = false;
+  drawing = false,
+  nativeQueue = null;
 const online = () =>
   connected &&
   agents.some(
@@ -44,6 +46,32 @@ const pairing = createPairingUI({
   document,
   getSession: () => csrf,
   isSessionActive: (session) => wantConnection && connected && csrf === session,
+});
+const messageQueue = createMessageQueue({
+  document,
+  getContext: () => ({
+    agentId: selected,
+    generation: model.generation,
+    status: model.status,
+    ready: online() && model.stateKnown && ['idle', 'working'].includes(model.status) && !mutation,
+  }),
+  execute: async (action, fields = {}) => {
+    if (!online() || mutation || !model.stateKnown)
+      return { data: { success: false, error: 'not_connected_or_busy' } };
+    const version = selection;
+    mutation = true;
+    draw();
+    try {
+      return await command(action, fields);
+    } finally {
+      if (version === selection) {
+        mutation = false;
+        syncAttempts = 0;
+        scheduleSync();
+        draw();
+      }
+    }
+  },
 });
 function draw() {
   if (drawing) return;
@@ -74,7 +102,17 @@ function draw() {
         : 'Webbservern är igång. Agenten kan inte ta emot meddelanden förrän Pi och anslutningen är klara.'
       : model.note;
     const ready = online() && model.status === 'idle' && model.stateKnown && !mutation;
-    for (const id of ['send', 'quota', 'refill']) byId(id).disabled = !ready;
+    byId('send').disabled =
+      !online() || !model.stateKnown || !['idle', 'working'].includes(model.status) || mutation;
+    byId('send').textContent = model.status === 'working' ? 'Skicka steer till Pi' : 'Skicka';
+    for (const id of ['quota', 'refill']) byId(id).disabled = !ready;
+    for (const id of ['queue-steer', 'queue-follow-up'])
+      byId(id).disabled = !selected || !model.generation;
+    byId('native-queue-state').textContent =
+      nativeQueue && model.stateKnown
+        ? `Senast rapporterad Pi-kö: ${nativeQueue.steer} steer, ${nativeQueue.followUp} uppföljningar. Kan redan ha levererats.`
+        : 'Pi-kön är inte läst. Hämta tillbaka kvarvarande kö för att redigera; detta tömmer Pi-kön.';
+    messageQueue.draw();
     byId('stop').disabled = !online() || mutation;
     byId('refresh').disabled = !online() || syncing;
     byId('revoke-agent').disabled = !connected || !selected;
@@ -212,20 +250,27 @@ function choose(id) {
   mutation = false;
   clearTimeout(syncTimer);
   model.reset(null, 0);
+  nativeQueue = null;
   byId('command-note').textContent = '';
   socket.send(JSON.stringify({ v: 1, type: 'select', agentId: id, id: selectToken }));
   draw();
 }
 async function submit(message, clearDraft = false) {
-  if (!online() || model.status !== 'idle' || !model.stateKnown || mutation || !message.trim())
+  if (
+    !online() ||
+    !['idle', 'working'].includes(model.status) ||
+    !model.stateKnown ||
+    mutation ||
+    !message.trim()
+  )
     return;
   const version = selection;
   mutation = true;
   draw();
-  const result = await command('prompt', { message });
+  const result = await command(model.status === 'working' ? 'steer' : 'prompt', { message });
   if (version !== selection) return;
   mutation = false;
-  if (result.data?.success === true) {
+  if (result.data?.success === true && result.data.duplicate !== true) {
     byId('command-note').textContent =
       'Meddelandet accepterades av agenten. Det betyder inte att arbetet är slutfört.';
     if (clearDraft && byId('prompt').value === message) byId('prompt').value = '';
@@ -278,6 +323,13 @@ function receive(value) {
     }
   } else if (value.type === 'frame') {
     if (model.frame(value.frame)) {
+      if (value.frame.event?.type === 'queue_update') {
+        const event = value.frame.event;
+        nativeQueue =
+          Number.isSafeInteger(event.steeringCount) && Number.isSafeInteger(event.followUpCount)
+            ? { steer: event.steeringCount, followUp: event.followUpCount }
+            : null;
+      }
       if (value.frame.event?.type === 'agent_start') syncAttempts = 0;
       if (value.frame.event?.type === 'agent_settled') scheduleSync();
       draw();
@@ -351,6 +403,8 @@ enrollment.bind();
 function showLogin() {
   enrollment.clear();
   pairing.clear();
+  messageQueue.clear();
+  nativeQueue = null;
   csrf = undefined;
   wantConnection = false;
   connected = false;
@@ -411,6 +465,16 @@ byId('logout').addEventListener('click', async () => {
   byId('command-note').textContent =
     'Utloggningen kunde inte bekräftas. Försök igen eller stäng den lokala servern.';
 });
+for (const [id, kind] of [
+  ['queue-steer', 'steer'],
+  ['queue-follow-up', 'follow_up'],
+]) {
+  byId(id).addEventListener('click', () => {
+    const field = byId('prompt');
+    if (messageQueue.add(kind, field.value)) field.value = '';
+    draw();
+  });
+}
 byId('prompt-form').addEventListener('submit', (event) => {
   event.preventDefault();
   void submit(byId('prompt').value, true);
@@ -452,6 +516,7 @@ globalThis.addEventListener('pagehide', () => {
   clearInterval(startupTick);
   enrollment.clear();
   pairing.clear();
+  messageQueue.clear();
   wantConnection = false;
   selection++;
   clearTimeout(reconnectTimer);

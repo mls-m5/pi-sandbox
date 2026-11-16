@@ -26,6 +26,7 @@ import {
 const assets = new Map([
   ['/', ['index.html', 'text/html; charset=utf-8']],
   ['/app.js', ['app.js', 'text/javascript; charset=utf-8']],
+  ['/message-queue.js', ['message-queue.js', 'text/javascript; charset=utf-8']],
   ['/pairing-ui.js', ['pairing-ui.js', 'text/javascript; charset=utf-8']],
   ['/activity.js', ['activity.js', 'text/javascript; charset=utf-8']],
   ['/pending-commands.js', ['pending-commands.js', 'text/javascript; charset=utf-8']],

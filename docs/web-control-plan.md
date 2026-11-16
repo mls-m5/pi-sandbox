@@ -1,11 +1,11 @@
 # Design: outbound agent connections and a web control server
 
-## Requested GUI follow-ups (not implemented)
+## GUI follow-ups and implementation status
 
 - Improve the GUI's view of **how agents are working**, including delegated/parallel activity, rather than only the existing lifecycle/status/chat projection. Define bounded, content-safe activity information and distinguish running/waiting/idle from task completion; do not expose arbitrary worker state/auth/transcripts through diagnostics.
-- Support **queued, editable steer messages**, similar to Pi's own interface. The user should be able to inspect and edit queued steer input before delivery. Queue ownership, bounds, generation/session changes, cancellation, delivery acknowledgement and ambiguous-outcome/no-replay behavior need a separate design; this is not permission to add an unattended supervisor or weaken host approvals.
+- **Queued, editable steer/follow-up messages are now implemented** through bounded browser drafts and explicit native queue retrieval. Pi RPC has no atomic single-item queue edit: the user confirms taking the whole remaining queue back as drafts, then manually delivers reviewed text. Scope is agent/generation; unknown/duplicate deliveries remain locked, no automatic replay or supervisor. See [the implemented workflow, limits and verification gates](web-control.md#steering-and-editable-message-queues).
 
-These are future requests recorded for discovery. They are separate from the experimental SSH connector transport; no activity dashboard or steer queue is claimed as available.
+The richer agent/delegated-work dashboard is still a future request; steering queue support is implemented separately from the experimental SSH transport. No unattended supervisor or host approval changes are implied.
 
 ## Current local enrollment slice
 

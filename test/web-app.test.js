@@ -131,14 +131,54 @@ test('actual browser app module logs in, selects, chats, recovers dummy quota an
   assert.equal(prevented, true);
   await until(() => content(element('messages')).includes('Lorem ipsum'));
   assert.ok(content(element('messages')).includes(hostile));
-  await until(() => !element('send').disabled);
+  await until(() => !element('quota').disabled); // Send is now also enabled for steer while working.
   // Use a short timed episode through the actual input handler (button uses 5s).
   element('prompt').value = '/dummy quota 1'; await element('prompt-form').dispatch('submit');
   await until(() => content(element('state')).includes('waiting'));
   await until(() => content(element('messages')).includes('The host confirmed that Codex quota was exhausted'));
-  await until(() => !element('send').disabled);
+  await until(() => !element('quota').disabled);
   assert.equal((await connector.rpc.request('get_state')).data.resumes, 1);
   assert.equal(reads.filter(type => type === 'get_messages').length, historyReadsBefore, 'Settlement/quota continuation must not auto-fetch old history.');
+  // Synthetic native replies exercise the actual UI/server/connector queue path;
+  // core/dummy tests separately verify native delivery boundaries.
+  const beforeQueue = connector.rpc.request.bind(connector.rpc), nativeQueue = { steering: [], followUp: [] }, queuedCalls = [];
+  connector.rpc.request = async (type, fields) => {
+    if (['steer', 'follow_up'].includes(type)) {
+      queuedCalls.push({ type, message: fields.message });
+      nativeQueue[type === 'steer' ? 'steering' : 'followUp'].push(fields.message);
+      connector.rpc.emit('event', { type: 'queue_update', ...nativeQueue });
+      return { success: true, data: { disposition: 'queued' } };
+    }
+    if (type === 'clear_queue') {
+      const data = { steering: [...nativeQueue.steering], followUp: [...nativeQueue.followUp] };
+      nativeQueue.steering.length = 0; nativeQueue.followUp.length = 0;
+      connector.rpc.emit('event', { type: 'queue_update', ...nativeQueue });
+      return { success: true, data };
+    }
+    const result = await beforeQueue(type, fields);
+    if (type === 'get_state' && result.success) { result.data.isStreaming = true; connector.rpc.setStatus('working'); }
+    return result;
+  };
+  connector.rpc.setStatus('working'); connector.rpc.emit('event', { type: 'agent_start' });
+  await until(() => element('send').textContent === 'Skicka steer till Pi');
+  element('prompt').value = '<b>queued draft</b>'; await element('queue-steer').dispatch('click');
+  assert.equal(queuedCalls.length, 0); assert.equal(element('prompt').value, '');
+  let card = element('queued-messages').children[0];
+  let queueField = nodes(card).find(node => node.tag === 'textarea'); queueField.value = 'edited steer'; await queueField.dispatch('input');
+  await card.children[1].dispatch('click');
+  await until(() => queuedCalls.length === 1 && element('queued-messages').children.length === 0 && !element('take-queue').disabled);
+  assert.deepEqual(queuedCalls[0], { type: 'steer', message: 'edited steer' });
+  globalThis.confirm = () => true; await element('take-queue').dispatch('click');
+  await until(() => element('queued-messages').children.length === 1 && !element('send').disabled);
+  assert.equal(queuedCalls.length, 1, 'Taking the Pi queue must never resend it automatically.');
+  card = element('queued-messages').children[0]; queueField = nodes(card).find(node => node.tag === 'textarea');
+  assert.equal(queueField.value, 'edited steer'); queueField.value = 'revised after take'; await queueField.dispatch('input');
+  await card.children[2].dispatch('click'); assert.equal(element('queued-messages').children.length, 0);
+  element('prompt').value = 'direct busy steer'; await element('prompt-form').dispatch('submit');
+  await until(() => queuedCalls.length === 2 && element('prompt').value === '');
+  assert.deepEqual(queuedCalls[1], { type: 'steer', message: 'direct busy steer' });
+  connector.rpc.request = beforeQueue; connector.rpc.setStatus('idle'); connector.rpc.emit('event', { type: 'agent_settled', aborted: false });
+  await until(() => !element('quota').disabled);
   await element('agents').children[1].dispatch('click');
   await until(() => element('agent-title').textContent === 'Dummy 2');
   assert.ok(!content(element('messages')).includes(hostile));
@@ -203,7 +243,11 @@ test('actual browser app module logs in, selects, chats, recovers dummy quota an
   await until(() => element('pending-clients').children.length === 1);
   const pagehideCode = nodes(element('pending-clients')).find(node => node.tag === 'input');
   pagehideCode.value = pagehideRequest.code;
+  element('prompt').value = 'unsent pagehide draft'; await element('queue-follow-up').dispatch('click');
+  const hiddenDraft = nodes(element('queued-messages')).find(node => node.tag === 'textarea');
+  assert.equal(hiddenDraft.value, 'unsent pagehide draft');
   pageEvents.get('pagehide')();
+  assert.equal(hiddenDraft.value, ''); assert.equal(element('queued-messages').children.length, 0);
   assert.equal(element('registration-secret').value, '');
   assert.equal(element('registration-secret-label').hidden, true);
   assert.equal(pagehideCode.value, '');

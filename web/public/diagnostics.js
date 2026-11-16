@@ -22,6 +22,9 @@ const codes = new Set([
   'control_id_limit',
   'control_mutation_pending',
   'control_not_idle',
+  'control_not_working',
+  'control_state_unknown',
+  'queue_invalid_reply',
   'rpc_unavailable',
   'rpc_pending_limit',
   'rpc_write_limit',
@@ -48,7 +51,9 @@ export const safeTrace = (trace) =>
     ? trace.replaceAll('-', '').slice(0, 12)
     : 'none';
 export const safeAction = (action) =>
-  ['state', 'history', 'prompt', 'stop'].includes(action) ? action : 'unknown';
+  ['state', 'history', 'prompt', 'steer', 'follow_up', 'take_queue', 'stop'].includes(action)
+    ? action
+    : 'unknown';
 export function resultCode(result) {
   return result?.data?.duplicate === true
     ? 'duplicate'
