@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { spawn } from 'node:child_process';
 import { PiRpc, PiControl } from '../src/pi-rpc.js';
-import { VIEW_LIMITS, viewText, projectMessage, projectHistory, projectState, projectContextUsage, projectEvent, PiView } from '../src/pi-view.js';
+import { VIEW_LIMITS, viewText, projectMessage, projectHistory, projectState, projectContextUsage, projectDelegationsWidget, projectEvent, PiView } from '../src/pi-view.js';
 
 const bytes = value => Buffer.byteLength(JSON.stringify(value));
 const secret = 'SECRET_NOT_FOR_VIEW';
@@ -99,6 +99,23 @@ test('context projection keeps only current window estimates and preserves unkno
   assert.deepEqual(projectContextUsage({ contextUsage: { tokens: null, contextWindow: 200000, percent: 0 } }), { tokens: null, contextWindow: 200000, percent: null });
   for (const value of [undefined, {}, { contextUsage: { contextWindow: -1 } }, { contextUsage: { contextWindow: Infinity } }]) assert.equal(projectContextUsage(value), null);
   assert.equal(projectContextUsage({ contextUsage: { tokens: 123, contextWindow: 200, percent: NaN } }).percent, null);
+});
+
+test('known subagent widget becomes a bounded status tree, never generic extension payload or child secrets', async () => {
+  const node = { id: 'child-1', kind: 'subagent', label: '<script>literal</script>', state: 'running', model: 'openai-codex/gpt-6-luna', activity: { currentTool: 'read', currentPath: secret }, task: secret, sessionFile: secret, auth: secret };
+  const widget = runs => ({ type: 'extension_ui_request', method: 'setWidget', widgetKey: 'subagent-async', widgetLines: ['PI_SUBAGENT_ASYNC_JSON:' + JSON.stringify({ kind: 'pi-subagents.async-status-snapshot', version: 1, runs })] });
+  const projected = projectDelegationsWidget(widget([node])); assert.equal(projected.runs[0].state, 'running'); assert.ok(!JSON.stringify(projected).includes(secret));
+  assert.equal(projectDelegationsWidget({ ...widget([node]), widgetKey: 'other' }), null);
+  assert.equal(projectDelegationsWidget({ ...widget([node]), widgetLines: ['PI_SUBAGENT_ASYNC_JSON:broken'] }), null);
+  assert.equal(projectDelegationsWidget({ ...widget([node]), widgetLines: ['PI_SUBAGENT_ASYNC_JSON:' + ' '.repeat(65536)] }), null);
+  // The raw 64KiB admission cap is separate from the output/tree caps.
+  const boundedInput = Array(8).fill({ ...node, children: Array(8).fill({ ...node, label: '\\u0000'.repeat(30) }) });
+  const bounded = projectDelegationsWidget(widget(boundedInput)); assert.ok(bounded.omitted); assert.ok(bytes(bounded) < 24 * 1024);
+  let requests = 0; const f = fixture(async () => { requests++; return { success: true }; });
+  f.rpc.emit('event', widget([node])); const snapshot = await f.view.execute(f.command('roster1', 'delegations'));
+  assert.equal(snapshot.data.snapshot.runs[0].id, 'child-1'); assert.equal(requests, 0); assert.ok(snapshot.data.snapshot.observedAt > 0);
+  assert.equal((await f.view.execute(f.command('roster1', 'delegations'))).data.duplicate, true);
+  f.view.detach();
 });
 
 test('state projection excludes host/session paths and raw model connection configuration', () => {

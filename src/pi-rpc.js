@@ -256,9 +256,17 @@ export function validateControlCommand(value) {
     value.generation.length > 64 ||
     typeof value.id !== 'string' ||
     !/^[A-Za-z0-9_-]{1,64}$/.test(value.id) ||
-    !['state', 'stats', 'history', 'prompt', 'steer', 'follow_up', 'take_queue', 'stop'].includes(
-      value.action,
-    )
+    ![
+      'state',
+      'stats',
+      'delegations',
+      'history',
+      'prompt',
+      'steer',
+      'follow_up',
+      'take_queue',
+      'stop',
+    ].includes(value.action)
   )
     throw failure('control_invalid_command');
   const keys = [
@@ -309,6 +317,7 @@ export class PiControl {
     this.seen.set(command.id, hash);
     if (command.action === 'state') return this.rpc.request('get_state');
     if (command.action === 'stats') return this.rpc.request('get_session_stats');
+    if (command.action === 'delegations') return { success: true }; // View-owned bounded status snapshot only.
     if (command.action === 'history') return this.rpc.request('get_messages');
     if (this.mutating) throw failure('control_mutation_pending');
     if (command.action === 'prompt' && this.rpc.status !== 'idle')

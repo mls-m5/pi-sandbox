@@ -215,9 +215,89 @@ export function projectState(source) {
   return result; // Never copy sessionFile, model baseUrl/headers, auth or arbitrary fields.
 }
 
+export function projectDelegationsWidget(source) {
+  if (
+    source?.type !== 'extension_ui_request' ||
+    source.method !== 'setWidget' ||
+    source.widgetKey !== 'subagent-async'
+  )
+    return null;
+  if (source.widgetLines === undefined) return { runs: [], omitted: false };
+  if (
+    !Array.isArray(source.widgetLines) ||
+    source.widgetLines.length !== 1 ||
+    typeof source.widgetLines[0] !== 'string' ||
+    Buffer.byteLength(source.widgetLines[0]) > 65536 ||
+    !source.widgetLines[0].startsWith('PI_SUBAGENT_ASYNC_JSON:')
+  )
+    return null;
+  let data;
+  try {
+    data = JSON.parse(source.widgetLines[0].slice('PI_SUBAGENT_ASYNC_JSON:'.length));
+  } catch {
+    return null;
+  }
+  if (
+    data?.kind !== 'pi-subagents.async-status-snapshot' ||
+    data.version !== 1 ||
+    !Array.isArray(data.runs)
+  )
+    return null;
+  let remaining = 24,
+    omitted = Boolean(
+      data.omitted?.runs || data.omitted?.children || data.omitted?.byteLimitExceeded,
+    );
+  const states = [
+    'queued',
+    'running',
+    'complete',
+    'failed',
+    'partial',
+    'paused',
+    'stopped',
+    'rejected',
+  ];
+  function rows(values, depth) {
+    const result = [];
+    for (const value of values.slice(0, 8)) {
+      if (!remaining || depth > 3) {
+        omitted = true;
+        break;
+      }
+      if (
+        !object(value) ||
+        !['subagent', 'workflow', 'step'].includes(value.kind) ||
+        typeof value.id !== 'string' ||
+        !/^[A-Za-z0-9:_.-]{1,128}$/.test(value.id)
+      ) {
+        omitted = true;
+        continue;
+      }
+      remaining--;
+      const node = {
+        id: value.id,
+        kind: value.kind,
+        label: viewText(value.label, 128).text,
+        state: states.includes(value.state) ? value.state : 'unknown',
+      };
+      if (typeof value.model === 'string') node.model = viewText(value.model, 128).text;
+      if (typeof value.activity?.currentTool === 'string')
+        node.currentTool = viewText(value.activity.currentTool, 128).text;
+      if (Array.isArray(value.children)) node.children = rows(value.children, depth + 1);
+      result.push(node);
+    }
+    if (values.length > result.length) omitted = true;
+    return result;
+  }
+  const runs = rows(data.runs, 0);
+  return { runs, omitted };
+}
+
 export function projectEvent(source) {
   if (!object(source)) return null;
   const type = source.type;
+  const delegations = projectDelegationsWidget(source);
+  if (delegations) return { type: 'delegations', snapshot: delegations };
   if (type === 'dummy_status') {
     return [
       'waiting',
@@ -389,8 +469,8 @@ const errors = new Set([
   'rpc_shutting_down',
 ]);
 
-// In-memory projection boundary for a future authenticated transport. No queue,
-// replay, persistence, network I/O or process lifecycle control lives here.
+// Transport-independent projection. Only the latest bounded delegation status is
+// cached: no transcript/queue/replay, persistence, network I/O or process control.
 export class PiView extends EventEmitter {
   constructor(rpc, control = new PiControl(rpc)) {
     super();
@@ -398,8 +478,13 @@ export class PiView extends EventEmitter {
     this.control = control;
     this.sequence = 0;
     this.detached = false;
+    this.delegations = null;
     this.onEvent = (event) => {
       const projected = projectEvent(event);
+      if (projected?.type === 'delegations') {
+        projected.snapshot.observedAt = Date.now();
+        this.delegations = projected.snapshot;
+      }
       if (projected) this.publish(projected);
     };
     this.onStatus = (status) => this.publish({ type: 'status', status });
@@ -437,6 +522,8 @@ export class PiView extends EventEmitter {
         data = { success: true, state: projectState(response.data) };
       else if (command.action === 'stats')
         data = { success: true, contextUsage: projectContextUsage(response.data) };
+      else if (command.action === 'delegations')
+        data = { success: true, snapshot: this.delegations };
       else if (command.action === 'history')
         data = {
           success: true,
