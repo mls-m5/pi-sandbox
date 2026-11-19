@@ -208,7 +208,7 @@ pis --relocate k7m2q            # Associate that project with the current direct
 
 Relocation preserves project identity and state. It does not rewrite additional absolute mount paths.
 
-To start a new project from an existing one's settings, run `pis --new --name NEW --from OLD_ID_OR_NAME` in the new directory. It copies `agent`, `image` (packages and instructions), `mounts`, `credentials`, `extensions` and `updates`; it does **not** copy the ID, root, sessions, sandbox state or managed-update receipts. Mount paths stay absolute, and the first start builds the image (shared layers are reused by Podman's cache). Later edits to either project are independent. An unknown source registers nothing.
+To start a new project from an existing one's settings, run `pis --new --name NEW --from OLD_ID_OR_NAME` in the new directory. It copies `agent`, `network`, `image` (packages and instructions), `mounts`, `credentials`, `extensions` and `updates`; it does **not** copy the ID, root, sessions, sandbox state or managed-update receipts. Mount paths stay absolute, and the first start builds the image (shared layers are reused by Podman's cache). Later edits to either project are independent. An unknown source registers nothing.
 
 ## Configuration and packages
 
@@ -483,6 +483,7 @@ Real-container coverage includes package/custom instruction builds, absolute wor
 - [Offline dummy agent and quota/resumption test messages](docs/dummy-agent.md)
 - [Local RPC adapter, bounded text views and verification](docs/pi-rpc.md)
 - [User-approved apt and host Git operations](docs/host-actions.md)
+- [Agent message network between projects (experimental)](docs/network.md)
 - [Planned host Git identity defaults](docs/git-identity-plan.md)
 - [Known issues and resolved CNI warning](docs/known-issues.md)
 - [GNOME Codex quota indicator](gnome-codex-usage/README.md)

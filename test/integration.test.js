@@ -48,7 +48,7 @@ test('real rootless Podman: build, identity, mounts, credentials, state, Pi, pip
   fs.writeFileSync(shown.configurationFile, JSON.stringify(config));
   image = JSON.parse(success(['--show']).stdout).image;
   success(['--build']);
-  assert.deepEqual(fs.readdirSync(path.join(path.dirname(shown.configurationFile), 'build')).sort(), ['Containerfile', 'claude-host-mcp.mjs', 'codex-auto.mjs', 'extensions.json', 'fetch-bridge.mjs', 'image-entry.mjs', 'pi-launcher', 'probe-policy.json', 'request-apt.mjs', 'update-probe.mjs']);
+  assert.deepEqual(fs.readdirSync(path.join(path.dirname(shown.configurationFile), 'build')).sort(), ['Containerfile', 'claude-host-mcp.mjs', 'codex-auto.mjs', 'extensions.json', 'fetch-bridge.mjs', 'image-entry.mjs', 'network-client.mjs', 'network-tools.mjs', 'pi-launcher', 'probe-policy.json', 'request-apt.mjs', 'update-probe.mjs']);
 
   const script = `
     const fs = require('fs');

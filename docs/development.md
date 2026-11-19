@@ -14,6 +14,7 @@ Start with `AGENTS.md` for contribution/security rules and `README.md` for opera
 | Shared image layout/storage limits | [Image storage](image-storage.md), [historical diagnosis](image-storage-plan.md) | `src/image-plan.js` (recipe/fingerprint), `src/container.js` (build/lifecycle) |
 | Pruning/conservative lock recovery | README cleanup/lock sections | `src/prune.js`, `src/locks.js`, `src/unlock-worker.js` |
 | Local web controller, host-only connectors, bounded text history | [Web setup/security/diagnostics](web-control.md), [RPC contracts](pi-rpc.md), [remaining design](web-control-plan.md) | `web/`, `src/pi-rpc.js`, `src/rpc-history.js`, `src/project-rpc.js` |
+| Agent message network between projects | [Network](network.md) | `src/network.js`, `src/runtime/network-client.mjs`, `src/runtime/network-tools.mjs`, `src/runtime/claude-host-mcp.mjs` |
 | Token-free quota simulator | [Dummy backend](dummy-agent.md) | `src/dummy-agent.js`, `bin/pis-dummy*.js` |
 | GNOME quota display/install | [GNOME README](../gnome-codex-usage/README.md) | `gnome-codex-usage/` |
 

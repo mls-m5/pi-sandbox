@@ -271,17 +271,24 @@ export function claudeNeedsLogin(args = []) {
   );
 }
 
-// Image-owned MCP server exposing only typed host proposals (never approvals).
-export const CLAUDE_HOST_MCP_CONFIG = JSON.stringify({
-  mcpServers: {
-    'pis-host': {
-      type: 'stdio',
-      command: '/usr/local/bin/node',
-      args: ['/opt/pis/claude-host-mcp.mjs'],
-      env: { PIS_APT_SOCKET: '/pis/apt/request.sock' },
+// Image-owned MCP server exposing only typed host proposals (never approvals) and, when the
+// project is in a message network, the agent-to-agent message tools.
+export function claudeHostMcpConfig({ apt = true, net = false } = {}) {
+  return JSON.stringify({
+    mcpServers: {
+      'pis-host': {
+        type: 'stdio',
+        command: '/usr/local/bin/node',
+        args: ['/opt/pis/claude-host-mcp.mjs'],
+        env: {
+          ...(apt ? { PIS_APT_SOCKET: '/pis/apt/request.sock' } : {}),
+          ...(net ? { PIS_NET_SOCKET: '/pis/net/net.sock' } : {}),
+        },
+      },
     },
-  },
-});
+  });
+}
+export const CLAUDE_HOST_MCP_CONFIG = claudeHostMcpConfig();
 
 const CLAUDE_SESSION_OR_NONINTERACTIVE = new Set([
   '-c',

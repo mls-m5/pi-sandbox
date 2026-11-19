@@ -31,6 +31,12 @@ export const PROJECT_SCHEMA = {
       description:
         'claude runs official Claude Code with separate state. Its subscription token stays on the host (pis --login claude) and is added by a Claude-only host proxy; credentials.proxy remains Pi-only.',
     },
+    network: {
+      type: 'string',
+      pattern: '^[a-z0-9][a-z0-9-]{0,31}$',
+      description:
+        'Optional message network. Projects with the same network name can exchange short messages through the host (send_message/receive_messages/list_peers). Omit for no messaging.',
+    },
     id: {
       type: 'string',
       pattern: '^[a-z0-9]{5}$',

@@ -84,7 +84,7 @@ test('usage compatibility redirects only the exact endpoint and authenticated du
 test('image context contains only generated build files and install specs affect the fingerprint', () => {
   const config = defaults('abc12', '/work/project');
   const plan = imagePlan(config);
-  assert.deepEqual(Object.keys(plan.files).sort(), ['Containerfile', 'claude-host-mcp.mjs', 'codex-auto.mjs', 'extensions.json', 'fetch-bridge.mjs', 'image-entry.mjs', 'pi-launcher', 'probe-policy.json', 'request-apt.mjs', 'update-probe.mjs']);
+  assert.deepEqual(Object.keys(plan.files).sort(), ['Containerfile', 'claude-host-mcp.mjs', 'codex-auto.mjs', 'extensions.json', 'fetch-bridge.mjs', 'image-entry.mjs', 'network-client.mjs', 'network-tools.mjs', 'pi-launcher', 'probe-policy.json', 'request-apt.mjs', 'update-probe.mjs']);
   assert.match(plan.content, /NPM_CONFIG_IGNORE_SCRIPTS=true pi install 'npm:pi-web-access@0\.40\.0'/);
   assert.match(plan.content, /NPM_CONFIG_IGNORE_SCRIPTS=true pi install 'npm:pi-subagents@0\.88\.1'/);
   assert.match(plan.content, /'build-essential'/);

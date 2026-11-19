@@ -22,11 +22,17 @@ import {
   claudeState,
   hasLegacyClaudeCredential,
   prepareClaudeProxy,
-  CLAUDE_HOST_MCP_CONFIG,
+  claudeHostMcpConfig,
   readClaudeToken,
 } from './claude-code.js';
 import { schedulePrune } from './prune.js';
 import { prepareGitPush, approveGitPush } from './git-push.js';
+import {
+  formatMessages,
+  markDelivered,
+  pendingMessages,
+  startNetworkServer,
+} from './network.js';
 import { startAptRequestServer, applyAptProposal, approveAptProposal } from './apt-requests.js';
 import { imagePlan } from './image-plan.js';
 import { withDefaultExtensions } from './extensions.js';
@@ -71,6 +77,18 @@ export function piCommand(args = [], fresh = false) {
         ...(!fresh && !selectsSession ? ['--continue'] : []),
       ];
   return ['pi', ...defaults, ...args];
+}
+
+// A message network is offered only to launches that actually run an agent task.
+function runsAgentTask(options, isClaude) {
+  if (options.mode !== 'pi' || options.webRpc || options.stdio) return false;
+  const management = isClaude ? ['auth', 'doctor', 'mcp', 'install', 'update'] : [...COMMANDS];
+  return (
+    !management.includes(options.args[0]) &&
+    !options.args.some((arg) =>
+      ['--help', '-h', '--version', '-v', '--list-models', '--export'].includes(arg),
+    )
+  );
 }
 
 export function interactiveOutput(command) {
@@ -178,6 +196,7 @@ export function launchArgs(
     proxy,
     aptRequests,
     codexAuto,
+    messageNetwork,
     startupStarted,
     network,
     selinux = false,
@@ -274,6 +293,13 @@ export function launchArgs(
       `${aptRequests.directory}:/pis/apt:ro${sharedLabel}`,
     );
   if (aptRequests?.gitOnly) args.push('--env', 'PIS_HOST_GIT_ONLY=1');
+  if (messageNetwork)
+    args.push(
+      '--env',
+      'PIS_NET_SOCKET=/pis/net/net.sock',
+      '--volume',
+      `${messageNetwork.directory}:/pis/net:ro${sharedLabel}`,
+    );
   if (codexAuto)
     args.push(
       '--env',
@@ -457,13 +483,21 @@ async function launchOnce(store, config, options) {
           progress('Packages ready. Resuming Pi and notifying the agent to continue the task…');
         }
         if (options.buildOnly) return 0;
+        // Messages that arrived while no agent ran are delivered once, as one clearly marked
+        // prompt, only when the user supplied no prompt of their own. Otherwise they stay queued.
+        const networkOn = Boolean(config.network) && runsAgentTask(options, isClaude);
+        const pending =
+          networkOn && options.args.length === 0 ? pendingMessages(store, config) : [];
+        const agentArgs = pending.length
+          ? [formatMessages(config, pending.map((entry) => entry.message), { startup: true })]
+          : options.args;
         const command =
           options.mode === 'bash'
             ? ['bash', '-i']
             : options.mode === 'exec'
               ? options.args
               : isClaude
-                ? claudeCommand(options.args, {
+                ? claudeCommand(agentArgs, {
                     fresh: options.fresh,
                     hasSession: claudeHasSession(
                       store,
@@ -471,7 +505,7 @@ async function launchOnce(store, config, options) {
                       within(config.root, options.cwd) ? options.cwd : config.root,
                     ),
                   })
-                : piCommand(options.args, options.fresh);
+                : piCommand(agentArgs, options.fresh);
         if (isClaude) {
           claudeState(store, config.id);
           if (hasLegacyClaudeCredential(store, config.id))
@@ -490,11 +524,18 @@ async function launchOnce(store, config, options) {
           process.stdin.isTTY &&
           process.stdout.isTTY &&
           process.stderr.isTTY;
-        if (claudeHostRequests) command.splice(1, 0, '--mcp-config', CLAUDE_HOST_MCP_CONFIG);
+        if (isClaude && (claudeHostRequests || networkOn))
+          command.splice(
+            1,
+            0,
+            '--mcp-config',
+            claudeHostMcpConfig({ apt: Boolean(claudeHostRequests), net: networkOn }),
+          );
         let proxy,
           invocation,
           aptRequests,
           codexAuto,
+          messageNetwork,
           status,
           proposal,
           containerStopped = false;
@@ -523,6 +564,7 @@ async function launchOnce(store, config, options) {
             command.indexOf('--') === -1 ? command.length : command.indexOf('--'),
           );
           if (claudeHostRequests) aptRequests = await startAptRequestServer(config, store);
+          if (networkOn) messageNetwork = await startNetworkServer(config, store);
           if (options.webRpc && options.webGitApproval)
             aptRequests = await startAptRequestServer(config, store, { gitOnly: true });
           if (
@@ -542,10 +584,18 @@ async function launchOnce(store, config, options) {
             proxy,
             aptRequests,
             codexAuto,
+            messageNetwork,
             startupStarted: showProgress ? startupStarted : undefined,
             network: options.network,
             selinux: info.host.security.selinuxEnabled,
           });
+          if (pending.length) {
+            // Claimed only now that the image and sockets are ready; messages stay queued on failure.
+            const claimed = markDelivered(store, config, pending);
+            console.error(
+              `pis: network ${config.network}: delivering ${claimed.length} queued message${claimed.length === 1 ? '' : 's'} to the agent at start.`,
+            );
+          }
           progress('Starting container (first start after a build can take longer)…');
           options.startupProgress?.('starting_container');
           status = await run('podman', invocation.args, {
@@ -569,6 +619,7 @@ async function launchOnce(store, config, options) {
           }
           try {
             if (aptRequests) await aptRequests.close();
+            if (messageNetwork) await messageNetwork.close();
             if (codexAuto) await codexAuto.close();
             if (proxy) {
               const refused = proxy.refused?.() || [];

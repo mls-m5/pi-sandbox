@@ -3,6 +3,7 @@
 // has stopped. Dependency-free: newline-delimited JSON-RPC 2.0 on stdio.
 import net from 'node:net';
 import readline from 'node:readline';
+import { NETWORK_TOOLS, runNetworkTool } from './network-client.mjs';
 
 const TOOLS = [
   {
@@ -78,7 +79,22 @@ export function sendProposal(socketPath, data) {
 
 const textResult = (text, isError = false) => ({ content: [{ type: 'text', text }], isError });
 
+// Agent-to-agent messages never stop Claude or need host approval: they only talk to the
+// host-owned per-launch network socket, whose sender identity the agent cannot choose.
+const networkToolDefinitions = (env) =>
+  env.PIS_NET_SOCKET
+    ? NETWORK_TOOLS.map(({ name, description, properties, required }) => ({
+        name,
+        description,
+        inputSchema: { type: 'object', properties, required, additionalProperties: false },
+      }))
+    : [];
+
 export async function callTool(params, env = process.env, stop = stopClaude) {
+  if (NETWORK_TOOLS.some((entry) => entry.name === params?.name)) {
+    const result = await runNetworkTool(params.name, params.arguments, env.PIS_NET_SOCKET);
+    return textResult(result.text, result.isError);
+  }
   const tool = TOOLS.find((entry) => entry.name === params?.name);
   if (!tool || !env.PIS_APT_SOCKET) return textResult('Unknown or unavailable tool.', true);
   const args = params.arguments;
@@ -125,9 +141,12 @@ export async function handle(message, env = process.env, stop = stopClaude) {
   if (method === 'ping') return reply({});
   if (method === 'tools/list')
     return reply({
-      tools: env.PIS_APT_SOCKET
-        ? TOOLS.map(({ name, description, inputSchema }) => ({ name, description, inputSchema }))
-        : [],
+      tools: [
+        ...(env.PIS_APT_SOCKET
+          ? TOOLS.map(({ name, description, inputSchema }) => ({ name, description, inputSchema }))
+          : []),
+        ...networkToolDefinitions(env),
+      ],
     });
   if (method === 'tools/call') return reply(await callTool(params, env, stop));
   return { jsonrpc: '2.0', id, error: { code: -32601, message: 'Method not found' } };

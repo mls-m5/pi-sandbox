@@ -8,6 +8,7 @@ import { HINTS, SCHEMA_REFERENCE } from './config-schema.js';
 
 export const ID_PATTERN = /^[a-z0-9]{5}$/;
 export const NAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/;
+export const NETWORK_PATTERN = /^[a-z0-9][a-z0-9-]{0,31}$/;
 const RESERVED = [
   '/etc',
   '/usr',
@@ -73,6 +74,7 @@ export function validate(config, { storage, home = os.homedir(), identity, paths
       'name',
       'root',
       'agent',
+      'network',
       'image',
       'mounts',
       'credentials',
@@ -101,6 +103,11 @@ export function validate(config, { storage, home = os.homedir(), identity, paths
   }
   assert(config.version === 1, 'Unsupported configuration version (expected 1).');
   assert(['pi', 'claude'].includes(config.agent), 'agent must be pi or claude.');
+  if (config.network !== undefined)
+    assert(
+      typeof config.network === 'string' && NETWORK_PATTERN.test(config.network),
+      'network must be a lowercase name of letters, digits and dashes (max 32 characters).',
+    );
   assert(
     typeof config.id === 'string' && ID_PATTERN.test(config.id),
     'Project id must be five lowercase letters/digits.',

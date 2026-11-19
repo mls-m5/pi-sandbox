@@ -41,6 +41,8 @@ export function containerfile(config, { piVersion = PI_VERSION, releaseLock } = 
     'fetch-bridge.mjs',
     'request-apt.mjs',
     'claude-host-mcp.mjs',
+    'network-client.mjs',
+    'network-tools.mjs',
     'codex-auto.mjs',
     'update-probe.mjs',
     'probe-policy.json',
@@ -73,6 +75,14 @@ export function imagePlan(config, { piVersion = PI_VERSION, releaseLock, release
     ),
     'claude-host-mcp.mjs': fs.readFileSync(
       new URL('./runtime/claude-host-mcp.mjs', import.meta.url),
+      'utf8',
+    ),
+    'network-client.mjs': fs.readFileSync(
+      new URL('./runtime/network-client.mjs', import.meta.url),
+      'utf8',
+    ),
+    'network-tools.mjs': fs.readFileSync(
+      new URL('./runtime/network-tools.mjs', import.meta.url),
       'utf8',
     ),
     'codex-auto.mjs': fs.readFileSync(new URL('./runtime/codex-auto.mjs', import.meta.url), 'utf8'),

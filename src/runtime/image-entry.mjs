@@ -40,6 +40,7 @@ export function imageCommand(command, extensions, env = process.env) {
       ? ['--skill', `${subagents.path}/skills`]
       : []),
     ...(env.PIS_APT_SOCKET ? ['--extension', '/opt/pis/request-apt.mjs'] : []),
+    ...(env.PIS_NET_SOCKET ? ['--extension', '/opt/pis/network-tools.mjs'] : []),
     ...(env.PIS_CODEX_AUTO_SOCKET ? ['--extension', '/opt/pis/codex-auto.mjs'] : []),
     ...(activateHostGit ? ['--tools', '+request_host_git'] : []),
     ...args,
