@@ -42,6 +42,7 @@ import {
   removeLegacyClaudeCredentials,
 } from './claude-code.js';
 import { readTerminalLine } from './terminal-input.js';
+import { forgetProject } from './forget.js';
 import { readClaudeUsage } from './claude-usage.js';
 import {
   CONTAINER_HOME,
@@ -79,6 +80,7 @@ Usage:
   pis --new [--name NAME] [--from PROJECT]  # --from copies another project's settings
   pis --list
   pis --relocate ID_OR_NAME
+  pis --forget ID_OR_NAME           # delete a project's registration, sessions and image tags
   pis [--project ID_OR_NAME] --edit | --check | --show | --build | --rebuild
   pis [--project ID_OR_NAME] --rebuild-defaults
   pis [--project ID_OR_NAME] --extensions-list
@@ -225,6 +227,7 @@ export function parse(argv) {
         '--codex-rename',
         '--codex-auto-switch',
         '--relocate',
+        '--forget',
         '--import-codex',
         '--login',
         '--logout',
@@ -236,6 +239,7 @@ export function parse(argv) {
       if (
         [
           '--relocate',
+          '--forget',
           '--import-codex',
           '--login',
           '--logout',
@@ -376,6 +380,7 @@ export function parse(argv) {
         'new',
         'list',
         'relocate',
+        'forget',
         'doctor',
         'prune',
         'login-codex',
@@ -620,6 +625,33 @@ export async function main(argv = process.argv.slice(2)) {
             )
             .join('\n')
         : 'No registered projects. Run pis --new in a project directory.',
+    );
+    return 0;
+  }
+  if (options.action === 'forget') {
+    assert(
+      process.stdin.isTTY && process.stdout.isTTY,
+      'pis --forget needs an interactive terminal for confirmation.',
+    );
+    const result = await forgetProject(store, options.target, {
+      confirm: async ({ id, name, root, storage }) => {
+        console.log(
+          `This permanently deletes the pis registration, configuration and ALL sandbox state (sessions, history, backups) of:\n  ${id}${name ? ` (${name})` : ''}\n  ${storage}\nThe project source folder ${root}, its mounts and host credentials are NOT touched.`,
+        );
+        const answer = await readTerminalLine({
+          output: process.stdout,
+          prompt: `Type the project ID (${id}) to confirm, anything else cancels: `,
+          hidden: false,
+          cancelError: 'Cancelled; nothing was removed.',
+        });
+        return answer.trim() === id;
+      },
+    });
+    console.log(
+      `Forgot ${result.id}${result.name ? ` (${result.name})` : ''}. Source folder untouched.\n` +
+        (result.images.checked
+          ? `Image tags removed: ${result.images.removed.length}${result.images.failed.length ? `; could not remove ${result.images.failed.length} (in use?)` : ''}.`
+          : 'Podman was not available; remove any localhost/pis-' + result.id + ':* images manually if wanted.'),
     );
     return 0;
   }

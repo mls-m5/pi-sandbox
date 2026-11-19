@@ -309,6 +309,6 @@ Image-owned tools can propose apt package additions or an exact-commit Git push.
 - Concurrent Pi invocations within one project are currently rejected with a per-project lock; independent projects can run concurrently. Crash-left locks require explicit manual recovery.
 - Mount overlap is currently rejected entirely, including overlaps with project root, pis storage, and reserved container paths; evaluate whether narrower exceptions are useful.
 - Resource-limit defaults and read-only root filesystem feasibility.
-- Project deletion and state-retention commands remain future work. Conservative old-image cleanup is implemented (`--prune` and default background scheduling); it never deletes project source or sandbox state. See README for retention and locking.
+- `pis --forget` deletes a project's registration, state and image tags after typed confirmation (see README); state-retention/archive options remain future work. Conservative old-image cleanup is implemented (`--prune` and default background scheduling); it never deletes project source or sandbox state. See README for retention and locking.
 - Configuration schema migration strategy; XDG/PIS_HOME storage overrides are implemented.
 - npm-source image extensions and configuration completion are implemented. Git/local build sources, transitive dependency update/rollback, and advanced package reconciliation remain future work; see [extension setup and remaining plans](extensions-plan.md).
