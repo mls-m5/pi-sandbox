@@ -1,51 +1,60 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import http from 'node:http';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { Store } from '../src/store.js';
-import { CLAUDE_VERSION, claudeState } from '../src/claude-code.js';
+import { CLAUDE_VERSION, saveClaudeToken } from '../src/claude-code.js';
 import { imagePlan, launch } from '../src/container.js';
 
-test('real Podman Claude: native binary, separate writable login state and no host auth mount (no model requests)', { skip: process.env.PIS_INTEGRATION !== '1', timeout: 500_000 }, async t => {
+test('real Podman Claude: native binary and host-held token through the private socket (fake upstream, no model requests)', { skip: process.env.PIS_INTEGRATION !== '1', timeout: 500_000 }, async t => {
   const base = fs.mkdtempSync('/tmp/pis-claude-integration-');
   const root = path.join(base, 'project'); fs.mkdirSync(root);
   const store = new Store(path.join(base, 'storage'));
   const original = await store.register(root);
   const config = { ...original, agent: 'claude', extensions: [] };
   await store.save(config, original);
+  const token = `sk-ant-oat01-${'f'.repeat(40)}`;
+  await saveClaudeToken(store, token);
+  const seen = [];
+  const upstream = http.createServer((req, res) => {
+    seen.push({ url: req.url, authorization: req.headers.authorization });
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end('{"type":"message","content":[]}');
+  });
+  await new Promise(resolve => upstream.listen(0, '127.0.0.1', resolve));
   const image = imagePlan(config).image;
   t.after(() => {
+    upstream.close();
     spawnSync('podman', ['rmi', image], { stdio: 'ignore' });
     fs.rmSync(base, { recursive: true, force: true });
   });
-  const state = claudeState(store, config.id);
-  const fakeLogin = { claudeAiOauth: { accessToken: 'fake-access', refreshToken: 'fake-refresh', expiresAt: 1900000000000 } };
-  fs.writeFileSync(state.credential, JSON.stringify(fakeLogin), { mode: 0o600 });
-  const options = { cwd: root, network: 'none', stdio: 'ignore', mode: 'exec' };
-  // Only --version is run on the official binary, with container networking disabled.
+  // Container networking is disabled: the only route out is the mounted host socket.
+  const options = { cwd: root, network: 'none', stdio: 'ignore', mode: 'exec', claudeUpstream: `http://127.0.0.1:${upstream.address().port}` };
   const script = `
-    const fs = require('fs'), cp = require('child_process');
+    const fs = require('fs'), cp = require('child_process'), http = require('http');
     const version = cp.spawnSync('claude', ['--version'], { encoding: 'utf8' });
-    if (version.status !== 0) process.exit(2);
-    const file = process.env.CLAUDE_CONFIG_DIR + '/.credentials.json';
-    const login = JSON.parse(fs.readFileSync(file));
-    login.claudeAiOauth.accessToken = 'refreshed-fake-access';
-    fs.writeFileSync(file, JSON.stringify(login));
-    fs.writeFileSync('claude-report.json', JSON.stringify({
-      version: version.stdout, uid: process.getuid(), cwd: process.cwd(),
-      proxy: process.env.PIS_PROXY_TOKEN, approval: process.env.PIS_APT_SOCKET,
-      hostAuthVisible: fs.existsSync(${JSON.stringify(path.join(store.root, 'auth'))})
-    }));
+    const req = http.request({ socketPath: process.env.ANTHROPIC_UNIX_SOCKET, method: 'POST', path: '/v1/messages?beta=true',
+      headers: { 'content-type': 'application/json', authorization: 'Bearer ' + process.env.CLAUDE_CODE_OAUTH_TOKEN } }, res => {
+      let body = ''; res.on('data', c => body += c); res.on('end', () => {
+        fs.writeFileSync('claude-report.json', JSON.stringify({
+          version: version.stdout, status: res.statusCode, body, uid: process.getuid(), cwd: process.cwd(),
+          env: JSON.stringify(process.env), credentialFile: fs.existsSync(process.env.CLAUDE_CONFIG_DIR + '/.credentials.json'),
+          hostAuthVisible: fs.existsSync(${JSON.stringify(path.join(store.root, 'auth'))}),
+        }));
+      });
+    });
+    req.end('{"model":"fake"}');
   `;
   assert.equal(await launch(store, config, { ...options, args: ['node', '-e', script] }), 0);
   const report = JSON.parse(fs.readFileSync(path.join(root, 'claude-report.json')));
   assert.ok(report.version.includes(CLAUDE_VERSION));
+  assert.equal(report.status, 200);
   assert.equal(report.uid, process.getuid());
   assert.equal(report.cwd, root);
-  assert.equal(report.proxy, undefined);
-  assert.equal(report.approval, undefined);
+  assert.equal(report.credentialFile, false);
   assert.equal(report.hostAuthVisible, false);
-  assert.equal(JSON.parse(fs.readFileSync(state.credential)).claudeAiOauth.accessToken, 'refreshed-fake-access');
-  assert.equal(await launch(store, config, { ...options, args: ['node', '-e', `if (JSON.parse(require('fs').readFileSync(process.env.CLAUDE_CONFIG_DIR + '/.credentials.json')).claudeAiOauth.accessToken !== 'refreshed-fake-access') process.exit(1)`] }), 0);
+  assert.ok(!report.env.includes(token));
+  assert.deepEqual(seen, [{ url: '/v1/messages?beta=true', authorization: `Bearer ${token}` }]);
 });

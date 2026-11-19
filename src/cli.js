@@ -32,7 +32,16 @@ import {
   readApiProfile,
 } from './api-auth.js';
 import { validate } from './config.js';
-import { CLAUDE_VERSION, claudeCommand, loginClaude, logoutClaude } from './claude-code.js';
+import {
+  CLAUDE_VERSION,
+  claudeCommand,
+  claudeNeedsLogin,
+  loginClaude,
+  logoutClaudeToken,
+  readClaudeToken,
+  removeLegacyClaudeCredentials,
+} from './claude-code.js';
+import { readTerminalLine } from './terminal-input.js';
 import {
   CONTAINER_HOME,
   BASE_IMAGE,
@@ -58,10 +67,12 @@ Usage:
   pis --forward ssh://[USER@]HOST    # Browser link via SSH; defaults 22/43128
   pis --forward --help              # Ports, known hosts and shutdown details
   pis [--project ID_OR_NAME] [--agent pi|claude] [--fresh] [-- AGENT_ARGS...]
+  pis [--project ID_OR_NAME] --claude [-- CLAUDE_ARGS...] # same as --agent claude
   pis [--project ID_OR_NAME] --wait-codex # wait for quota, resume saved Pi task
   pis [--project ID_OR_NAME] [--fresh] --auto-wait-codex [-- PI_ARGS...]
-  pis [--project ID_OR_NAME] --login-claude  # official host login, project-scoped
-  pis [--project ID_OR_NAME] --logout-claude # remove local login copies
+  pis --login claude                 # global Claude subscription token (setup-token)
+  pis --logout claude                # remove the saved Claude token (not revoked)
+  pis --logout-claude                # also removes this project's old per-project copies
   pis [--project ID_OR_NAME] --bash
   pis [--project ID_OR_NAME] --exec -- PROGRAM [ARGS...]
   pis --new [--name NAME]
@@ -84,8 +95,8 @@ Usage:
   pis --codex-auto-switch off|on|NAME,NAME # opt-in quota-confirmed switching
   pis --login-mistral               # global Mistral API-key profile
   pis --logout-mistral
-  pis --login openai|berget|mistral|custom|ollama
-  pis --logout openai|berget|mistral|custom|ollama
+  pis --login openai|berget|mistral|custom|ollama|claude
+  pis --logout openai|berget|mistral|custom|ollama|claude
   pis --login-status
 
 --server or --connect must be the first argument. It starts the host loopback web server;
@@ -110,10 +121,11 @@ the host must confirm exhaustion, then waits and continues the SAME session.
 Escape, new input/session/model changes or /codex-auto off cancel pending resume.
 Auto mode needs extensions and saved sessions; print/JSON/RPC are unsupported.
 Agent arguments belong after --. Explicit Pi session selectors override continuation.
-Claude starts a new session by default; use --agent claude -- --continue to resume.
-Claude uses separate writable state containing REAL tokens, not the Pi proxy.
---login-claude requires official host Claude Code at ~/.local/bin/claude,
-or PIS_CLAUDE_BIN set to its absolute executable path. No host home is mounted.
+Claude starts a new session by default; use --claude -- --continue to resume.
+--login claude runs official host "claude setup-token" (~/.local/bin/claude or
+PIS_CLAUDE_BIN) and saves the subscription token on the host for all projects.
+Claude containers get only a placeholder and a private Unix socket; the host proxy
+adds the token to model calls. API keys (per-token billing) are refused.
 --new registers the current directory; it does not start a conversation.
 --edit uses $VISUAL, $EDITOR, or vim and saves only valid JSON configuration.
 --show prints effective settings and mounts without credential values.
@@ -187,7 +199,7 @@ Only an explicit trusted host profile can select a custom destination.
 --login ollama stores a keyless loopback HTTP /v1 profile on the agent host;
 enter installed tool-capable model IDs and actual configured context limits.
 No live connection/model test, LAN access or public-custom URL relaxation.
-Never run as root. Mounted files and Claude Code's copied login tokens are accessible to the sandbox.
+Never run as root. Mounted files are accessible to the sandbox.
 `;
 
 export function parse(argv) {
@@ -235,7 +247,10 @@ export function parse(argv) {
         options.target = value;
       } else {
         const property = key === '--codex-account' ? 'codexAccount' : key.slice(2);
-        assert(options[property] === undefined, `Repeated option: ${key}`);
+        assert(
+          options[property] === undefined,
+          `Repeated option: ${key === '--agent' ? '--claude/--agent' : key}`,
+        );
         options[property] = value;
       }
     } else if (key === '--dry-run' && equals === -1) {
@@ -247,6 +262,9 @@ export function parse(argv) {
     } else if (key === '--wait-codex' && equals === -1) {
       assert(!options.waitCodex, 'Repeated option: --wait-codex');
       options.waitCodex = true;
+    } else if (key === '--claude' && equals === -1) {
+      assert(options.agent === undefined, 'Repeated option: --claude/--agent');
+      options.agent = 'claude';
     } else if (key === '--fresh' && equals === -1) {
       assert(!options.fresh, 'Repeated option: --fresh');
       options.fresh = true;
@@ -359,6 +377,7 @@ export function parse(argv) {
         'logout-codex',
         'login-mistral',
         'logout-mistral',
+        'login-claude',
         'codex-usage',
         'codex-accounts',
         'codex-use',
@@ -440,6 +459,21 @@ export async function main(argv = process.argv.slice(2)) {
     console.log(JSON.stringify({ dryRun: Boolean(options.dryRun), ...result }, null, 2));
     return result.failed.length ? 1 : 0;
   }
+  if (
+    (options.action === 'login' && options.target === 'claude') ||
+    options.action === 'login-claude'
+  ) {
+    await loginClaude(store);
+    console.log(
+      'Saved the Claude subscription token on the host (shared by all Claude projects; never mounted).\nStart Claude Code with pis --claude, or set "agent": "claude" via pis --edit.',
+    );
+    return 0;
+  }
+  if (options.action === 'logout' && options.target === 'claude') {
+    await logoutClaudeToken(store);
+    console.log('Removed the saved Claude token from this host. It is not revoked at Anthropic.');
+    return 0;
+  }
   if (options.action === 'login' || options.action === 'login-mistral') {
     const provider = options.action === 'login-mistral' ? 'mistral' : options.target;
     await promptApiProfile(store, provider);
@@ -464,6 +498,11 @@ export async function main(argv = process.argv.slice(2)) {
       JSON.stringify(
         [
           ...apiProfileStatus(store),
+          {
+            provider: 'claude',
+            profilePresent: Boolean(readClaudeToken(store)),
+            credentialPresent: Boolean(readClaudeToken(store)),
+          },
           {
             provider: 'openai-codex',
             profilePresent: codexPresent,
@@ -588,21 +627,11 @@ export async function main(argv = process.argv.slice(2)) {
       scheduleUpdates(store, store.load(config.id, false));
     return result.failed ? 1 : 0;
   }
-  if (options.action === 'login-claude') {
-    assert(
-      process.stdin.isTTY && process.stdout.isTTY,
-      'Run pis --login-claude interactively on the host.',
-    );
-    await loginClaude(store, config);
-    console.log(
-      "Claude subscription login copied to this project's writable Claude sandbox state. Real tokens are visible inside the Claude sandbox.\nThe host snapshot is not mounted. Tokens renewed in the sandbox are never copied back or overwritten at startup.\nStart with pis --agent claude; if login expires, stop the sandbox and run pis --login-claude again.",
-    );
-    return 0;
-  }
   if (options.action === 'logout-claude') {
-    await logoutClaude(store, config.id);
+    await logoutClaudeToken(store);
+    const removed = await removeLegacyClaudeCredentials(store, config.id);
     console.log(
-      "Removed this project's host snapshot and sandbox credential file. Sessions/backups remain; tokens are not revoked at Anthropic.",
+      `Removed the saved host Claude token${removed ? ` and ${removed} old per-project credential file(s)` : ''}. Sessions remain; tokens are not revoked at Anthropic.`,
     );
     return 0;
   }
@@ -642,12 +671,7 @@ export async function main(argv = process.argv.slice(2)) {
     const isCodex = !isClaude && config.credentials.proxy?.provider === 'openai-codex';
     const credentialVariables = [];
     const credentialSource = isClaude
-      ? {
-          kind: 'sandbox-oauth-copy',
-          provider: 'claude-code',
-          warning:
-            'Real tokens are readable and writable inside the sandbox. Pi proxy is not used.',
-        }
+      ? { kind: 'host-oauth-proxy', provider: 'claude', present: Boolean(readClaudeToken(store)) }
       : isCodex
         ? { kind: 'host-oauth', provider: 'openai-codex', present: hasCodexCredential(store) }
         : config.credentials.proxy
@@ -689,6 +713,26 @@ export async function main(argv = process.argv.slice(2)) {
       ),
     );
     return 0;
+  }
+  if (
+    config.agent === 'claude' &&
+    options.action === 'run' &&
+    options.mode === 'pi' &&
+    claudeNeedsLogin(options.args) &&
+    !readClaudeToken(store)
+  ) {
+    assert(
+      process.stdin.isTTY && process.stdout.isTTY,
+      'No Claude login saved. Run pis --login claude on the host.',
+    );
+    const answer = await readTerminalLine({
+      output: process.stdout,
+      prompt: 'No Claude login saved on this host. Log in now? [Y/n]: ',
+      hidden: false,
+      cancelError: 'Login cancelled.',
+    });
+    assert(answer.toLowerCase() !== 'n', 'No Claude login saved. Run pis --login claude.');
+    await loginClaude(store);
   }
   return launch(store, config, {
     ...options,

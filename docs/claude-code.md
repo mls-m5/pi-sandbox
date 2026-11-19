@@ -1,70 +1,69 @@
 # Claude Code in the pis sandbox (experimental)
 
-This mode runs Anthropic's **unmodified official Claude Code**, not Claude models in Pi and not a subscription-token proxy. Pi remains the default. Claude Code uses its own subscription login and direct networking; Pi's Codex/API-key proxy is not involved.
+This mode runs Anthropic's **unmodified official Claude Code** in the project container, on your Claude subscription. Pi remains the default agent. The subscription token stays on the host: the container gets only a fixed placeholder and a private Unix socket to a Claude-only host proxy.
 
 ## Start
 
-Install official Claude Code **on the host** using [Anthropic's installation instructions](https://code.claude.com/docs/en/setup). The default host executable is `~/.local/bin/claude`. If installed elsewhere, set `PIS_CLAUDE_BIN` to its absolute executable path. pis does not download or run a host installer for you. Executables in registered project roots, extra mounts or sandbox storage are rejected for host login.
+Install official Claude Code **on the host** using [Anthropic's installation instructions](https://code.claude.com/docs/en/setup). The default host executable is `~/.local/bin/claude`; otherwise set `PIS_CLAUDE_BIN` to its absolute path. Executables in registered project roots, extra mounts or sandbox storage are rejected.
 
-From a registered project, on the host terminal:
-
-```sh
-pis --login-claude               # Official browser sign-in, for this project
-pis --agent claude               # Build image if necessary, then start Claude
-pis --agent claude -- --continue # Explicitly resume Claude's last session
-pis --agent claude -- --resume   # Claude's session selector
-```
-
-Use a Claude subscription, not `--console` API billing, in the login flow. No model call is made by pis during login. Sign-in still contacts Anthropic for authentication.
-
-Set `"agent": "claude"` using `pis --edit` to make this project's default Claude Code. `--agent pi` or `--agent claude` overrides the stored choice for a single launch (also works with `--show`, `--check`, `--build`, `--rebuild`, `--bash` and `--exec`). Existing explicit choices are preserved. `credentials.env` must remain `[]`.
-
-Claude starts **a new session by default**, unlike Pi's implicit continuation. `--fresh` therefore adds no Claude flags. Arguments after `--` are forwarded unchanged; do not put Pi-specific flags there when using Claude. Claude permissions and workspace-trust prompts are not bypassed.
-
-For inspection without a conversation:
+Once per host (global, shared by all projects in this `PIS_HOME`):
 
 ```sh
-pis --agent claude -- --version
-pis --agent claude -- auth status
-pis --agent claude --bash
+pis --login claude          # runs official "claude setup-token", then a hidden paste prompt
 ```
 
-`--version`, `--help` and management commands do not require a stored login. Bash/exec do not require a login either, but see any credentials already in this agent's state. They use the selected agent's image and home. Claude print mode (`-p`) avoids a TTY, like Pi print mode.
-
-## Credential flow and the weaker security boundary
-
-**Real access and refresh tokens are readable and writable inside the Claude sandbox.** A malicious dependency, tool, prompt-induced command or other process with the same container user can steal them. Claude's own permission UI is not an isolation boundary between the CLI and shell commands. Treat this mode as less secret-isolating than Pi's host proxy. Normal container isolation still protects unmounted host data, subject to the host kernel boundary.
-
-1. `pis --login-claude` takes this project's exclusive lock and starts official host `claude auth login` with a fresh host-only `CLAUDE_CONFIG_DIR` and working directory. It does not load the repository's settings, hooks, or existing sandbox login. Host Anthropic API keys, OAuth environment overrides, alternate endpoints and Node injection options are removed from this child environment.
-2. After successful login, pis reads a bounded, private regular `.credentials.json` and copies `claudeAiOauth` plus the optional `oauthAccount` identity field from the native global config, not host settings, project trust, hooks, MCP servers, history or API keys. Existing sandbox preferences are preserved when updating that identity field.
-3. A private original snapshot is kept at `$PIS_HOME/auth/claude-<id>.json` (default PIS_HOME: `~/.local/share/pis`). It is **not mounted**. The temporary host login directory is removed. Personal host `~/.claude` is not imported or mounted.
-4. The working copy lives at `projects/<id>/claude-state/.claude/.credentials.json`. The entire separate `claude-state` home is mounted read-write at `/pis/home`, with `CLAUDE_CONFIG_DIR=/pis/home/.claude`. Pi's `state/` is not mounted in Claude mode, and Claude state is not mounted in Pi mode.
-5. Claude can renew tokens and save them in its own persistent state. Startup **never recopies the host snapshot over renewed tokens**, and sandbox tokens/settings are never imported back into the host client.
-
-Directories use mode 0700 and copied credential files mode 0600. Credential reads reject symlinks, hardlinks, nonregular files and oversized/nonprivate JSON. Credential write paths reject symlinked state directories and nonregular or hardlinked destinations. These checks are not a defense against a compromised host/kernel or arbitrary simultaneous host filesystem manipulation.
-
-Logins are deliberately **per project**, not global: cloning one rotating refresh token across concurrently running projects can invalidate other copies. Do not use the retained host snapshot as another active login. Separate browser logins may still be subject to account/session policies at Anthropic. One login may work for a long time with automatic refresh, but indefinite validity is not promised.
-
-If Claude reports an expired or invalid login, stop the sandbox and run `pis --login-claude` again on the host. This explicitly replaces the snapshot and working credential file but keeps conversation state. First-run onboarding or account/setup prompts may still appear; pis does not suppress or pre-approve them.
+From a registered project:
 
 ```sh
-pis --logout-claude
+pis --claude                # same as --agent claude; builds the image if needed
+pis --claude -- --continue  # resume Claude's last session explicitly
+pis --claude -- --resume    # Claude's session selector
 ```
 
-Logout removes this project's host snapshot and current sandbox credential file under the project lock. It **does not revoke tokens at Anthropic**, delete sessions/backups, or scrub credentials that sandbox commands copied elsewhere. Use Anthropic's account controls if tokens might have leaked.
+If no login is saved, an interactive `pis --claude` offers to run the login first, so the first start can be a single command. Set `"agent": "claude"` via `pis --edit` to make Claude the project's default; `--agent pi|claude` / `--claude` override it for one launch (also with `--show`, `--check`, `--build`, `--rebuild`, `--bash`, `--exec`).
+
+Claude starts **a new session by default**, unlike Pi's implicit continuation; `--fresh` adds no Claude flags. Arguments after `--` are forwarded unchanged. Claude permissions and workspace-trust prompts are not bypassed. `--version`, `--help` and `auth`/`doctor`/`mcp` management commands work without a login. `pis --claude --bash` gets the same proxy when a login is saved, so `claude` can be run inside the shell.
+
+Other commands: `pis --logout claude` removes the saved token (it is **not** revoked at Anthropic; revoke it in your Claude account settings if it may have leaked). `pis --login-status` reports presence only. `pis --login-claude` is an alias for `pis --login claude`.
+
+## Credential flow
+
+1. `pis --login claude` optionally runs host `claude setup-token` in a fresh host-only `CLAUDE_CONFIG_DIR`/working directory (no repository settings, hooks or existing login; host `ANTHROPIC_*`/`CLAUDE_*`, API-key and Node injection variables removed). You paste the printed long-lived token at a hidden prompt. The temporary directory is removed.
+2. The token is saved as `$PIS_HOME/auth/claude-oauth-token.json` (0600 in a 0700 directory, no-follow/singly-linked/owner checks). It is never mounted, put in image builds, or passed as a container environment variable.
+3. **Only subscription OAuth tokens (`sk-ant-oat…`) are accepted; Anthropic API keys (`sk-ant-api…`) are refused**, so this mode cannot silently switch to per-token API billing. There is no API-key fallback anywhere in the proxy.
+4. Each Claude launch starts a host proxy listening on a private Unix socket in a fresh 0700 `/tmp/pis-claude-*` directory, mounted read-only at `/pis/proxy`. The container gets only:
+   - `ANTHROPIC_UNIX_SOCKET=/pis/proxy/claude.sock`
+   - `CLAUDE_CODE_OAUTH_TOKEN=ssh-placeholder` (Claude Code's own fixed placeholder for host-held credentials)
+   - `ANTHROPIC_BASE_URL=http://pis-claude-proxy.invalid` (plain HTTP over the socket, never resolved)
+   - `CLAUDE_CODE_OAUTH_401_WAIT_MS=0`
+5. The proxy accepts only `POST /v1/messages` and `POST /v1/messages/count_tokens` (optionally `?beta=true`), JSON content. It forwards to the fixed `https://api.anthropic.com` with `Authorization: Bearer <token>` and the OAuth beta header added; client `authorization`/`x-api-key`, Host, cookies and forwarding/proxy headers are dropped, other headers are allowlisted (Anthropic version/beta, user agent, `x-app`, session/request IDs, `x-stainless-*`). Redirects are refused. Anthropic responses, including error bodies (overload, rate limit, context length), are streamed back with only content type, request ID, retry and `anthropic-ratelimit-*` headers; the token is redacted from response bytes. Other routes get a 404 Anthropic-style error. Per launch: 16 concurrent / 20000 requests, 32 MiB request bodies, 10-minute upstream idle timeout. Nothing is logged except, with `PIS_CLAUDE_PROXY_DEBUG=1`, a sanitized list of refused route paths at exit.
+6. Rotation is not an issue: a `setup-token` token is long-lived and is never refreshed in the sandbox, and only the host holds it. All projects can share it concurrently.
+
+The per-project `claude-state/` home (mounted at `/pis/home`, `CLAUDE_CONFIG_DIR=/pis/home/.claude`) keeps Claude's sessions, settings and history. Pi's `state/` is not mounted in Claude mode and vice versa.
+
+### What the boundary does and does not protect
+
+- A process in the sandbox **cannot read or exfiltrate the subscription token**.
+- While a Claude container runs, any process in it **can use the socket** to make model calls on your subscription (within the per-launch limits), just as Pi sandbox processes can use the Pi proxy. Treat the agent's quota use accordingly.
+- The proxy is Claude-only: it is started only for `agent: claude`, and launch arguments refuse to give it to Pi. Pi's `credentials.proxy` settings are kept unchanged for switching back and are never started in Claude mode. Anthropic's terms do not allow subscription OAuth to be used by other clients; this mode only routes the official Claude Code client's own calls.
+- Claude Code still has normal container networking for git, package managers and web tools. Only model authentication goes through the host.
+
+### Migration from the earlier per-project login
+
+Earlier versions copied real access/refresh tokens into `projects/<id>/claude-state/.claude/.credentials.json`. Launches warn if that file still exists. Run `pis --logout-claude` in the project to remove the saved global token **and** that project's old copies (sessions are kept), then `pis --login claude` again. Old copies are not revoked at Anthropic.
 
 ## Image and unavailable Pi features
 
-Claude images add pinned `@anthropic-ai/claude-code@2.1.318` to the existing image. npm lifecycle scripts are disabled; the specific official package's `install.cjs` is then run explicitly to place its platform-native binary, and `claude --version` checks installation during the build. The binary is unmodified. Runtime `DISABLE_UPDATES=1` keeps updates controlled by image changes/rebuilds. No real credentials are supplied to builds.
+Claude images add pinned `@anthropic-ai/claude-code@2.1.328` (the version whose Unix-socket placeholder mode was inspected). npm lifecycle scripts are disabled; the package's `install.cjs` is then run explicitly to place its platform-native binary, and `claude --version` checks the build. The binary is unmodified. Runtime `DISABLE_UPDATES=1` keeps updates controlled by image rebuilds. No credentials are supplied to builds. The version bump changes Claude image fingerprints, so the next Claude launch rebuilds.
 
-Pi packages/extensions are not Claude plugins. Claude launches do not expose Pi's apt/Git proposal socket or automatic post-approval restart flow, and never start the configured Pi credential proxy. Existing Pi proxy settings are kept unchanged for switching back to Pi. Host `ANTHROPIC_*` and `CLAUDE_*` variables are stripped from Podman subprocess environments, not forwarded into the runtime. The runtime receives only its fixed Claude configuration directory and update policy.
+Pi packages/extensions are not Claude plugins. Claude launches do not expose Pi's apt/Git proposal socket or automatic post-approval restart flow. Host `ANTHROPIC_*` and `CLAUDE_*` variables are stripped from Podman subprocess environments. Web/RPC mode and managed updates remain Pi-only.
 
 ## Verification and limits
 
-Fast tests use a fake official-login subprocess and a fake Podman CLI; they verify selection, image generation, mount isolation, no Pi proxy/approval socket, private credential copying, preserving sandbox refreshes, locking, failure paths and rejection of unsafe files. They make no real login or model requests.
+Fast tests (no network, no real login, no model calls) use a fake Anthropic upstream, fake TTY and fake Podman. They cover token validation (API-key refusal, private-file checks), isolated `setup-token` login, header/route filtering, token injection and redaction, error-body forwarding, redirect refusal, budgets, launch arguments (placeholder-only, Claude-only proxy), legacy cleanup and CLI flow.
 
-An opt-in real-Podman test builds the image, runs the real native binary **only with `--version`**, and checks writable persistent fake login state with runtime networking disabled. Run `npm run test:integration` on a suitable host. Merely having this test in the repository does not mean it was run in the sandbox.
+An opt-in real-Podman test (`npm run test:integration`) builds the image, runs the native binary only with `--version`, and sends one request from inside a `--network=none` container through the mounted socket to a host fake upstream, checking that the token is injected on the host and absent from the container. It has not been run in the development sandbox.
 
-**Not yet verified end to end:** real host subscription login, initial Claude onboarding with the copied credential, native binary execution on the target host/container, interactive sessions and actual refresh-token rotation. No paid/live model calls are used as smoke tests. If Anthropic changes its file format or login behavior, this integration may need updates; do not fall back to sharing host home or mounting credential directories directly.
+**Not yet verified end to end:** real `claude setup-token` login, Claude Code actually honoring the socket/placeholder mode in the container (inferred from the 2.1.328 binary and Anthropic's own nested-runner usage, not documented public API), subscription features over the proxy (usage display, model list, account-dependent features may be missing or degraded), and a real model call. Verify on the host with a small prompt. If Anthropic changes these mechanisms or required headers, this integration needs updating; do not fall back to mounting host credential files.
 
-References: [authentication and Linux credential storage](https://code.claude.com/docs/en/authentication), [CLI reference](https://code.claude.com/docs/en/cli-reference), [third-party hosting and credential rules](https://code.claude.com/docs/en/legal-and-compliance).
+References: [authentication](https://code.claude.com/docs/en/authentication), [CLI reference](https://code.claude.com/docs/en/cli-reference), [legal and compliance](https://code.claude.com/docs/en/legal-and-compliance).

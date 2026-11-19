@@ -1,16 +1,30 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import http from 'node:http';
 import path from 'node:path';
+import { PassThrough } from 'node:stream';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { Store } from '../src/store.js';
 import { completeConfig, defaults, validate } from '../src/config.js';
 import { parse } from '../src/cli.js';
 import { imagePlan, launchArgs, interactiveOutput, podmanEnvironment } from '../src/container.js';
-import { CLAUDE_VERSION, claudeCommand, claudeNeedsLogin, claudeLoginEnvironment, claudeState, loginClaude, logoutClaude, requireClaudeLogin } from '../src/claude-code.js';
+import {
+  CLAUDE_VERSION, claudeCommand, claudeNeedsLogin, claudeLoginEnvironment, claudeState, loginClaude,
+  logoutClaudeToken, prepareClaudeProxy, readClaudeToken, removeLegacyClaudeCredentials, saveClaudeToken,
+  startClaudeProxy, validateClaudeToken,
+} from '../src/claude-code.js';
 
-const record = { claudeAiOauth: { accessToken: 'fake-access', refreshToken: 'fake-refresh', expiresAt: 1900000000000, scopes: ['user:inference'], subscriptionType: 'max' } };
+const TOKEN = `sk-ant-oat01-${'x'.repeat(40)}`;
+
+function terminal() {
+  const input = new PassThrough(), output = new PassThrough();
+  input.isTTY = output.isTTY = true; input.isRaw = false;
+  input.setRawMode = value => { input.isRaw = value; };
+  let text = ''; output.on('data', data => { text += data; });
+  return { input, output, text: () => text };
+}
 
 async function fixture(t) {
   const base = fs.mkdtempSync('/tmp/pis-claude-test-');
@@ -19,20 +33,30 @@ async function fixture(t) {
   const binary = path.join(base, 'official-claude'); fs.writeFileSync(binary, '#!/bin/sh\nexit 0\n', { mode: 0o700 });
   const store = new Store(path.join(base, 'storage'));
   const config = await store.register(root);
-  const execute = async (program, args, options) => {
-    assert.equal(program, binary);
-    assert.deepEqual(args, ['auth', 'login']);
-    assert.notEqual(options.cwd, root);
-    assert.equal(options.cwd, options.env.CLAUDE_CONFIG_DIR);
-    fs.writeFileSync(path.join(options.cwd, '.credentials.json'), JSON.stringify({ ...record, apiKey: 'must-not-copy' }), { mode: 0o600 });
-    fs.writeFileSync(path.join(options.cwd, 'settings.json'), '{"hooks":{"malicious":true}}');
-    fs.writeFileSync(path.join(options.cwd, '.claude.json'), JSON.stringify({ oauthAccount: { accountUuid: 'fake-account' }, mcpServers: { untrusted: {} }, hasCompletedOnboarding: true }));
-    return 0;
-  };
-  return { base, binary, store, config, execute };
+  return { base, root, binary, store, config };
 }
 
-test('Claude agent selection preserves Pi defaults and isolates image/state/proxy arguments', () => {
+function unixRequest(socketPath, { method = 'POST', url = '/v1/messages?beta=true', headers = {}, body = '{"model":"m"}' } = {}) {
+  return new Promise((resolve, reject) => {
+    const req = http.request({ socketPath, method, path: url, headers: { 'content-type': 'application/json', ...headers } }, res => {
+      let text = ''; res.on('data', chunk => { text += chunk; }); res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: text }));
+    });
+    req.on('error', reject); req.end(body);
+  });
+}
+
+async function fakeAnthropic(t, respond) {
+  const seen = [];
+  const server = http.createServer((req, res) => {
+    let body = ''; req.on('data', chunk => { body += chunk; });
+    req.on('end', () => { seen.push({ method: req.method, url: req.url, headers: req.headers, body }); respond(req, res, body); });
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  return { upstream: `http://127.0.0.1:${server.address().port}`, seen };
+}
+
+test('Claude agent selection, --claude shorthand, image and placeholder-only launch arguments', () => {
   const pi = defaults('abc12', '/work/project');
   assert.equal(pi.agent, 'pi');
   assert.equal(completeConfig({ credentials: { env: [] } }).agent, 'pi');
@@ -40,100 +64,195 @@ test('Claude agent selection preserves Pi defaults and isolates image/state/prox
   validate(config, { paths: false });
   assert.throws(() => validate({ ...config, agent: 'other' }, { paths: false }), /agent must/);
   assert.equal(parse(['--agent', 'claude', '--', '-p', 'hello']).agent, 'claude');
-  assert.equal(parse(['--agent=claude', '--build']).action, 'build');
-  assert.equal(parse(['--project', 'abc12', '--login-claude']).action, 'login-claude');
+  assert.equal(parse(['--claude', '--', '--continue']).agent, 'claude');
+  assert.equal(parse(['--claude', '--show']).action, 'show');
+  assert.throws(() => parse(['--claude', '--agent', 'pi']), /Repeated option/);
+  assert.equal(parse(['--login', 'claude']).target, 'claude');
+  assert.equal(parse(['--login-claude']).action, 'login-claude');
+  assert.throws(() => parse(['--project', 'abc12', '--login-claude']), /--project is not valid/);
   assert.throws(() => parse(['--agent', 'other']), /--agent must/);
-  assert.throws(() => parse(['--agent', 'claude', '--login-claude']), /--agent is only/);
-  assert.deepEqual(claudeCommand(), ['claude']);
+  assert.throws(() => parse(['--claude', '--login-claude']), /--agent is only/);
   assert.deepEqual(claudeCommand(['--continue']), ['claude', '--continue']);
   assert.equal(claudeNeedsLogin(['--version']), false);
   assert.equal(claudeNeedsLogin(['auth', 'status']), false);
   assert.equal(claudeNeedsLogin(['-p', 'hello']), true);
   assert.equal(interactiveOutput(['claude', '-p', 'hello']), false);
-  assert.equal(interactiveOutput(['claude', '--output-format', 'stream-json', '-p', 'hello']), false);
   assert.equal(interactiveOutput(['claude']), true);
   const image = imagePlan(config);
   assert.match(image.content, new RegExp(`@anthropic-ai/claude-code@${CLAUDE_VERSION.replaceAll('.', '\\.')}`));
   assert.match(image.content, /--ignore-scripts.*claude-code.*&& node .*install\.cjs/);
-  assert.notEqual(image.image, imagePlan(pi).image);
   assert.doesNotMatch(imagePlan(pi).content, /@anthropic-ai\/claude-code/);
   const store = { projectDir: () => '/storage/projects/abc12' };
-  const { args } = launchArgs(store, config, ['claude', '-p', 'hello'], { cwd: config.root, image: image.image, tty: false, stdinIsTTY: true });
-  assert.ok(args.includes('/storage/projects/abc12/claude-state:/pis/home:rw'));
-  assert.ok(!args.includes('/storage/projects/abc12/state:/pis/home:rw'));
-  assert.ok(args.includes('CLAUDE_CONFIG_DIR=/pis/home/.claude'));
-  assert.ok(args.includes('DISABLE_UPDATES=1'));
-  assert.ok(!args.includes('--interactive'));
-  assert.ok(!args.some(arg => /PIS_PROXY|PIS_APT|OPENAI_API_KEY|ANTHROPIC_API_KEY|\/auth\//.test(arg)));
-  assert.throws(() => launchArgs(store, config, ['claude'], { cwd: config.root, proxy: {} }), /does not use Pi/);
+  const bare = launchArgs(store, config, ['claude', '--version'], { cwd: config.root, image: image.image, tty: false, stdinIsTTY: true }).args;
+  assert.ok(bare.includes('/storage/projects/abc12/claude-state:/pis/home:rw'));
+  assert.ok(bare.includes('CLAUDE_CONFIG_DIR=/pis/home/.claude'));
+  assert.ok(!bare.some(arg => /ANTHROPIC_|CLAUDE_CODE_OAUTH|PIS_PROXY|PIS_APT|OPENAI_API_KEY/.test(arg)));
+  const proxy = { provider: 'claude', directory: '/tmp/pis-claude-x' };
+  const { args } = launchArgs(store, config, ['claude', '-p', 'hi'], { cwd: config.root, image: image.image, proxy, tty: false, stdinIsTTY: true });
+  for (const expected of ['ANTHROPIC_UNIX_SOCKET=/pis/proxy/claude.sock', 'CLAUDE_CODE_OAUTH_TOKEN=ssh-placeholder', 'ANTHROPIC_BASE_URL=http://pis-claude-proxy.invalid', '/tmp/pis-claude-x:/pis/proxy:ro'])
+    assert.ok(args.includes(expected), expected);
+  assert.ok(!args.includes('/pis/proxy/entry.mjs'));
+  assert.ok(!args.some(arg => arg.includes(TOKEN) || /PIS_PROXY|OPENAI_API_KEY|ANTHROPIC_API_KEY|ANTHROPIC_AUTH_TOKEN/.test(arg)));
+  // The Claude token proxy is never offered to Pi, and Pi's proxy never to Claude.
+  assert.throws(() => launchArgs(store, { ...pi, credentials: { env: [], proxy: { provider: 'openai-codex' } } }, ['pi'], { cwd: pi.root, proxy }), /only available to Claude/);
+  assert.throws(() => launchArgs(store, config, ['claude'], { cwd: config.root, proxy: { provider: 'openai-codex' } }), /does not use Pi/);
 });
 
-test('host login copies only OAuth to writable project state; startup preserves refreshed tokens', async t => {
-  const { store, config, binary, execute } = await fixture(t);
-  await loginClaude(store, config, { binary, execute });
-  const state = requireClaudeLogin(store, config.id);
+test('global token profile accepts only private subscription OAuth tokens', async t => {
+  const { base, store } = await fixture(t);
+  assert.equal(readClaudeToken(store), undefined);
+  assert.throws(() => validateClaudeToken(`sk-ant-api03-${'x'.repeat(40)}`), /API key/);
+  assert.throws(() => validateClaudeToken('short'), /Invalid Claude token/);
+  assert.throws(() => validateClaudeToken(`other-${'x'.repeat(40)}`), /sk-ant-oat/);
+  await assert.rejects(saveClaudeToken(store, `sk-ant-api03-${'x'.repeat(40)}`), /API key/);
+  await saveClaudeToken(store, TOKEN);
+  const file = path.join(store.root, 'auth', 'claude-oauth-token.json');
+  assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+  assert.equal(readClaudeToken(store), TOKEN);
+  fs.chmodSync(file, 0o644);
+  assert.throws(() => readClaudeToken(store), error => /unsafe/.test(error.message) && !error.message.includes(TOKEN));
+  fs.chmodSync(file, 0o600);
+  const outside = path.join(base, 'outside.json'); fs.copyFileSync(file, outside); fs.chmodSync(outside, 0o600);
+  fs.rmSync(file); fs.symlinkSync(outside, file);
+  assert.throws(() => readClaudeToken(store), /unsafe/);
+  await assert.rejects(saveClaudeToken(store, TOKEN), /unsafe/);
+  fs.rmSync(file); await saveClaudeToken(store, TOKEN);
+  await logoutClaudeToken(store);
+  assert.equal(readClaudeToken(store), undefined);
+});
+
+test('login runs isolated official setup-token, then saves the pasted token without echo', async t => {
+  const { root, binary, store } = await fixture(t);
+  const tty = terminal();
+  const calls = [];
+  const execute = async (program, args, options) => {
+    calls.push({ program, args, options });
+    assert.notEqual(options.cwd, root);
+    assert.equal(options.cwd, options.env.CLAUDE_CONFIG_DIR);
+    assert.ok(options.env.CLAUDE_CONFIG_DIR.startsWith(path.join(store.root, 'auth')));
+    setImmediate(() => tty.input.write(`${TOKEN}\r`));
+    return 0;
+  };
+  const pending = loginClaude(store, { binary, execute, input: tty.input, output: tty.output });
+  tty.input.write('\r');
+  await pending;
+  assert.deepEqual(calls.map(call => [call.program, call.args]), [[binary, ['setup-token']]]);
+  assert.equal(readClaudeToken(store), TOKEN);
+  assert.ok(!tty.text().includes(TOKEN));
+  assert.ok(!fs.readdirSync(path.join(store.root, 'auth')).some(name => name.startsWith('claude-login-')));
+  // Failure of the official command keeps the previous login.
+  const failing = terminal();
+  const failed = loginClaude(store, { binary, execute: async () => 1, input: failing.input, output: failing.output });
+  failing.input.write('y\r');
+  await assert.rejects(failed, /setup-token failed/);
+  assert.equal(readClaudeToken(store), TOKEN);
+  // Skipping the command still requires a valid subscription token.
+  const manual = terminal();
+  const skipped = loginClaude(store, { binary, execute: async () => assert.fail('must not run'), input: manual.input, output: manual.output });
+  manual.input.write('n\r'); setImmediate(() => manual.input.write(`sk-ant-api03-${'y'.repeat(40)}\r`));
+  await assert.rejects(skipped, /API key/);
+  const untrusted = path.join(root, 'claude'); fs.copyFileSync(binary, untrusted); fs.chmodSync(untrusted, 0o700);
+  const sandboxBinary = terminal();
+  await assert.rejects(loginClaude(store, { binary: untrusted, execute, input: sandboxBinary.input, output: sandboxBinary.output }), /sandbox-writable/);
+  await assert.rejects(loginClaude(store, { binary, execute, input: new PassThrough(), output: new PassThrough() }), /interactively/);
+});
+
+test('host proxy injects the token only into fixed model routes and forwards Anthropic responses', async t => {
+  const { base } = await fixture(t);
+  const { upstream, seen } = await fakeAnthropic(t, (req, res, body) => {
+    if (body.includes('overload')) {
+      res.writeHead(529, { 'content-type': 'application/json', 'set-cookie': 'secret=1' });
+      return res.end('{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}');
+    }
+    if (body.includes('redirect')) { res.writeHead(307, { location: 'https://elsewhere.example/' }); return res.end(); }
+    res.writeHead(200, { 'content-type': 'text/event-stream', 'anthropic-ratelimit-unified-status': 'allowed', 'request-id': 'req_1', 'set-cookie': 'secret=1' });
+    res.end(`event: message_start\ndata: {"echo":"${req.headers.authorization}"}\n\n`);
+  });
+  const socketPath = path.join(base, 'claude.sock');
+  const proxy = await startClaudeProxy({ socketPath, token: TOKEN, upstream, maxRequests: 4 });
+  t.after(() => proxy.close());
+  assert.equal(fs.statSync(socketPath).mode & 0o777, 0o600);
+  const ok = await unixRequest(socketPath, { headers: {
+    authorization: 'Bearer ssh-placeholder', 'x-api-key': 'sk-ant-api03-must-not-forward', cookie: 'c=1', host: 'evil.example',
+    'anthropic-beta': 'claude-code-20250219,fine-grained-tool-streaming-2025-05-14', 'anthropic-version': '2023-06-01',
+    'x-app': 'cli', 'user-agent': 'claude-cli/test', 'x-forwarded-for': '1.2.3.4', 'x-stainless-retry-count': '0',
+  } });
+  assert.equal(ok.status, 200);
+  assert.equal(ok.headers['content-type'], 'text/event-stream');
+  assert.equal(ok.headers['anthropic-ratelimit-unified-status'], 'allowed');
+  assert.equal(ok.headers['request-id'], 'req_1');
+  assert.equal(ok.headers['set-cookie'], undefined);
+  assert.ok(!ok.body.includes(TOKEN) && ok.body.includes('[REDACTED]'));
+  const forwarded = seen[0];
+  assert.equal(forwarded.url, '/v1/messages?beta=true');
+  assert.equal(forwarded.headers.authorization, `Bearer ${TOKEN}`);
+  assert.equal(forwarded.headers['anthropic-beta'], 'claude-code-20250219,fine-grained-tool-streaming-2025-05-14,oauth-2025-04-20');
+  assert.equal(forwarded.headers['x-api-key'], undefined);
+  assert.equal(forwarded.headers.cookie, undefined);
+  assert.equal(forwarded.headers['x-forwarded-for'], undefined);
+  assert.equal(forwarded.headers.host, upstream.slice('http://'.length));
+  assert.equal(forwarded.headers['x-app'], 'cli');
+  assert.equal(forwarded.headers['x-stainless-retry-count'], '0');
+  assert.equal(forwarded.body, '{"model":"m"}');
+  const overloaded = await unixRequest(socketPath, { url: '/v1/messages/count_tokens?beta=true', body: '{"overload":true}' });
+  assert.equal(overloaded.status, 529);
+  assert.match(overloaded.body, /overloaded_error/);
+  assert.equal(overloaded.headers['set-cookie'], undefined);
+  const redirected = await unixRequest(socketPath, { body: '{"redirect":true}' });
+  assert.equal(redirected.status, 502);
+  const before = seen.length;
+  for (const request of [
+    { url: '/api/oauth/profile', method: 'GET', body: '' }, { url: '/v1/messages?beta=true&x=1' }, { url: '/v1/complete' },
+    { url: 'http://evil.example/v1/messages' }, { url: '/v1/messages/../files' }, { url: '/v1/messages', method: 'GET', body: '' },
+  ]) assert.equal((await unixRequest(socketPath, request)).status, 404, request.url);
+  assert.equal((await unixRequest(socketPath, { headers: { 'content-type': 'text/plain' } })).status, 415);
+  assert.equal(seen.length, before);
+  assert.ok(proxy.refused().includes('GET /api/oauth/profile'));
+  await unixRequest(socketPath);
+  const exhausted = await unixRequest(socketPath);
+  assert.equal(exhausted.status, 429);
+  assert.equal(exhausted.headers['x-should-retry'], 'false');
+  assert.match(exhausted.body, /"type":"error"/);
+});
+
+test('prepared proxy requires a saved login and cleans up its private runtime directory', async t => {
+  const { store } = await fixture(t);
+  await assert.rejects(prepareClaudeProxy(store), /pis --login claude/);
+  await saveClaudeToken(store, TOKEN);
+  const proxy = await prepareClaudeProxy(store, { upstream: 'http://127.0.0.1:9' });
+  assert.equal(fs.statSync(proxy.directory).mode & 0o777, 0o700);
+  assert.ok(fs.existsSync(path.join(proxy.directory, 'claude.sock')));
+  assert.deepEqual(fs.readdirSync(proxy.directory), ['claude.sock']); // No token file is ever mounted.
+  await proxy.close();
+  assert.ok(!fs.existsSync(proxy.directory));
+  await assert.rejects(startClaudeProxy({ socketPath: '/tmp/unused.sock', token: TOKEN, upstream: 'http://evil.example' }), /fixed HTTPS/);
+});
+
+test('legacy per-project real-token copies are removable without touching sessions', async t => {
+  const { store, config } = await fixture(t);
+  const state = claudeState(store, config.id);
+  fs.writeFileSync(state.legacyCredential, '{"claudeAiOauth":{}}', { mode: 0o600 });
+  fs.writeFileSync(path.join(state.config, 'history.jsonl'), 'keep');
+  fs.mkdirSync(path.join(store.root, 'auth'), { mode: 0o700, recursive: true });
   const snapshot = path.join(store.root, 'auth', `claude-${config.id}.json`);
-  assert.deepEqual(JSON.parse(fs.readFileSync(state.credential)), record);
-  assert.deepEqual(fs.readdirSync(state.config).sort(), ['.claude.json', '.credentials.json']);
-  const preferences = path.join(state.config, '.claude.json');
-  assert.deepEqual(JSON.parse(fs.readFileSync(preferences)), { oauthAccount: { accountUuid: 'fake-account' } });
-  fs.writeFileSync(preferences, JSON.stringify({ oauthAccount: { accountUuid: 'old-account' }, theme: 'dark' }));
-  await loginClaude(store, config, { binary, execute });
-  assert.deepEqual(JSON.parse(fs.readFileSync(preferences)), { oauthAccount: { accountUuid: 'fake-account' }, theme: 'dark' });
-  assert.equal(fs.statSync(state.config).mode & 0o777, 0o700);
-  assert.equal(fs.statSync(state.credential).mode & 0o777, 0o600);
-  const refreshed = { claudeAiOauth: { ...record.claudeAiOauth, accessToken: 'refreshed-in-sandbox' } };
-  fs.writeFileSync(state.credential, JSON.stringify(refreshed));
-  requireClaudeLogin(store, config.id);
-  assert.deepEqual(JSON.parse(fs.readFileSync(state.credential)), refreshed);
-  assert.deepEqual(JSON.parse(fs.readFileSync(snapshot)), record);
-  assert.ok(!fs.readdirSync(path.dirname(snapshot)).some(name => name.startsWith('claude-login-')));
-  fs.writeFileSync(path.join(state.config, 'history.jsonl'), 'keep history');
-  await logoutClaude(store, config.id);
-  assert.ok(!fs.existsSync(state.credential));
-  assert.ok(!fs.existsSync(snapshot));
+  fs.writeFileSync(snapshot, '{}', { mode: 0o600 });
+  assert.equal(await removeLegacyClaudeCredentials(store, config.id), 2);
+  assert.ok(!fs.existsSync(state.legacyCredential) && !fs.existsSync(snapshot));
   assert.ok(fs.existsSync(path.join(state.config, 'history.jsonl')));
 });
 
-test('Claude login fails safely for malformed/private-file violations and sandbox-controlled destinations', async t => {
-  const { base, store, config, binary, execute } = await fixture(t);
-  await loginClaude(store, config, { binary, execute });
-  const state = claudeState(store, config.id);
-  const original = fs.readFileSync(state.credential, 'utf8');
-  for (const content of ['{ secret-not-in-errors', '{}']) {
-    await assert.rejects(loginClaude(store, config, { binary, execute: async (_program, _args, { cwd }) => {
-      fs.writeFileSync(path.join(cwd, '.credentials.json'), content, { mode: 0o600 }); return 0;
-    } }), error => /Cannot read Claude subscription/.test(error.message) && !error.message.includes('secret-not-in-errors'));
-    assert.equal(fs.readFileSync(state.credential, 'utf8'), original);
-  }
-  await assert.rejects(loginClaude(store, config, { binary, execute: async () => 1 }), /sign-in failed/);
-  for (const kind of ['public', 'symlink', 'hardlink']) {
-    await assert.rejects(loginClaude(store, config, { binary, execute: async (_program, _args, { cwd }) => {
-      const credential = path.join(cwd, '.credentials.json');
-      if (kind === 'symlink') fs.symlinkSync(state.credential, credential);
-      else if (kind === 'hardlink') fs.linkSync(state.credential, credential);
-      else fs.writeFileSync(credential, JSON.stringify(record), { mode: 0o644 });
-      return 0;
-    } }), /Cannot read Claude subscription/);
-  }
-  const outside = path.join(base, 'outside'); fs.writeFileSync(outside, 'unchanged');
-  fs.rmSync(state.credential); fs.symlinkSync(outside, state.credential);
-  await assert.rejects(loginClaude(store, config, { binary, execute }), /not a symlink/);
-  assert.equal(fs.readFileSync(outside, 'utf8'), 'unchanged');
-  fs.rmSync(state.credential); fs.rmSync(state.config, { recursive: true }); fs.symlinkSync(base, state.config);
-  await assert.rejects(loginClaude(store, config, { binary, execute }), /not a symlink/);
-  const untrusted = path.join(config.root, 'claude'); fs.copyFileSync(binary, untrusted); fs.chmodSync(untrusted, 0o700);
-  await assert.rejects(loginClaude(store, config, { binary: untrusted, execute }), /sandbox-writable/);
-  await store.projectLock(config.id, () => assert.rejects(loginClaude(store, config, { binary, execute }), /Resource is busy/));
-});
-
-test('CLI Claude launch bypasses the configured Codex proxy without host credentials or approval sockets', async t => {
+test('CLI Claude launch uses the host proxy socket and never passes host credentials', async t => {
   const { base, store, config } = await fixture(t);
   const bin = path.join(base, 'bin'); fs.mkdirSync(bin);
   fs.writeFileSync(path.join(bin, 'podman'), `#!${process.execPath}
+    const fs = require('fs');
     const args = process.argv.slice(2);
     if (args[0] === 'info') console.log(JSON.stringify({host:{security:{rootless:true,selinuxEnabled:false},serviceIsRemote:false}}));
-    else if (args[0] === 'run') console.log(JSON.stringify({ args, hostKeyPresent: Boolean(process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_CODE_OAUTH_TOKEN) }));
+    else if (args[0] === 'run') {
+      const volume = args.find(arg => arg.endsWith(':/pis/proxy:ro'));
+      const socket = volume ? volume.split(':')[0] + '/claude.sock' : undefined;
+      console.log(JSON.stringify({ args, socket: socket && fs.statSync(socket).isSocket(), hostKeyPresent: Boolean(process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_CODE_OAUTH_TOKEN) }));
+    }
     else if (args[0] === 'container') process.exitCode = 1;
   `, { mode: 0o700 });
   const cli = fileURLToPath(new URL('../bin/pis.js', import.meta.url));
@@ -141,24 +260,33 @@ test('CLI Claude launch bypasses the configured Codex proxy without host credent
     cwd: config.root, encoding: 'utf8', timeout: 10000,
     env: { ...process.env, PIS_HOME: store.root, PIS_AUTO_PRUNE: '0', PATH: `${bin}:${process.env.PATH}`, ANTHROPIC_API_KEY: 'test-only-key', CLAUDE_CODE_OAUTH_TOKEN: 'test-only-token' },
   });
-  const shown = invoke(['--agent', 'claude', '--show']);
+  const shown = invoke(['--claude', '--show']);
   assert.equal(shown.status, 0, shown.stderr);
-  const report = JSON.parse(shown.stdout);
-  assert.equal(report.config.agent, 'claude');
-  assert.equal(report.credentialSource.kind, 'sandbox-oauth-copy');
-  assert.deepEqual(report.credentialVariables, []);
-  const launched = invoke(['--agent', 'claude', '--', '--version']);
+  assert.deepEqual(JSON.parse(shown.stdout).credentialSource, { kind: 'host-oauth-proxy', provider: 'claude', present: false });
+  const version = invoke(['--claude', '--', '--version']);
+  assert.equal(version.status, 0, version.stderr);
+  const bare = JSON.parse(version.stdout);
+  assert.equal(bare.hostKeyPresent, false);
+  assert.deepEqual(bare.args.slice(-3), ['/opt/pis/image-entry.mjs', 'claude', '--version']);
+  assert.ok(!bare.args.some(arg => /ANTHROPIC_UNIX_SOCKET|PIS_PROXY|PIS_APT/.test(arg)));
+  const missing = invoke(['--claude', '--', '-p', 'not-a-real-request']);
+  assert.notEqual(missing.status, 0);
+  assert.match(missing.stderr, /pis --login claude/);
+  await saveClaudeToken(store, TOKEN);
+  const launched = invoke(['--claude', '--', '-p', 'not-sent-by-fake-podman']);
   assert.equal(launched.status, 0, launched.stderr);
   const result = JSON.parse(launched.stdout);
+  assert.equal(result.socket, true);
   assert.equal(result.hostKeyPresent, false);
-  assert.deepEqual(result.args.slice(-3), ['/opt/pis/image-entry.mjs', 'claude', '--version']);
-  assert.ok(result.args.some(arg => arg.endsWith('/claude-state:/pis/home:rw')));
-  assert.ok(!result.args.some(arg => /PIS_PROXY|PIS_APT/.test(arg)));
+  assert.ok(result.args.includes('ANTHROPIC_UNIX_SOCKET=/pis/proxy/claude.sock'));
+  assert.ok(!result.args.some(arg => arg.includes(TOKEN)));
+  assert.ok(!fs.existsSync(result.args.find(arg => arg.endsWith(':/pis/proxy:ro')).split(':')[0]));
   assert.equal(store.load(config.id).agent, 'pi'); // CLI override is not persisted.
-  const missing = invoke(['--agent', 'claude', '--', '-p', 'not-a-real-request']);
-  assert.notEqual(missing.status, 0);
-  assert.match(missing.stderr, /pis --login-claude/);
-  assert.ok(!missing.stdout);
+  const status = JSON.parse(invoke(['--login-status']).stdout);
+  assert.deepEqual(status.find(entry => entry.provider === 'claude'), { provider: 'claude', profilePresent: true, credentialPresent: true });
+  const loggedOut = invoke(['--logout', 'claude']);
+  assert.equal(loggedOut.status, 0, loggedOut.stderr);
+  assert.equal(readClaudeToken(store), undefined);
 });
 
 test('Claude environment selection never inherits API keys or alternative auth modes', () => {

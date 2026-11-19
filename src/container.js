@@ -12,7 +12,17 @@ import {
   waitForCodexOnHost,
 } from './codex-wait.js';
 import { startCodexAutoServer, validateCodexAuto } from './codex-auto.js';
-import { claudeCommand, claudeNeedsLogin, claudeState, requireClaudeLogin } from './claude-code.js';
+import {
+  CLAUDE_PLACEHOLDER_TOKEN,
+  CLAUDE_SANDBOX_BASE_URL,
+  CLAUDE_SOCKET,
+  claudeCommand,
+  claudeNeedsLogin,
+  claudeState,
+  hasLegacyClaudeCredential,
+  prepareClaudeProxy,
+  readClaudeToken,
+} from './claude-code.js';
 import { schedulePrune } from './prune.js';
 import { prepareGitPush, approveGitPush } from './git-push.js';
 import { startAptRequestServer, applyAptProposal, approveAptProposal } from './apt-requests.js';
@@ -183,9 +193,15 @@ export function launchArgs(
   assert(network === undefined || network === 'none', 'Unsupported internal network override.');
   const workdir = within(config.root, cwd) ? cwd : config.root;
   const isClaude = config.agent === 'claude';
+  const claudeProxy = proxy?.provider === 'claude';
   assert(
-    !isClaude || (!proxy && !aptRequests && !codexAuto),
+    !isClaude || ((!proxy || claudeProxy) && !aptRequests && !codexAuto),
     'Claude Code does not use Pi proxy/approval sockets.',
+  );
+  // The Claude subscription proxy is only ever offered to official Claude Code.
+  assert(
+    isClaude || !claudeProxy,
+    'The Claude subscription proxy is only available to Claude Code.',
   );
   const state = path.join(store.projectDir(config.id), isClaude ? 'claude-state' : 'state');
   const sharedLabel = selinux ? ',z' : '';
@@ -233,6 +249,20 @@ export function launchArgs(
     );
   if (isClaude)
     args.push('--env', `CLAUDE_CONFIG_DIR=${CONTAINER_HOME}/.claude`, '--env', 'DISABLE_UPDATES=1');
+  if (claudeProxy)
+    // Fixed non-secret values; the real subscription token stays in the host proxy.
+    args.push(
+      '--env',
+      `ANTHROPIC_UNIX_SOCKET=${CLAUDE_SOCKET}`,
+      '--env',
+      `ANTHROPIC_BASE_URL=${CLAUDE_SANDBOX_BASE_URL}`,
+      '--env',
+      `CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_PLACEHOLDER_TOKEN}`,
+      '--env',
+      'CLAUDE_CODE_OAUTH_401_WAIT_MS=0',
+      '--volume',
+      `${proxy.directory}:/pis/proxy:ro${sharedLabel}`,
+    );
   if (startupStarted) args.push('--env', `PIS_STARTUP_STARTED=${startupStarted}`);
   if (aptRequests)
     args.push(
@@ -283,7 +313,7 @@ export function launchArgs(
     '--entrypoint',
     '/usr/local/bin/node',
     image,
-    ...(proxy ? ['/pis/proxy/entry.mjs', '/usr/local/bin/node'] : []),
+    ...(proxy && !claudeProxy ? ['/pis/proxy/entry.mjs', '/usr/local/bin/node'] : []),
     '/opt/pis/image-entry.mjs',
     ...command,
   );
@@ -374,13 +404,15 @@ async function launchOnce(store, config, options) {
           requireSavedPiSession(store, config.id);
           options = restartOptions(options, [], CODEX_RESUME_NOTICE);
         }
-        if (
-          isClaude &&
-          !options.buildOnly &&
-          options.mode === 'pi' &&
-          claudeNeedsLogin(options.args)
-        )
-          requireClaudeLogin(store, config.id);
+        const claudeToken = isClaude && !options.buildOnly ? readClaudeToken(store) : undefined;
+        assert(
+          !isClaude ||
+            options.buildOnly ||
+            options.mode !== 'pi' ||
+            !claudeNeedsLogin(options.args) ||
+            claudeToken,
+          'No Claude login saved. Run pis --login claude on the host.',
+        );
         directory(config.root);
         const startupStarted = Date.now();
         const showProgress = !options.stdio && process.stderr.isTTY;
@@ -431,9 +463,9 @@ async function launchOnce(store, config, options) {
                 : piCommand(options.args, options.fresh);
         if (isClaude) {
           claudeState(store, config.id);
-          if (showProgress)
+          if (hasLegacyClaudeCredential(store, config.id))
             console.error(
-              'pis: Claude Code mode: real login tokens are readable/writable inside this sandbox. Pi proxy and approval tools are not enabled.',
+              'pis: warning: an old per-project Claude login with REAL tokens is still in this sandbox state. Remove it with pis --logout-claude.',
             );
         } else privateDir(path.join(store.projectDir(config.id), 'state'));
         let proxy,
@@ -446,7 +478,10 @@ async function launchOnce(store, config, options) {
         try {
           // Proxy and package proposal sockets are separate. Package proposals cannot
           // carry a host approval; the user is prompted only after Podman exits.
-          if (!isClaude && config.credentials.proxy) {
+          if (isClaude && claudeToken) {
+            progress('Preparing Claude subscription proxy…');
+            proxy = await prepareClaudeProxy(store, { upstream: options.claudeUpstream });
+          } else if (!isClaude && config.credentials.proxy) {
             progress(`Preparing ${config.credentials.proxy.provider} credential proxy…`);
             options.startupProgress?.('preparing_proxy');
             proxy = await prepareProxy(store, config, {
@@ -511,7 +546,12 @@ async function launchOnce(store, config, options) {
           try {
             if (aptRequests) await aptRequests.close();
             if (codexAuto) await codexAuto.close();
-            if (proxy) await proxy.close();
+            if (proxy) {
+              const refused = proxy.refused?.() || [];
+              if (refused.length && process.env.PIS_CLAUDE_PROXY_DEBUG === '1')
+                console.error(`pis: Claude proxy refused non-model routes: ${refused.join(', ')}`);
+              await proxy.close();
+            }
           } finally {
             if (options.webRpc && invocation && !containerStopped) {
               throw Object.assign(

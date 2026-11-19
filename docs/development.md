@@ -8,7 +8,7 @@ Start with `AGENTS.md` for contribution/security rules and `README.md` for opera
 | --- | --- | --- |
 | Project configuration/normal sandbox lifecycle | [Design](design.md), [README](../README.md) | `src/config.js`, `src/store.js`, `src/container.js` |
 | Codex accounts/routing versus continuation | [Codex](codex.md), [quota wait](codex-wait.md) | `src/codex-auth.js`, `src/codex-accounts.js`, `src/codex-auto.js`, `src/runtime/codex-auto.mjs` |
-| Credentials/provider isolation | [Proxy](proxy.md), [Claude exception](claude-code.md) | `src/proxy*.js`, `src/api-auth.js`, `src/claude-code.js` |
+| Credentials/provider isolation | [Proxy](proxy.md), [Claude proxy](claude-code.md) | `src/proxy*.js`, `src/api-auth.js`, `src/claude-code.js` |
 | Typed proposals/host approval | [Host actions](host-actions.md) | `src/apt-requests.js`, `src/git-push.js`, `src/web-git-approval.js`, `src/runtime/request-apt.mjs`, `web/host-push.js` |
 | Managed updates/backup/rollback | [Implemented updates](updates.md), [wider plan](updates-plan.md) | `src/updates.js`, `src/update-backup.js`, `src/runtime/verified-install.mjs` |
 | Shared image layout/storage limits | [Image storage](image-storage.md), [historical diagnosis](image-storage-plan.md) | `src/image-plan.js` (recipe/fingerprint), `src/container.js` (build/lifecycle) |
@@ -63,6 +63,8 @@ npm run test:storage      # separate, disk-heavy legacy/new image benchmark
 
 ## Remaining requested work / priorities
 
+**Claude Code host-held token implemented, host verification pending:** global `pis --login claude` (official `setup-token`, API keys refused), `--claude` shorthand, and a Claude-only host proxy on a private Unix socket using Claude Code's own `ANTHROPIC_UNIX_SOCKET` + `ssh-placeholder` mode. Fake-upstream/fake-Podman tests pass; real login, real Claude Code socket behaviour and a real model call remain host gates. See [claude-code.md](claude-code.md).
+
 **Deferred push-restart issue:** the user reports that restart/reconnection after a push attempt appears not to work. Record only for now; investigate later when requested, without another push or operational restart. Git outcome and failing phase remain unconfirmed. See [the feature issue note](host-actions.md#idle-runtime-handoff-after-web-git-review).
 
 **Manual server update button implemented:** supervised standalone can accept an authenticated/CSRF-protected explicit update request for its clean installation checkout, public HTTPS GitHub origin and fast-forward only. Fixed status polling, syntax validation, private registration continuity and in-memory salted password hash across explicit child restart; no agent shutdown, npm scripts, interval checks, crash autorestart or rollback. Dependency/supervisor changes remain manual. See [implementation, trust and host verification gates](web-control.md#manual-server-update-from-the-gui). Fake Git, real local Git fast-forward/syntax and local supervisor tests do not certify real GitHub activation or runtime compatibility.
@@ -92,6 +94,6 @@ npm run test:storage      # separate, disk-heavy legacy/new image benchmark
 
 - PATH can point to an older checkout or Node. Inspect `command -v pis` / `node --version`, not full environments/auth files. `env.sh` affects only its current shell; a bundled Node can itself be too old. `pis --server` has an intentional Node 24 npm fallback; other commands/GNOME usage need a compatible launcher (>=22.19).
 - GNOME deliberately calls `~/.local/bin/pis` because Shell may not inherit terminal PATH. Its extension is an installed copy: use its installer and reload appropriately (Xorg shell restart versus Wayland logout/login). No host launcher/session state is automatically present in a sandbox.
-- Host home, SSH agents, Podman control and provider credentials are not available in a normal development sandbox. Claude's project-specific copied tokens are the documented exception, not permission to mount host originals.
+- Host home, SSH agents, Podman control and provider credentials are not available in a normal development sandbox. Claude's subscription token likewise stays in a host-only proxy; never mount host Claude state.
 - The old CNI dnsname warning was a host-local retired test network issue, not an auth/proxy problem; recovery details are in [known issues](known-issues.md).
 - Git pushes are user-managed: make verified local commits and report hashes, with no automatic push proposals. If the user explicitly requests the host proposal tool again, its reason is limited to 500 characters and each exact commit/branch requires fresh host approval; never repeat an already confirmed push.

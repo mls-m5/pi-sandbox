@@ -82,7 +82,7 @@ Initial default layout:
 - `Containerfile` is generated and marked as such.
 - `build/` contains only the generated, minimal build context.
 - `state/` holds container-local Pi settings, credentials saved by Pi, and conversations.
-- `claude-state/` is a separate writable home for experimental official Claude Code, including a copy of real subscription credentials. It is never mounted into Pi launches.
+- `claude-state/` is a separate writable home for experimental official Claude Code (sessions, settings, history). It never holds the subscription token and is never mounted into Pi launches.
 
 Keep these directories private to the user. Writes to configuration and index files should be atomic. Registration and index changes need locking to avoid concurrent corruption.
 
@@ -296,7 +296,7 @@ Direct host credential forwarding is disabled. `credentials.env` must be empty; 
 
 ### Official Claude Code mode
 
-`agent` defaults to `pi`; `claude` selects the unmodified pinned official Claude Code binary. `--agent` overrides the choice without saving it. A project-specific host `--login-claude` uses a fresh private config directory and copies only OAuth into the separate writable `claude-state/` home. Tokens can refresh there; they are not recopied at startup, shared among projects, or copied back to the host. The host snapshot is never mounted. **Real tokens are visible inside Claude containers**; this is not the Pi proxy boundary. Pi's configured credential proxy and approval sockets are not used. No automatic permission bypass is added. See [setup, security and verification limits](claude-code.md).
+`agent` defaults to `pi`; `claude` selects the unmodified pinned official Claude Code binary. `--agent`/`--claude` override the choice without saving it. A global host `pis --login claude` runs official `claude setup-token` in a fresh private config directory and saves the long-lived subscription token (API keys refused) under `$PIS_HOME/auth/`. Each Claude launch starts a Claude-only host proxy on a private Unix socket; the container gets Claude Code's fixed `ssh-placeholder` token and `ANTHROPIC_UNIX_SOCKET`, and the proxy injects the real token into fixed Messages API routes to `api.anthropic.com`. The token is never mounted or in the container environment; Pi can never receive this proxy. Pi's configured credential proxy and approval sockets are not used. No automatic permission bypass is added. See [setup, security and verification limits](claude-code.md).
 
 ### User-approved host actions
 

@@ -1,6 +1,6 @@
 # pis — Pi in a Podman sandbox
 
-`pis` is a Linux-only CLI that runs the entire [Pi coding agent](https://pi.dev) inside a rootless Podman container. An experimental `--agent claude` mode runs official Claude Code with separate state and a different credential boundary.
+`pis` is a Linux-only CLI that runs the entire [Pi coding agent](https://pi.dev) inside a rootless Podman container. An experimental `--claude` mode runs official Claude Code with separate state; its subscription token stays on the host behind a Claude-only proxy.
 
 **Status: working initial implementation.** Project registration, editable configuration, custom images, additional mounts, persistent Pi state, shell/exec modes, and diagnostics are implemented. Host-side API-key proxy modes, ChatGPT/Codex OAuth and explicit keyless local Ollama profiles are implemented. JSON extension install sources, build-time installation, and automatic configuration hints/schema completion are implemented.
 
@@ -77,19 +77,19 @@ Arguments after `--` are passed unchanged to Pi, or to the program selected by `
 
 ## Claude Code (experimental)
 
-Install official Claude Code on the host, then from a registered project:
+Install official Claude Code on the host, then:
 
 ```sh
-pis --login-claude               # Project-specific host browser login
-pis --agent claude               # Official Claude Code in the container
-pis --agent claude -- --continue # Resume explicitly (default is a new session)
+pis --login claude          # once per host: official setup-token, hidden paste
+pis --claude                # official Claude Code in the container (= --agent claude)
+pis --claude -- --continue  # resume explicitly (default is a new session)
 ```
 
-Host login uses `~/.local/bin/claude`, or the absolute `PIS_CLAUDE_BIN` path. Set `"agent": "claude"` via `pis --edit` for a persistent choice; Pi remains the default otherwise.
+An interactive `pis --claude` without a saved login offers to log in first. Set `"agent": "claude"` via `pis --edit` for a persistent choice; Pi remains the default otherwise.
 
-**Unlike Pi's proxy mode, real Claude access/refresh tokens are readable and writable inside the Claude sandbox.** Only a copy is supplied: personal host Claude files and the retained original are not mounted. Separate persistent `claude-state/` lets Claude renew tokens without modifying the host original. Startup never overwrites refreshed tokens. Pi's proxy settings are ignored, not changed, and Pi's apt/Git approval tools are unavailable in this mode. Run `pis --logout-claude` to remove this project's current credential copies (not remote revocation or backup scrubbing).
+The subscription token stays on the host and is shared by all Claude projects. Containers get only Claude Code's fixed placeholder and a private Unix socket to a Claude-only host proxy that adds the token to Messages API calls. API keys (per-token billing) are refused. Processes in the container can use the socket while it runs but cannot read the token. Pi's proxy settings are ignored, not changed, and Pi's apt/Git approval tools are unavailable in this mode.
 
-Real subscription login, copied-login onboarding and token rotation still need host verification; no live model calls have been made. See [Claude Code setup, security and testing limits](docs/claude-code.md).
+Real `setup-token` login and real Claude Code use of the socket still need host verification; no live model calls have been made. See [Claude Code setup, security and testing limits](docs/claude-code.md).
 
 ## Codex subscription sign-in
 
@@ -379,7 +379,7 @@ No project/state deletion command exists; `--prune` only handles eligible image 
 
 **Proxy mode keeps host-provided API keys or Codex OAuth tokens outside the sandbox**, using a private Unix socket and a per-run dummy capability. Custom API profile destinations are host-selected HTTPS URLs, resolved to pinned public IPs, and limited to the profile's allowed route. No host TCP port is opened. Pi's selected provider auth/model entries are replaced with read-only per-run overlays; originals are unchanged. Previously stored credentials or secrets in mounted files remain visible; disabling host credential forwarding does not remove those secrets. The proxy does not retroactively scrub old state.
 
-**Claude Code mode is an explicit exception to proxy credential isolation:** it uses a writable per-project copy of real subscription tokens. Commands inside that container can read or steal them. Pi and Claude use separate sandbox homes; neither personal host Claude state nor the host login snapshot is mounted. See [the Claude credential flow](docs/claude-code.md#credential-flow-and-the-weaker-security-boundary).
+**Claude Code mode** keeps its subscription token on the host like the Pi proxy: the container gets only a placeholder and a private socket to a Claude-only proxy (Messages API routes only). Processes inside can use the socket while it runs but cannot read the token. Pi and Claude use separate sandbox homes. See [the Claude credential flow](docs/claude-code.md#credential-flow).
 
 Hiding keys does not prevent API spending: sandboxed commands and extensions can use the capability within its host-enforced route/model/request limits. Outbound networking remains enabled; this is not a host/LAN access filter or exfiltration defense. Containers share the host kernel, not a VM-level boundary. Custom build instructions are trusted code; runtime keys and source are not supplied to builds. See [the proxy security notes](docs/proxy.md#security-boundaries-and-limitations).
 

@@ -29,7 +29,7 @@ export const PROJECT_SCHEMA = {
       enum: ['pi', 'claude'],
       default: 'pi',
       description:
-        'Claude Code uses separate writable state with real subscription tokens, not the Pi host proxy.',
+        'claude runs official Claude Code with separate state. Its subscription token stays on the host (pis --login claude) and is added by a Claude-only host proxy; credentials.proxy remains Pi-only.',
     },
     id: {
       type: 'string',
