@@ -7,7 +7,8 @@ import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
-import { assert, privateDir } from './util.js';
+import { assert, privateDir, readJson } from './util.js';
+import { ID_PATTERN, NAME_PATTERN, NETWORK_PATTERN } from './config.js';
 
 export const NETWORK_LIMITS = {
   textBytes: 4096,
@@ -36,11 +37,37 @@ function sub(store, network, ...parts) {
 
 const label = (project) => project.name || project.id;
 
+// Peer lookup reads only the few fields it needs and ignores everything else. It deliberately
+// does NOT use the strict project validator: a pis process started before an upgrade rejects
+// newer (or any unrelated broken) project files, which must not stop messages between agents.
+function registeredProjects(store) {
+  const projects = [];
+  for (const entry of fs.readdirSync(store.projectsDir, { withFileTypes: true })) {
+    if (!entry.isDirectory() || !ID_PATTERN.test(entry.name)) continue;
+    try {
+      const raw = readJson(store.configPath(entry.name));
+      if (raw?.id !== entry.name || typeof raw.root !== 'string' || !path.isAbsolute(raw.root))
+        continue;
+      if (typeof raw.network !== 'string' || !NETWORK_PATTERN.test(raw.network)) continue;
+      projects.push({
+        id: raw.id,
+        root: raw.root,
+        network: raw.network,
+        agent: raw.agent === 'claude' ? 'claude' : 'pi',
+        ...(typeof raw.name === 'string' && NAME_PATTERN.test(raw.name) ? { name: raw.name } : {}),
+      });
+    } catch {
+      // Unreadable or in-progress file: that project is simply not a peer.
+    }
+  }
+  return projects;
+}
+
 export function peersOf(store, config) {
   assert(config.network, 'This project is not in a message network.');
-  return store
-    .all()
-    .filter((project) => project.network === config.network && project.id !== config.id);
+  return registeredProjects(store).filter(
+    (project) => project.network === config.network && project.id !== config.id,
+  );
 }
 
 function resolvePeer(store, config, selector) {

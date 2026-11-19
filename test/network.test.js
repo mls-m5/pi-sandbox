@@ -519,3 +519,25 @@ test('networkWake can be disabled and is a validated boolean with an inert examp
   const copy = await store.register(copyRoot, 'copy', 'boss');
   assert.equal(store.load(copy.id).networkWake, false);
 });
+
+test('messages keep working when other project files contain fields this pis version does not know', async t => {
+  const { store, projects } = await setup(t);
+  // Simulates version skew: a newer pis wrote fields an older running pis would reject strictly.
+  for (const project of [projects.worker, projects.other]) {
+    const file = store.configPath(project.id);
+    const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+    raw.examples = { ...raw.examples, futureExample: true };
+    raw.futureTopLevel = { anything: 1 };
+    fs.writeFileSync(file, JSON.stringify(raw));
+  }
+  assert.throws(() => store.all(), /Unknown field/); // the strict validator does reject them...
+  assert.deepEqual(listPeers(store, projects.boss).map(p => p.name), ['worker']); // ...but messaging does not need it
+  const sent = sendMessage(store, projects.boss, { to: 'worker', text: 'still delivered' });
+  assert.equal(sent.to, 'worker');
+  assert.equal(receiveMessages(store, projects.worker)[0].text, 'still delivered');
+  // A broken or half-written project file only removes that project as a peer.
+  fs.writeFileSync(store.configPath(projects.other.id), '{broken');
+  assert.deepEqual(listPeers(store, projects.boss).map(p => p.name), ['worker']);
+  fs.writeFileSync(store.configPath(projects.worker.id), '{broken');
+  assert.deepEqual(listPeers(store, projects.boss), []);
+});

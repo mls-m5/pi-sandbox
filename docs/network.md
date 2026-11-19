@@ -14,6 +14,8 @@ Give each project the same network name in `pis --edit`:
 
 For running terminal Pi sessions, setting `network` also enables automatic inbox checks (about every two seconds). A message can start a model turn while Pi is idle, consuming tokens; while Pi is working, it is delivered as native steering. Set `"networkPush": false` to disable live delivery while retaining manual reads and the existing startup inbox prompt. This takes effect at the next launch. Live delivery does not apply to print mode or web RPC. Claude Code cannot be pushed to (the pinned 2.1.328 has no channel/injection flag), so it gets **hook delivery** instead, see below. The poller skips checks while the manual receive tool is waiting.
 
+Peer lookup reads only `id`, `name`, `root`, `network` and `agent` from each project file and ignores everything else; it does not use the strict configuration validator. A `pis` process started before an upgrade therefore keeps delivering messages even though newer pis versions have written fields it does not know (for example `examples.networkWake`). Unreadable project files just stop being peers. Code changes still reach an already running agent only after it is restarted.
+
 ## Tools
 
 Offered to Pi (extension `network-tools.mjs`) and Claude Code (MCP server `pis-host`, tools `mcp__pis-host__…`) whenever the launch runs an agent task, including print mode, but not `--bash`/`--exec`/management/`--help` runs or web RPC:
