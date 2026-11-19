@@ -11,7 +11,7 @@ import { completeConfig, defaults, validate } from '../src/config.js';
 import { parse } from '../src/cli.js';
 import { imagePlan, launchArgs, interactiveOutput, podmanEnvironment } from '../src/container.js';
 import {
-  CLAUDE_VERSION, claudeProxyLogger, claudeCommand, claudeHasSession, claudeNeedsLogin, claudeLoginEnvironment, claudeState, loginClaude,
+  CLAUDE_VERSION, checkClaudeToken, claudeProxyLogger, claudeCommand, claudeHasSession, claudeNeedsLogin, claudeLoginEnvironment, claudeState, loginClaude,
   logoutClaudeToken, prepareClaudeProxy, readClaudeToken, removeLegacyClaudeCredentials, saveClaudeToken,
   startClaudeProxy, validateClaudeToken,
 } from '../src/claude-code.js';
@@ -397,9 +397,37 @@ test('PIS_CLAUDE_PROXY_DEBUG writes a private log with token kind and login age,
   const proxy = await prepareClaudeProxy(store);
   await proxy.close();
   const text = fs.readFileSync(log, 'utf8');
-  assert.match(text, /proxy started: token kind=oat01, login file saved 0 day\(s\) ago/);
+  assert.match(text, /proxy started: token kind=oat01, length=53, login file saved 0 day\(s\) ago/);
   assert.match(text, /proxy closed after 0 forwarded request\(s\)/);
   assert.ok(!text.includes(TOKEN));
   assert.equal(fs.statSync(log).mode & 0o777, 0o600);
   assert.equal(typeof claudeProxyLogger, 'function');
+});
+
+test('claude-check sends one token-count request and reports only status, request id and error type', async t => {
+  const { store } = await fixture(t);
+  await assert.rejects(checkClaudeToken(store), /No Claude login saved/);
+  await saveClaudeToken(store, TOKEN);
+  let mode = 'reject';
+  const { upstream, seen } = await fakeAnthropic(t, (req, res) => {
+    if (mode === 'reject') {
+      res.writeHead(401, { 'content-type': 'application/json', 'request-id': 'req_chk1' });
+      return res.end(JSON.stringify({ type: 'error', error: { type: 'authentication_error', message: `bad ${TOKEN}` } }));
+    }
+    if (mode === 'refused') { res.writeHead(400, { 'request-id': 'req_chk2' }); return res.end('{"type":"error","error":{"type":"invalid_request_error","message":"x"}}'); }
+    res.writeHead(200, { 'request-id': 'req_chk3' }); res.end('{"input_tokens":8}');
+  });
+  const rejected = await checkClaudeToken(store, { upstream });
+  assert.deepEqual(rejected, { status: 401, requestId: 'req_chk1', errorType: 'authentication_error', tokenKind: 'oat01', tokenLength: TOKEN.length });
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].url, '/v1/messages/count_tokens?beta=true');
+  assert.equal(seen[0].headers.authorization, `Bearer ${TOKEN}`);
+  assert.match(seen[0].headers['anthropic-beta'], /oauth-2025-04-20/);
+  assert.ok(!JSON.stringify(rejected).includes(TOKEN));
+  mode = 'refused';
+  assert.equal((await checkClaudeToken(store, { upstream })).status, 400);
+  mode = 'ok';
+  assert.deepEqual(await checkClaudeToken(store, { upstream }), { status: 200, requestId: 'req_chk3', tokenKind: 'oat01', tokenLength: TOKEN.length });
+  assert.equal(parse(['--claude-check']).action, 'claude-check');
+  assert.throws(() => parse(['--project', 'abc12', '--claude-check']), /--project is not valid/);
 });

@@ -656,8 +656,62 @@ export function claudeProxyLogger(store, token) {
   try {
     saved = `${Math.floor((Date.now() - fs.statSync(tokenPath(store)).mtimeMs) / 86400000)} day(s) ago`;
   } catch {}
-  write(`proxy started: token kind=${token.match(/^sk-ant-(oat\d+)-/)?.[1] || 'unknown'}, login file saved ${saved}`);
+  write(
+    `proxy started: token kind=${token.match(/^sk-ant-(oat\d+)-/)?.[1] || 'unknown'}, length=${token.length}, login file saved ${saved}`,
+  );
   return write;
+}
+
+/**
+ * Explicit host check (pis --claude-check): ONE token-counting request (no completion, no
+ * generated tokens) with the saved subscription token and the same headers the proxy sends. It
+ * tells a rejected token (401) from one Anthropic accepts, independent of Claude Code. Only the
+ * status, request id and Anthropic's error type are returned; never the token or any body.
+ */
+export async function checkClaudeToken(store, { upstream } = {}) {
+  const token = readClaudeToken(store);
+  assert(token, 'No Claude login saved. Run pis --login claude on the host.');
+  const origin = new URL(upstream || CLAUDE_UPSTREAM);
+  assert(
+    origin.protocol === 'https:' || (upstream && origin.hostname === '127.0.0.1'),
+    'Claude upstream must be the fixed HTTPS origin.',
+  );
+  const payload = Buffer.from(
+    JSON.stringify({ model: 'claude-haiku-5-5', messages: [{ role: 'user', content: 'hi' }] }),
+  );
+  const request = origin.protocol === 'https:' ? https.request : http.request;
+  return new Promise((resolve, reject) => {
+    const req = request(
+      new URL('/v1/messages/count_tokens?beta=true', origin.origin),
+      {
+        method: 'POST',
+        headers: upstreamRequestHeaders({ 'user-agent': 'pis-claude-check' }, token, payload.length),
+        timeout: 20_000,
+      },
+      (res) => {
+        let body = '';
+        res.on('data', (chunk) => {
+          if (body.length < 4096) body += chunk.toString('utf8');
+        });
+        res.on('end', () => {
+          let errorType;
+          try {
+            errorType = String(JSON.parse(body).error?.type || '').replace(/[^A-Za-z0-9_]/g, '');
+          } catch {}
+          resolve({
+            status: res.statusCode || 0,
+            requestId: String(res.headers['request-id'] || '').replace(/[^A-Za-z0-9_-]/g, ''),
+            ...(errorType ? { errorType } : {}),
+            tokenKind: token.match(/^sk-ant-(oat\d+)-/)?.[1] || 'unknown',
+            tokenLength: token.length,
+          });
+        });
+      },
+    );
+    req.on('timeout', () => req.destroy(new Error('timeout')));
+    req.on('error', () => reject(new Error('Could not reach Anthropic (network or timeout).')));
+    req.end(payload);
+  });
 }
 
 /** Starts a per-launch Claude proxy in a private short runtime directory. */

@@ -50,6 +50,8 @@ The per-project `claude-state/` home (mounted at `/pis/home`, `CLAUDE_CONFIG_DIR
 
 ### Diagnosing 401 / "Please run /login"
 
+`pis --claude-check` (host, explicit) sends **one** `count_tokens` request (no completion, no generated tokens) with the saved subscription token and the proxy's headers, and prints only the token kind and length, Anthropic's HTTP status, request id and error type. A 401 means Anthropic rejects the saved token regardless of Claude Code or the proxy; the exit code is 1 then. It is a live request to Anthropic, so run it deliberately, not in automation. The token length is also in the proxy log; a length far below the token printed by `claude setup-token` suggests a truncated paste (pis only checks for ≥ 20 printable characters and the `sk-ant-oat` prefix).
+
 Start with `PIS_CLAUDE_PROXY_DEBUG=1 pis --claude` and read `$PIS_HOME/claude-proxy.log` (private, content-free, truncated above 256 KiB). It records when the proxy started with the token **kind** (e.g. `oat01`) and how long ago the host login file was saved, then one line per call (`POST /v1/messages -> 401 request-id=req_… error=authentication_error: …`), refused non-model routes, and the number of forwarded requests at exit. No headers, bodies, prompts or tokens are written. How to read it:
 
 - **`-> 401 … authentication_error` from upstream:** the host token itself is rejected by Anthropic (expired, revoked, logged out everywhere, wrong account). Run `pis --login claude` again. The login file age tells how old it is; a login file saved before the token was replaced elsewhere is stale.

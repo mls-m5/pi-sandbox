@@ -34,6 +34,7 @@ import {
 import { validate } from './config.js';
 import {
   CLAUDE_VERSION,
+  checkClaudeToken,
   claudeCommand,
   claudeNeedsLogin,
   loginClaude,
@@ -92,6 +93,7 @@ Usage:
   pis --import-codex FILE [--codex-account NAME]
   pis --logout-codex [--codex-account NAME] # remove only that local profile
   pis --codex-usage [--codex-account NAME] # sanitized quota, no auto-switch
+  pis --claude-check                 # test the saved Claude token with one token-count request
   pis --claude-usage                 # cached Claude 5h/7d usage seen by the proxy
   pis --codex-accounts               # aliases, active account, explicit pool
   pis --codex-use NAME               # change live proxies' subsequent requests
@@ -312,6 +314,7 @@ export function parse(argv) {
         '--logout-mistral',
         '--codex-usage',
         '--claude-usage',
+        '--claude-check',
         '--codex-accounts',
         '--login-status',
         '--help',
@@ -402,6 +405,7 @@ export function parse(argv) {
         'login-claude',
         'codex-usage',
         'claude-usage',
+        'claude-check',
         'codex-accounts',
         'codex-use',
         'codex-rename',
@@ -599,6 +603,18 @@ export async function main(argv = process.argv.slice(2)) {
       `Removed local Codex profile ${account}; other profiles remain. Tokens are not revoked. If it was active, select another profile explicitly with --codex-use.`,
     );
     return 0;
+  }
+  if (options.action === 'claude-check') {
+    const result = await checkClaudeToken(store);
+    console.log(
+      `Token kind ${result.tokenKind}, ${result.tokenLength} characters. Anthropic answered HTTP ${result.status}${result.errorType ? ` (${result.errorType})` : ''}${result.requestId ? `, request ${result.requestId}` : ''}.\n` +
+        (result.status === 401 || result.errorType === 'authentication_error'
+          ? 'The saved token is REJECTED. Run pis --login claude and paste the complete token (compare its length with the one printed by claude setup-token).'
+          : result.status >= 200 && result.status < 300
+            ? 'The saved token is accepted.'
+            : 'The token passed authentication (not a 401), but the request itself was refused; this is not a login problem.'),
+    );
+    return result.status === 401 || result.errorType === 'authentication_error' ? 1 : 0;
   }
   if (options.action === 'claude-usage') {
     console.log(JSON.stringify(readClaudeUsage(store)));
