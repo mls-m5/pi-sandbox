@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { isDeepStrictEqual } from 'node:util';
 import { assert, atomicWrite, directory, privateDir, run, within } from './util.js';
 import { prepareProxy } from './proxy-runtime.js';
@@ -28,7 +28,14 @@ import {
 } from './claude-code.js';
 import { schedulePrune } from './prune.js';
 import { prepareGitPush, approveGitPush } from './git-push.js';
-import { formatMessages, markDelivered, pendingMessages, startNetworkServer } from './network.js';
+import {
+  formatMessages,
+  formatWakeNotice,
+  markDelivered,
+  pendingMessages,
+  startNetworkServer,
+  startWakeWatcher,
+} from './network.js';
 import { startAptRequestServer, applyAptProposal, approveAptProposal } from './apt-requests.js';
 import { imagePlan } from './image-plan.js';
 import { withDefaultExtensions } from './extensions.js';
@@ -549,6 +556,7 @@ async function launchOnce(store, config, options) {
           aptRequests,
           codexAuto,
           messageNetwork,
+          wake,
           status,
           proposal,
           containerStopped = false;
@@ -611,12 +619,35 @@ async function launchOnce(store, config, options) {
           }
           progress('Starting container (first start after a build can take longer)…');
           options.startupProgress?.('starting_container');
+          // Interactive Claude cannot be pushed to. When it has reported idle (Stop hook) with
+          // messages queued, stop it so the restart below can feed it the messages.
+          if (
+            isClaude &&
+            messageNetwork &&
+            config.networkWake !== false &&
+            config.networkPush !== false &&
+            interactiveOutput(command)
+          )
+            wake = startWakeWatcher({
+              server: messageNetwork,
+              ...(options.wakeTiming || {}), // test-only knob; not reachable from the CLI
+              hasMessages: () => pendingMessages(store, config, 1).length > 0,
+              stopContainer: () =>
+                new Promise((resolve) => {
+                  const child = spawn('podman', ['stop', '--time', '5', invocation.name], {
+                    stdio: 'ignore',
+                  });
+                  child.on('error', resolve);
+                  child.on('close', resolve);
+                }),
+            });
           status = await run('podman', invocation.args, {
             env: podmanEnvironment(config),
             stdio: options.stdio || 'inherit',
           });
           proposal = aptRequests?.proposal;
         } finally {
+          wake?.stop();
           // Covers interrupted attached clients that leave their container running.
           if (invocation) {
             spawnSync('podman', ['rm', '--force', '--time', '1', invocation.name], {
@@ -649,6 +680,16 @@ async function launchOnce(store, config, options) {
                 { code: 'PIS_CONTAINER_UNKNOWN' },
               );
             }
+          }
+        }
+        if (wake?.fired && !proposal) {
+          assert(containerStopped, 'Cannot confirm sandbox shutdown; no restart was performed.');
+          const claimed = markDelivered(store, config, pendingMessages(store, config));
+          if (claimed.length) {
+            console.error(
+              `pis: network ${config.network}: Claude was idle with ${claimed.length} queued message${claimed.length === 1 ? '' : 's'}; restarting it with --continue so it reads them.`,
+            );
+            return { type: RESTART, packages: [], notice: formatWakeNotice(config, claimed) };
           }
         }
         if (proposal) {

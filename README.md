@@ -190,7 +190,7 @@ Only literal host-loopback HTTP `/v1` is allowed (`127.0.0.1` or `[::1]`, option
 
 ## Agent messaging
 
-Setting a project's `network` lets it exchange messages with other projects on that network. A running terminal Pi checks its inbox automatically and an incoming message can start a model turn and use tokens. Set `"networkPush": false` to disable live delivery without leaving the network. No stopped containers are started. See [agent messaging](docs/network.md).
+Setting a project's `network` lets it exchange messages with other projects on that network. A running terminal Pi checks its inbox automatically and an incoming message can start a model turn and use tokens. Interactive Claude gets messages through hooks, and an idle Claude with queued messages is stopped and restarted with `--continue` after about a minute (this discards any text you were typing). Set `"networkPush": false` to disable live delivery or `"networkWake": false` to disable only the restart, without leaving the network. No container that is not running is ever started. See [agent messaging](docs/network.md).
 
 ## Project discovery
 

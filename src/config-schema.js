@@ -9,7 +9,7 @@ export const HINTS = {
   updates:
     'Opt in once with pis --updates on (or all to include exact npm pins). Only tested Pi patch/npm image updates activate on later launches. Off freezes the current managed release; rollback disables automatic updates.',
   network:
-    'Optional message network: give projects the same network name (see examples.network). Running terminal Pi sessions receive messages automatically unless networkPush is false. Incoming messages can use model tokens. Delete network for no messaging. See docs/network.md.',
+    'Optional message network: give projects the same network name (see examples.network). Running terminal Pi sessions receive messages automatically unless networkPush is false. Incoming messages can use model tokens; an idle Claude with queued messages is restarted unless networkWake is false. Delete network for no messaging. See docs/network.md.',
   image:
     'packages are apt names; extraInstructions are trusted single-line RUN instructions. Never put credentials here.',
   mounts:
@@ -44,6 +44,12 @@ export const PROJECT_SCHEMA = {
       default: true,
       description:
         'With network set, a running terminal Pi checks for messages automatically. An idle Pi can start a model turn and use tokens. Set false to disable live delivery. No effect in Claude Code, print, or web RPC mode.',
+    },
+    networkWake: {
+      type: 'boolean',
+      default: true,
+      description:
+        'Claude only, with network and networkPush: when Claude has been idle at its prompt for about a minute and messages are queued, pis stops it and restarts it with --continue so it reads them. Any text you were typing is lost and a model turn is used. Set false to disable.',
     },
     id: {
       type: 'string',

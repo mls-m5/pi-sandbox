@@ -76,6 +76,7 @@ export function validate(config, { storage, home = os.homedir(), identity, paths
       'agent',
       'network',
       'networkPush',
+      'networkWake',
       'image',
       'mounts',
       'credentials',
@@ -106,6 +107,8 @@ export function validate(config, { storage, home = os.homedir(), identity, paths
   assert(['pi', 'claude'].includes(config.agent), 'agent must be pi or claude.');
   if (config.networkPush !== undefined)
     assert(typeof config.networkPush === 'boolean', 'networkPush must be true or false.');
+  if (config.networkWake !== undefined)
+    assert(typeof config.networkWake === 'boolean', 'networkWake must be true or false.');
   if (config.network !== undefined)
     assert(
       typeof config.network === 'string' && NETWORK_PATTERN.test(config.network),
@@ -233,7 +236,7 @@ export function validate(config, { storage, home = os.homedir(), identity, paths
   if (config.examples !== undefined) {
     object(
       config.examples,
-      ['mounts', 'extraInstructions', 'credentials', 'extensions', 'network', 'networkPush'],
+      ['mounts', 'extraInstructions', 'credentials', 'extensions', 'network', 'networkPush', 'networkWake'],
       'examples',
     );
     if (config.examples.network !== undefined)
@@ -308,6 +311,7 @@ export function completeConfig(input) {
     extensions: ['npm:@beyona/pi-zai-usage@1.1.0'],
     network: 'team-a',
     networkPush: true,
+    networkWake: false,
     credentials: {},
   });
   fill(config.examples?.credentials, {

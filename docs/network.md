@@ -36,9 +36,15 @@ Tool descriptions and errors tell the agent not to chat, acknowledge or send fol
 
 Unless `"networkPush": false`, an interactive or print Claude launch on a network also passes `--settings` with three hooks from the image (`/opt/pis/claude-network-hook.mjs`): `PostToolUse` and `UserPromptSubmit` add queued messages as extra context, and `Stop` blocks Claude from going idle while messages are queued so it keeps working on them. This reacts at Claude's natural boundaries; it cannot wake a Claude that is idle at the prompt. The hook only reads the host socket, prints nothing when the queue is empty, and fails silently. Texts carry the same untrusted-data header. Messages are claimed by whichever reader (hook, `receive_messages`) gets them first, once.
 
+### Waking an idle Claude (`networkWake`, default on)
+
+Hooks cannot run while Claude sits idle at its prompt. The `Stop` hook therefore also tells the host (op `state`, only an idle/busy hint over the same socket) when Claude has finished a turn with nothing to continue on, and `UserPromptSubmit`/`PostToolUse` report busy. If an **interactive** Claude has been idle for about a minute (`WAKE_IDLE_MS`) and messages are queued, the host stops its container (`podman stop`, 5 s grace), verifies it is gone and restarts it with `claude --continue "<marked notice>"`, the same mechanism as after approved apt/Git requests. The notice says the messages arrived while Claude was idle and that pis restarted it. It uses one model turn per wake and only ever fires with queued messages, so it cannot loop without new messages (senders are rate limited; there is still no hop limit).
+
+**Trade-off:** pis cannot see whether you are typing in the Claude window. A wake kills the session mid-input and discards any unsent text. Set `"networkWake": false` to disable it, or `"networkPush": false` to disable hooks (and therefore wake) altogether. Not applied to print mode, Pi (an idle Pi gets a new turn via push instead) or web RPC. Idle is only a hint and is never treated as "finished".
+
 **Not verified:** the hook JSON shapes (`additionalContext`, `decision: "block"`) and that `--settings` merges with project settings were written from Claude Code's hook conventions, not exercised against 2.1.328 with a model, because that needs a real session. Verify on the host: send a message to a busy Claude and check it appears after the next tool call; send one to an idle Claude and confirm that it is read only on the next prompt.
 
 ## Not implemented / open
 
-- Starting a stopped container, a host listener mode (`--listen`), live delivery in the web UI, a hop limit, a CLI to read the log, and any agent-start capability. Idle is never treated as "finished".
+- Starting a container that is not running, a host listener mode (`--listen`), live delivery in the web UI, a hop limit, a CLI to read the log, and any agent-start capability. Idle is never treated as "finished".
 - Offline tests (fake Podman, real sockets) cover config, limits, identity, MCP/Pi tool wiring, the start prompt and live inbox polling. **Not verified on a real host:** live delivery triggering a real Pi model turn, MCP loading with `PIS_NET_SOCKET`, or two real agents exchanging messages.

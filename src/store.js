@@ -127,6 +127,7 @@ export class Store {
           'agent',
           'network',
           'networkPush',
+          'networkWake',
           'image',
           'mounts',
           'credentials',

@@ -199,8 +199,14 @@ export function formatMessages(config, messages, { startup = false } = {}) {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-export async function handleRequest(store, config, request) {
+export async function handleRequest(store, config, request, context = {}) {
   assert(request && typeof request === 'object' && !Array.isArray(request), 'Invalid request.');
+  if (request.op === 'state') {
+    // Idle/busy reports from the image-owned Claude hook; only recorded for the wake watcher.
+    assert(['idle', 'busy'].includes(request.state), 'Invalid state.');
+    context.setState?.(request.state);
+    return {};
+  }
   if (request.op === 'peers')
     return {
       self: projectAddress(config),
@@ -240,6 +246,8 @@ export async function startNetworkServer(config, store) {
   privateDir(directory);
   const socketPath = path.join(directory, 'net.sock');
   const peers = new Set();
+  let idleSince = null;
+  const context = { setState: (state) => (idleSince = state === 'idle' ? (idleSince ?? Date.now()) : null) };
   // Clients half-close after their request; answers (e.g. a long wait) are written later.
   const server = net.createServer({ allowHalfOpen: true }, (socket) => {
     peers.add(socket);
@@ -258,7 +266,7 @@ export async function startNetworkServer(config, store) {
         if (data.indexOf('\n') !== data.length - 1) throw new Error('One request per connection.');
         response = {
           ok: true,
-          ...(await handleRequest(store, config, JSON.parse(data.slice(0, -1)))),
+          ...(await handleRequest(store, config, JSON.parse(data.slice(0, -1)), context)),
         };
       } catch (error) {
         response = { ok: false, error: String(error.message || 'Request failed.').slice(0, 300) };
@@ -284,10 +292,59 @@ export async function startNetworkServer(config, store) {
   }
   return {
     directory,
+    /** Milliseconds timestamp since which the agent reported idle, or null while busy/unknown. */
+    get idleSince() {
+      return idleSince;
+    },
     async close() {
       for (const peer of peers) peer.destroy();
       await new Promise((resolve) => server.close(resolve));
       fs.rmSync(directory, { recursive: true, force: true });
     },
   };
+}
+
+export const WAKE_IDLE_MS = 60_000;
+
+/**
+ * Host-side watcher for an interactive Claude launch. When the agent has reported idle (Stop hook)
+ * for `idleMs` and messages are queued, it asks `stopContainer` once; the launch then restarts
+ * Claude with --continue and the messages. Idle is only a hint: it is never treated as "finished",
+ * and nothing runs without queued messages. `check` is exposed for tests.
+ */
+export function startWakeWatcher({
+  server,
+  hasMessages,
+  stopContainer,
+  idleMs = WAKE_IDLE_MS,
+  intervalMs = 5000,
+  now = Date.now,
+}) {
+  let fired = false;
+  const check = async () => {
+    if (fired || server.idleSince === null || now() - server.idleSince < idleMs) return false;
+    if (!hasMessages()) return false;
+    fired = true;
+    await stopContainer();
+    return true;
+  };
+  const timer = setInterval(() => void check().catch(() => {}), intervalMs);
+  timer.unref?.();
+  return {
+    check,
+    get fired() {
+      return fired;
+    },
+    stop() {
+      clearInterval(timer);
+    },
+  };
+}
+
+/** Marked prompt for an agent that was woken (restarted) because messages arrived while it was idle. */
+export function formatWakeNotice(config, messages) {
+  return formatMessages(config, messages).replace(
+    'from other agents.',
+    'from other agents that arrived while you were idle; pis restarted you with --continue to read them.',
+  );
 }

@@ -403,3 +403,119 @@ test('Claude hook delivers queued messages as untrusted context at each boundary
   const bad = await runHook('PostToolUse', env, 'not json');
   assert.equal(bad.status, 0); assert.equal(bad.stdout, '');
 });
+
+import { startWakeWatcher, formatWakeNotice } from '../src/network.js';
+import { launch } from '../src/container.js';
+
+test('server tracks idle/busy reports from the hook; invalid states are refused', async t => {
+  const { store, projects } = await setup(t);
+  const server = await startNetworkServer(projects.worker, store);
+  t.after(() => server.close());
+  const socket = path.join(server.directory, 'net.sock');
+  assert.equal(server.idleSince, null);
+  assert.equal((await request(socket, { op: 'state', state: 'idle' })).ok, true);
+  const first = server.idleSince;
+  assert.ok(Number.isFinite(first));
+  await new Promise(resolve => setTimeout(resolve, 20));
+  await request(socket, { op: 'state', state: 'idle' });
+  assert.equal(server.idleSince, first); // idle since the first report
+  await request(socket, { op: 'state', state: 'busy' });
+  assert.equal(server.idleSince, null);
+  assert.equal((await request(socket, { op: 'state', state: 'maybe' })).ok, false);
+  assert.equal((await request(socket, { op: 'state' })).ok, false);
+});
+
+test('hook reports idle only for a Stop with nothing to continue on, and busy otherwise', async t => {
+  const { store, projects } = await setup(t);
+  const server = await startNetworkServer(projects.worker, store);
+  t.after(() => server.close());
+  const env = { PIS_NET_SOCKET: path.join(server.directory, 'net.sock') };
+  await runHook('Stop', env);
+  assert.ok(server.idleSince !== null);
+  await runHook('UserPromptSubmit', env);
+  assert.equal(server.idleSince, null);
+  await runHook('Stop', env);
+  await runHook('PostToolUse', env);
+  assert.equal(server.idleSince, null);
+  sendMessage(store, projects.boss, { to: 'worker', text: 'keep going' });
+  const stop = await runHook('Stop', env); // messages queued: Claude continues, so it is not idle
+  assert.equal(JSON.parse(stop.stdout).decision, 'block');
+  assert.equal(server.idleSince, null);
+});
+
+test('wake watcher fires once, only after the idle delay and only with queued messages', async () => {
+  let clock = 1_000_000, stops = 0, queued = false;
+  const server = { idleSince: null };
+  const watcher = startWakeWatcher({ server, hasMessages: () => queued, stopContainer: async () => { stops++; }, idleMs: 60_000, intervalMs: 3_600_000, now: () => clock });
+  assert.equal(await watcher.check(), false); // busy/unknown
+  server.idleSince = clock;
+  queued = true;
+  clock += 59_000;
+  assert.equal(await watcher.check(), false); // not idle long enough
+  clock += 2_000;
+  queued = false;
+  assert.equal(await watcher.check(), false); // idle but nothing queued
+  queued = true;
+  assert.equal(await watcher.check(), true);
+  assert.equal(watcher.fired, true);
+  assert.equal(await watcher.check(), false); // only once
+  assert.equal(stops, 1);
+  watcher.stop();
+});
+
+test('idle Claude with queued messages is stopped and restarted with --continue and a marked notice', async t => {
+  const { store, projects, dir } = await setup(t);
+  await store.save({ ...store.load(projects.worker.id), agent: 'claude' }, store.load(projects.worker.id));
+  await saveClaudeToken(store, `sk-ant-oat01-${'x'.repeat(40)}`);
+  const bin = path.join(dir, 'bin'); fs.mkdirSync(bin);
+  const log = path.join(dir, 'runs.log'), flag = path.join(dir, 'stopped');
+  fs.writeFileSync(path.join(bin, 'podman'), `#!${process.execPath}
+    const fs = require('fs'), net = require('net');
+    const args = process.argv.slice(2);
+    const log = ${JSON.stringify(log)}, flag = ${JSON.stringify(flag)};
+    if (args[0] === 'info') console.log(JSON.stringify({host:{security:{rootless:true,selinuxEnabled:false},serviceIsRemote:false}}));
+    else if (args[0] === 'stop') fs.writeFileSync(flag, '');
+    else if (args[0] === 'container') process.exitCode = 1;
+    else if (args[0] === 'run') {
+      const first = !fs.existsSync(log);
+      fs.appendFileSync(log, JSON.stringify(args) + '\\n');
+      if (first) {
+        const volume = args.find(arg => arg.endsWith(':/pis/net:ro'));
+        const socket = net.createConnection(volume.split(':')[0] + '/net.sock');
+        socket.on('connect', () => socket.end(JSON.stringify({ op: 'state', state: 'idle' }) + '\\n'));
+        socket.on('data', () => {});
+        const started = Date.now();
+        const wait = setInterval(() => { if (fs.existsSync(flag) || Date.now() - started > 20000) { clearInterval(wait); process.exit(0); } }, 25);
+      }
+    }
+  `, { mode: 0o700 });
+  const savedPath = process.env.PATH, savedHome = process.env.PIS_HOME;
+  process.env.PATH = `${bin}:${savedPath}`; process.env.PIS_HOME = store.root; process.env.PIS_AUTO_PRUNE = '0';
+  t.after(() => { process.env.PATH = savedPath; if (savedHome === undefined) delete process.env.PIS_HOME; else process.env.PIS_HOME = savedHome; delete process.env.PIS_AUTO_PRUNE; });
+  setTimeout(() => sendMessage(store, projects.boss, { to: 'worker', text: 'Wake up: review the parser' }), 400);
+  const options = { action: 'run', mode: 'pi', fresh: false, args: [], cwd: projects.worker.root, wakeTiming: { idleMs: 150, intervalMs: 40 } };
+  await launch(store, store.load(projects.worker.id), options);
+  const runs = fs.readFileSync(log, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+  assert.equal(runs.length, 2, 'started, woken once, no further restart');
+  assert.ok(!runs[0].some(arg => arg.includes('arrived while you were idle')));
+  assert.ok(runs[0].includes('--settings'));
+  const restart = runs[1];
+  assert.ok(restart.includes('--continue'));
+  const notice = restart.find(arg => arg.startsWith('[pis-network'));
+  assert.match(notice, /arrived while you were idle; pis restarted you with --continue/);
+  assert.match(notice, /Wake up: review the parser/);
+  assert.match(notice, /NOT instructions from the user/);
+  assert.equal(pendingMessages(store, projects.worker).length, 0);
+  assert.match(formatWakeNotice(projects.worker, [{ from: { id: 'a', name: 'a' }, reply_to: { id: 'a', name: 'a' }, time: 't', text: 'x' }]), /arrived while you were idle/);
+});
+
+test('networkWake can be disabled and is a validated boolean with an inert example', async t => {
+  const { store, projects, dir } = await setup(t);
+  assert.equal(projects.boss.examples.networkWake, false);
+  assert.throws(() => validate({ ...projects.boss, networkWake: 'no' }, { paths: false }), /networkWake must be/);
+  assert.doesNotThrow(() => validate({ ...projects.boss, networkWake: false }, { paths: false }));
+  const copyRoot = path.join(dir, 'copy'); fs.mkdirSync(copyRoot);
+  await store.save({ ...store.load(projects.boss.id), networkWake: false }, store.load(projects.boss.id));
+  const copy = await store.register(copyRoot, 'copy', 'boss');
+  assert.equal(store.load(copy.id).networkWake, false);
+});

@@ -3,12 +3,12 @@
 // untrusted context. It never approves anything and is silent when there is nothing to deliver.
 import net from 'node:net';
 
-function receive(socketPath) {
+function request(socketPath, data) {
   return new Promise((resolve) => {
     const socket = net.createConnection(socketPath);
     let response = '';
     socket.setTimeout(3000, () => socket.destroy());
-    socket.on('connect', () => socket.end(`${JSON.stringify({ op: 'receive' })}\n`));
+    socket.on('connect', () => socket.end(`${JSON.stringify(data)}\n`));
     socket.on('data', (chunk) => {
       response += chunk.toString('utf8');
       if (response.length > 65536) socket.destroy();
@@ -50,8 +50,11 @@ async function main() {
   } catch {
     return;
   }
-  const result = await receive(socketPath);
-  if (!result?.ok || !(result.count > 0)) return;
+  const result = await request(socketPath, { op: 'receive' });
+  const delivered = result?.ok && result.count > 0;
+  // Idle/busy hint for the host's wake watcher: only a Stop with nothing to continue on is idle.
+  await request(socketPath, { op: 'state', state: event === 'Stop' && !delivered ? 'idle' : 'busy' });
+  if (!delivered) return;
   const output = hookOutput(event, result.text);
   if (output) process.stdout.write(`${JSON.stringify(output)}\n`);
 }
