@@ -1,6 +1,6 @@
-# Agent message network (experimental, step 1)
+# Agent message network (experimental)
 
-Running agents in **different registered projects** can exchange short messages through the host. This is not `pi-subagents` (children inside one agent) and it never starts, stops or controls another agent.
+Running agents in **different registered projects** can exchange short messages through the host. This is not `pi-subagents` (children inside one agent). Live delivery can trigger a model turn in a running Pi session, but never starts or stops another container.
 
 ## Setup
 
@@ -10,7 +10,9 @@ Give each project the same network name in `pis --edit`:
 { "network": "team-a" }
 ```
 
-`pis --list` shows the network as a fourth tab-separated column (`-` when none). Names are lowercase letters, digits and dashes (max 32). Without the field nothing changes. Projects with the same name are peers; addresses are project names (or IDs). `pis --new --from OLD` copies the field.
+`pis --list` shows the network as a fourth tab-separated column (`-` when none). Names are lowercase letters, digits and dashes (max 32). Without the field nothing changes. Projects with the same name are peers; addresses are project names (or IDs). `pis --new --from OLD` copies the network and any explicit `networkPush` setting.
+
+For running terminal Pi sessions, setting `network` also enables automatic inbox checks (about every two seconds). A message can start a model turn while Pi is idle, consuming tokens; while Pi is working, it is delivered as native steering. Set `"networkPush": false` to disable live delivery while retaining manual reads and the existing startup inbox prompt. This takes effect at the next launch. Live delivery does not apply to Claude Code, print mode or web RPC. The poller skips checks while the manual receive tool is waiting.
 
 ## Tools
 
@@ -32,5 +34,5 @@ Tool descriptions and errors tell the agent not to chat, acknowledge or send fol
 
 ## Not implemented / open
 
-- Waking or restarting an idle agent, a listener mode (`--listen`), injecting messages into a running interactive session or the web UI, a hop limit, a CLI to read the log, and any agent-start capability. Idle is never treated as "finished".
-- Offline tests (fake Podman, real sockets) cover config, limits, identity, MCP/Pi tool wiring and the start prompt. **Not verified on a real host:** Pi/Claude actually calling the tools, MCP loading with `PIS_NET_SOCKET`, or two real agents exchanging messages.
+- Starting a stopped container, a host listener mode (`--listen`), live delivery in the web UI, a hop limit, a CLI to read the log, and any agent-start capability. Idle is never treated as "finished".
+- Offline tests (fake Podman, real sockets) cover config, limits, identity, MCP/Pi tool wiring, the start prompt and live inbox polling. **Not verified on a real host:** live delivery triggering a real Pi model turn, MCP loading with `PIS_NET_SOCKET`, or two real agents exchanging messages.

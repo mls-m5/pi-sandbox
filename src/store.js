@@ -123,7 +123,16 @@ export class Store {
         assert(source, `Unknown template project: ${template}. Use pis --list.`);
         // Only reusable settings: never identity, root, sessions, sandbox state or update receipts.
         const stored = this.load(source.id, false);
-        for (const key of ['agent', 'network', 'image', 'mounts', 'credentials', 'extensions', 'updates'])
+        for (const key of [
+          'agent',
+          'network',
+          'networkPush',
+          'image',
+          'mounts',
+          'credentials',
+          'extensions',
+          'updates',
+        ])
           if (stored[key] !== undefined) config[key] = structuredClone(stored[key]);
       }
       config = validate(config, { storage: this.root });

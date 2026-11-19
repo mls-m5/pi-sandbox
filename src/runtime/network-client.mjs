@@ -95,3 +95,34 @@ export async function runNetworkTool(name, args, socketPath) {
     };
   return { text: result.text, isError: false };
 }
+
+/**
+ * Background poller for agents that can be pushed to (Pi). Pauses while the agent itself is
+ * waiting in receive_messages so the two never steal each other's messages. `deliver(text)` must
+ * not throw for expected failures; a claimed message is not requeued if delivery fails.
+ */
+export function startPushLoop({ socketPath, deliver, isWaiting = () => false, intervalMs = 2000 }) {
+  let stopped = false;
+  let busy = false;
+  const poll = async () => {
+    if (stopped || busy || isWaiting()) return;
+    busy = true;
+    try {
+      const result = await networkRequest(socketPath, { op: 'receive' }, 10_000);
+      if (!stopped && result?.ok && result.count > 0) await deliver(result.text);
+    } catch {
+      // Host socket unavailable or delivery failed: try again at the next interval.
+    } finally {
+      busy = false;
+    }
+  };
+  const timer = setInterval(poll, intervalMs);
+  timer.unref?.();
+  return {
+    poll,
+    stop() {
+      stopped = true;
+      clearInterval(timer);
+    },
+  };
+}

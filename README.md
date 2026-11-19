@@ -188,6 +188,10 @@ In `pis --edit`, set `credentials.env` to `[]` and `credentials.proxy` to `{ "pr
 
 Only literal host-loopback HTTP `/v1` is allowed (`127.0.0.1` or `[::1]`, optional port); public `custom` HTTPS rules remain unchanged. The sandbox uses the existing capability/Unix relay, not direct host networking. Only Chat Completions and configured profile models are admitted; Ollama management/download routes are blocked and no upstream auth is sent. `pis --logout ollama` removes the private setup, not the service/models or other logins. A loopback endpoint does not prove a tag is locally hosted—avoid cloud tags if required. See [setup, limits and verification gaps](docs/proxy.md#local-ollama-explicit-host-loopback-profile).
 
+## Agent messaging
+
+Setting a project's `network` lets it exchange messages with other projects on that network. A running terminal Pi checks its inbox automatically and an incoming message can start a model turn and use tokens. Set `"networkPush": false` to disable live delivery without leaving the network. No stopped containers are started. See [agent messaging](docs/network.md).
+
 ## Project discovery
 
 Projects are explicitly registered, not inferred from Git repositories.
@@ -208,7 +212,7 @@ pis --relocate k7m2q            # Associate that project with the current direct
 
 Relocation preserves project identity and state. It does not rewrite additional absolute mount paths.
 
-To start a new project from an existing one's settings, run `pis --new --name NEW --from OLD_ID_OR_NAME` in the new directory. It copies `agent`, `network`, `image` (packages and instructions), `mounts`, `credentials`, `extensions` and `updates`; it does **not** copy the ID, root, sessions, sandbox state or managed-update receipts. Mount paths stay absolute, and the first start builds the image (shared layers are reused by Podman's cache). Later edits to either project are independent. An unknown source registers nothing.
+To start a new project from an existing one's settings, run `pis --new --name NEW --from OLD_ID_OR_NAME` in the new directory. It copies `agent`, `network`, any explicit `networkPush` override, `image` (packages and instructions), `mounts`, `credentials`, `extensions` and `updates`; it does **not** copy the ID, root, sessions, sandbox state or managed-update receipts. Mount paths stay absolute, and the first start builds the image (shared layers are reused by Podman's cache). Later edits to either project are independent. An unknown source registers nothing.
 
 ## Configuration and packages
 

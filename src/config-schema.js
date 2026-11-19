@@ -9,7 +9,7 @@ export const HINTS = {
   updates:
     'Opt in once with pis --updates on (or all to include exact npm pins). Only tested Pi patch/npm image updates activate on later launches. Off freezes the current managed release; rollback disables automatic updates.',
   network:
-    'Optional message network: give projects the same name (see examples.network) so their running agents can exchange short messages via the host. Delete the field for no messaging. See docs/network.md.',
+    'Optional message network: give projects the same network name (see examples.network). Running terminal Pi sessions receive messages automatically unless networkPush is false. Incoming messages can use model tokens. Delete network for no messaging. See docs/network.md.',
   image:
     'packages are apt names; extraInstructions are trusted single-line RUN instructions. Never put credentials here.',
   mounts:
@@ -37,7 +37,13 @@ export const PROJECT_SCHEMA = {
       type: 'string',
       pattern: '^[a-z0-9][a-z0-9-]{0,31}$',
       description:
-        'Optional message network. Projects with the same network name can exchange short messages through the host (send_message/receive_messages/list_peers). Omit for no messaging. Example: "team-a".',
+        'Optional message network. Projects with the same name can exchange short messages. A running terminal Pi reacts automatically unless networkPush is false; this can use model tokens. Omit network for no messaging. Example: "team-a".',
+    },
+    networkPush: {
+      type: 'boolean',
+      default: true,
+      description:
+        'With network set, a running terminal Pi checks for messages automatically. An idle Pi can start a model turn and use tokens. Set false to disable live delivery. No effect in Claude Code, print, or web RPC mode.',
     },
     id: {
       type: 'string',

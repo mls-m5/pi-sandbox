@@ -27,12 +27,7 @@ import {
 } from './claude-code.js';
 import { schedulePrune } from './prune.js';
 import { prepareGitPush, approveGitPush } from './git-push.js';
-import {
-  formatMessages,
-  markDelivered,
-  pendingMessages,
-  startNetworkServer,
-} from './network.js';
+import { formatMessages, markDelivered, pendingMessages, startNetworkServer } from './network.js';
 import { startAptRequestServer, applyAptProposal, approveAptProposal } from './apt-requests.js';
 import { imagePlan } from './image-plan.js';
 import { withDefaultExtensions } from './extensions.js';
@@ -293,12 +288,20 @@ export function launchArgs(
       `${aptRequests.directory}:/pis/apt:ro${sharedLabel}`,
     );
   if (aptRequests?.gitOnly) args.push('--env', 'PIS_HOST_GIT_ONLY=1');
+  const networkPush =
+    config.network &&
+    config.networkPush !== false &&
+    !isClaude &&
+    command[0] === 'pi' &&
+    interactiveOutput(command) &&
+    !rpc;
   if (messageNetwork)
     args.push(
       '--env',
       'PIS_NET_SOCKET=/pis/net/net.sock',
       '--volume',
       `${messageNetwork.directory}:/pis/net:ro${sharedLabel}`,
+      ...(networkPush ? ['--env', 'PIS_NET_PUSH=1'] : []),
     );
   if (codexAuto)
     args.push(
@@ -489,7 +492,13 @@ async function launchOnce(store, config, options) {
         const pending =
           networkOn && options.args.length === 0 ? pendingMessages(store, config) : [];
         const agentArgs = pending.length
-          ? [formatMessages(config, pending.map((entry) => entry.message), { startup: true })]
+          ? [
+              formatMessages(
+                config,
+                pending.map((entry) => entry.message),
+                { startup: true },
+              ),
+            ]
           : options.args;
         const command =
           options.mode === 'bash'

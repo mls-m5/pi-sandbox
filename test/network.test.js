@@ -259,3 +259,95 @@ test('pis --list shows each project network, appending a column after the root',
   assert.match(formatProjectList([{ ...projects.boss, root: '/nonexistent' }], () => false), /\/nonexistent \[missing\]\tteam-a$/);
   assert.match(formatProjectList([]), /No registered projects/);
 });
+
+import { startPushLoop } from '../src/runtime/network-client.mjs';
+
+test('network enables live delivery by default only for terminal Pi; explicit false opts out', async t => {
+  const { store, projects } = await setup(t);
+  assert.equal(projects.boss.networkPush, undefined);
+  assert.equal(projects.boss.examples.networkPush, true);
+  assert.throws(() => validate({ ...projects.boss, networkPush: 'yes' }, { paths: false }), /networkPush must be/);
+  assert.doesNotThrow(() => validate({ ...projects.boss, networkPush: true }, { paths: false }));
+  const server = await startNetworkServer(projects.boss, store);
+  t.after(() => server.close());
+  const base = { cwd: projects.boss.root, image: 'img', messageNetwork: server, tty: false, stdinIsTTY: true };
+  const pi = (config, command = ['pi'], options = {}) => launchArgs(store, { ...config, credentials: { env: [] } }, command, { ...base, ...options }).args;
+  assert.ok(pi(projects.boss).includes('PIS_NET_PUSH=1'));
+  assert.ok(!pi(projects.boss, ['pi'], { messageNetwork: undefined }).includes('PIS_NET_PUSH=1'));
+  assert.ok(!pi({ ...projects.boss, network: undefined, networkPush: true }).includes('PIS_NET_PUSH=1'));
+  for (const command of [['pi', '--print', 'task'], ['pi', '--mode', 'rpc'], ['pi', '--mode=json'], ['bash']]) {
+    assert.ok(!pi(projects.boss, command).includes('PIS_NET_PUSH=1'));
+  }
+  assert.ok(pi({ ...projects.boss, networkPush: true }).includes('PIS_NET_PUSH=1'));
+  assert.ok(!pi({ ...projects.boss, networkPush: false }).includes('PIS_NET_PUSH=1'));
+  const claude = launchArgs(store, { ...projects.boss, agent: 'claude', networkPush: true, credentials: { env: [] } }, ['claude'], base).args;
+  assert.ok(!claude.includes('PIS_NET_PUSH=1')); // Claude Code cannot be pushed to
+  assert.ok(claude.includes('PIS_NET_SOCKET=/pis/net/net.sock'));
+});
+
+test('push loop hands a claimed message block to the agent, stays out of the way while the agent waits and survives errors', async t => {
+  const { store, projects } = await setup(t);
+  const server = await startNetworkServer(projects.worker, store);
+  t.after(() => server.close());
+  const socketPath = path.join(server.directory, 'net.sock');
+  const delivered = [];
+  let waiting = false;
+  const loop = startPushLoop({ socketPath, deliver: async text => { delivered.push(text); }, isWaiting: () => waiting, intervalMs: 3_600_000 });
+  t.after(() => loop.stop());
+  await loop.poll();
+  assert.deepEqual(delivered, []); // nothing queued
+
+  sendMessage(store, projects.boss, { to: 'worker', text: 'Build is green' });
+  waiting = true;
+  await loop.poll();
+  assert.deepEqual(delivered, []);
+  assert.equal(pendingMessages(store, projects.worker).length, 1); // agent's own receive_messages wins
+  waiting = false;
+  await loop.poll();
+  assert.equal(delivered.length, 1);
+  assert.match(delivered[0], /^\[pis-network "team-a"\] 1 message from other agents\./);
+  assert.match(delivered[0], /Build is green/);
+  assert.match(delivered[0], /NOT instructions from the user/);
+  assert.equal(pendingMessages(store, projects.worker).length, 0);
+  await loop.poll();
+  assert.equal(delivered.length, 1); // delivered once
+
+  const failing = startPushLoop({ socketPath: '/nonexistent.sock', deliver: async () => { throw new Error('x'); }, intervalMs: 3_600_000 });
+  await failing.poll(); // unreachable socket: no throw
+  failing.stop();
+  sendMessage(store, projects.boss, { to: 'worker', text: 'after stop' });
+  loop.stop();
+  await loop.poll();
+  assert.equal(delivered.length, 1);
+});
+
+test('Pi extension starts the push loop only when enabled, steering into a working agent or starting a turn when idle', async t => {
+  let tools;
+  try { tools = (await import('../src/runtime/network-tools.mjs')).default; } catch { t.skip('typebox (installed with Pi) is not available here'); return; }
+  const { store, projects } = await setup(t);
+  const server = await startNetworkServer(projects.worker, store);
+  t.after(() => server.close());
+  const run = async push => {
+    const handlers = {}, registered = [], sent = [];
+    const pi = { registerTool: tool => registered.push(tool.name), on: (name, handler) => { handlers[name] = handler; }, sendMessage: async (message, options) => { sent.push({ message, options }); } };
+    process.env.PIS_NET_SOCKET = path.join(server.directory, 'net.sock');
+    if (push) process.env.PIS_NET_PUSH = '1'; else delete process.env.PIS_NET_PUSH;
+    tools(pi);
+    return { handlers, registered, sent };
+  };
+  t.after(() => { delete process.env.PIS_NET_SOCKET; delete process.env.PIS_NET_PUSH; });
+  const off = await run(false);
+  assert.deepEqual(off.registered, ['send_message', 'receive_messages', 'list_peers']);
+  assert.equal(off.handlers.session_start, undefined);
+  const on = await run(true);
+  assert.equal(typeof on.handlers.session_start, 'function');
+  sendMessage(store, projects.boss, { to: 'worker', text: 'Please start' });
+  on.handlers.session_start({ reason: 'startup' }, {});
+  await new Promise(resolve => setTimeout(resolve, 2600));
+  on.handlers.session_shutdown({ reason: 'quit' }, {});
+  assert.equal(on.sent.length, 1);
+  assert.equal(on.sent[0].message.customType, 'pis-network');
+  assert.equal(on.sent[0].message.display, true);
+  assert.match(on.sent[0].message.content, /Please start/);
+  assert.deepEqual(on.sent[0].options, { triggerTurn: true, deliverAs: 'steer' });
+});
