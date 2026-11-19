@@ -5,6 +5,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { Store } from '../src/store.js';
+import { formatProjectList } from '../src/cli.js';
 import { validate } from '../src/config.js';
 import {
   NETWORK_LIMITS, formatMessages, listPeers, markDelivered, pendingMessages, receiveMessages, sendMessage, startNetworkServer,
@@ -235,4 +236,18 @@ test('queued messages become one marked start prompt for a Claude launch, only w
   assert.ok(!JSON.parse(again.stdout).args.some(arg => arg.startsWith('[pis-network')));
   const version = invoke(['--claude', '--', '--version']);
   assert.ok(!JSON.parse(version.stdout).args.some(arg => arg.includes('PIS_NET_SOCKET'))); // no network for --version
+});
+
+test('pis --list shows each project network, appending a column after the root', async t => {
+  const { store, projects } = await setup(t);
+  const lines = formatProjectList(store.all()).split('\n').map(line => line.split('\t'));
+  const by = Object.fromEntries(lines.map(([id, name, root, network]) => [name, { id, root, network }]));
+  assert.equal(by.boss.network, 'team-a');
+  assert.equal(by.worker.network, 'team-a');
+  assert.equal(by.other.network, 'team-b');
+  assert.equal(by.loner.network, '-');
+  assert.equal(by.boss.id, projects.boss.id);
+  assert.equal(by.boss.root, projects.boss.root); // first three columns unchanged
+  assert.match(formatProjectList([{ ...projects.boss, root: '/nonexistent' }], () => false), /\/nonexistent \[missing\]\tteam-a$/);
+  assert.match(formatProjectList([]), /No registered projects/);
 });

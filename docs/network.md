@@ -10,7 +10,7 @@ Give each project the same network name in `pis --edit`:
 { "network": "team-a" }
 ```
 
-Names are lowercase letters, digits and dashes (max 32). Without the field nothing changes. Projects with the same name are peers; addresses are project names (or IDs). `pis --new --from OLD` copies the field.
+`pis --list` shows the network as a fourth tab-separated column (`-` when none). Names are lowercase letters, digits and dashes (max 32). Without the field nothing changes. Projects with the same name are peers; addresses are project names (or IDs). `pis --new --from OLD` copies the field.
 
 ## Tools
 

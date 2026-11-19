@@ -206,6 +206,18 @@ No live connection/model test, LAN access or public-custom URL relaxation.
 Never run as root. Mounted files are accessible to the sandbox.
 `;
 
+// Tab-separated: ID, name, root (+ [missing]), network ('-' when none). Columns are only appended.
+export function formatProjectList(projects, exists = fs.existsSync) {
+  return projects.length
+    ? projects
+        .map(
+          (p) =>
+            `${p.id}\t${p.name || '-'}\t${p.root}${exists(p.root) ? '' : ' [missing]'}\t${p.network || '-'}`,
+        )
+        .join('\n')
+    : 'No registered projects. Run pis --new in a project directory.';
+}
+
 export function parse(argv) {
   const separator = argv.indexOf('--');
   const wrapper = separator === -1 ? argv : argv.slice(0, separator);
@@ -616,16 +628,7 @@ export async function main(argv = process.argv.slice(2)) {
       store.index(all);
       return all;
     });
-    console.log(
-      all.length
-        ? all
-            .map(
-              (p) =>
-                `${p.id}\t${p.name || '-'}\t${p.root}${fs.existsSync(p.root) ? '' : ' [missing]'}`,
-            )
-            .join('\n')
-        : 'No registered projects. Run pis --new in a project directory.',
-    );
+    console.log(formatProjectList(all));
     return 0;
   }
   if (options.action === 'forget') {
