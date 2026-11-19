@@ -290,6 +290,22 @@ export function claudeHostMcpConfig({ apt = true, net = false } = {}) {
 }
 export const CLAUDE_HOST_MCP_CONFIG = claudeHostMcpConfig();
 
+// Hooks deliver queued network messages to Claude Code at its natural boundaries: after each tool
+// call, with each prompt, and when it would otherwise stop (then it keeps working on them). The
+// socket path comes from the container environment set by pis; nothing here can approve actions.
+export function claudeNetworkSettings() {
+  const hook = [
+    { type: 'command', command: '/usr/local/bin/node /opt/pis/claude-network-hook.mjs', timeout: 10 },
+  ];
+  return JSON.stringify({
+    hooks: {
+      PostToolUse: [{ matcher: '*', hooks: hook }],
+      UserPromptSubmit: [{ hooks: hook }],
+      Stop: [{ hooks: hook }],
+    },
+  });
+}
+
 const CLAUDE_SESSION_OR_NONINTERACTIVE = new Set([
   '-c',
   '--continue',

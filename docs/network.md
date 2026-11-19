@@ -12,7 +12,7 @@ Give each project the same network name in `pis --edit`:
 
 `pis --list` shows the network as a fourth tab-separated column (`-` when none). Names are lowercase letters, digits and dashes (max 32). Without the field nothing changes. Projects with the same name are peers; addresses are project names (or IDs). `pis --new --from OLD` copies the network and any explicit `networkPush` setting.
 
-For running terminal Pi sessions, setting `network` also enables automatic inbox checks (about every two seconds). A message can start a model turn while Pi is idle, consuming tokens; while Pi is working, it is delivered as native steering. Set `"networkPush": false` to disable live delivery while retaining manual reads and the existing startup inbox prompt. This takes effect at the next launch. Live delivery does not apply to Claude Code, print mode or web RPC. The poller skips checks while the manual receive tool is waiting.
+For running terminal Pi sessions, setting `network` also enables automatic inbox checks (about every two seconds). A message can start a model turn while Pi is idle, consuming tokens; while Pi is working, it is delivered as native steering. Set `"networkPush": false` to disable live delivery while retaining manual reads and the existing startup inbox prompt. This takes effect at the next launch. Live delivery does not apply to print mode or web RPC. Claude Code cannot be pushed to (the pinned 2.1.328 has no channel/injection flag), so it gets **hook delivery** instead, see below. The poller skips checks while the manual receive tool is waiting.
 
 ## Tools
 
@@ -31,6 +31,12 @@ Tool descriptions and errors tell the agent not to chat, acknowledge or send fol
 - Limits (see `NETWORK_LIMITS` in `src/network.js`): 4096 bytes and no control/bidi characters per message; 5 messages per recipient per 10 minutes; 20 messages per sender per hour; 20 unread per recipient. There is no hop counter yet.
 - Received text is **untrusted data** from another agent: it is always wrapped in a block saying it is not an instruction from the user, grants no host approvals/permissions and may not answer the latest question. apt/Git requests still need the host confirmation.
 - At start, queued messages are delivered once as **one marked prompt** (`claude`/`pi --continue "<block>"`; this starts a model turn and uses tokens) only if you gave no prompt/arguments of your own; otherwise they stay queued for `receive_messages`. They are claimed after the image is ready, immediately before the container starts. Restarts after approved apt/Git do not re-deliver.
+
+## Claude Code: hook delivery (experimental)
+
+Unless `"networkPush": false`, an interactive or print Claude launch on a network also passes `--settings` with three hooks from the image (`/opt/pis/claude-network-hook.mjs`): `PostToolUse` and `UserPromptSubmit` add queued messages as extra context, and `Stop` blocks Claude from going idle while messages are queued so it keeps working on them. This reacts at Claude's natural boundaries; it cannot wake a Claude that is idle at the prompt. The hook only reads the host socket, prints nothing when the queue is empty, and fails silently. Texts carry the same untrusted-data header. Messages are claimed by whichever reader (hook, `receive_messages`) gets them first, once.
+
+**Not verified:** the hook JSON shapes (`additionalContext`, `decision: "block"`) and that `--settings` merges with project settings were written from Claude Code's hook conventions, not exercised against 2.1.328 with a model, because that needs a real session. Verify on the host: send a message to a busy Claude and check it appears after the next tool call; send one to an idle Claude and confirm that it is read only on the next prompt.
 
 ## Not implemented / open
 

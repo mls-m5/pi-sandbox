@@ -23,6 +23,7 @@ import {
   hasLegacyClaudeCredential,
   prepareClaudeProxy,
   claudeHostMcpConfig,
+  claudeNetworkSettings,
   readClaudeToken,
 } from './claude-code.js';
 import { schedulePrune } from './prune.js';
@@ -539,6 +540,9 @@ async function launchOnce(store, config, options) {
             0,
             '--mcp-config',
             claudeHostMcpConfig({ apt: Boolean(claudeHostRequests), net: networkOn }),
+            ...(networkOn && config.networkPush !== false
+              ? ['--settings', claudeNetworkSettings()]
+              : []),
           );
         let proxy,
           invocation,

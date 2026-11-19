@@ -43,6 +43,7 @@ export function containerfile(config, { piVersion = PI_VERSION, releaseLock } = 
     'claude-host-mcp.mjs',
     'network-client.mjs',
     'network-tools.mjs',
+    'claude-network-hook.mjs',
     'codex-auto.mjs',
     'update-probe.mjs',
     'probe-policy.json',
@@ -83,6 +84,10 @@ export function imagePlan(config, { piVersion = PI_VERSION, releaseLock, release
     ),
     'network-tools.mjs': fs.readFileSync(
       new URL('./runtime/network-tools.mjs', import.meta.url),
+      'utf8',
+    ),
+    'claude-network-hook.mjs': fs.readFileSync(
+      new URL('./runtime/claude-network-hook.mjs', import.meta.url),
       'utf8',
     ),
     'codex-auto.mjs': fs.readFileSync(new URL('./runtime/codex-auto.mjs', import.meta.url), 'utf8'),

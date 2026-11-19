@@ -302,7 +302,7 @@ test('actual installed candidate probe uses only local fake model/proposal servi
   const lib = path.join(root, 'probe-lib'); fs.mkdirSync(lib);
   writeJson(path.join(lib, 'package.json'), { type: 'module' });
   for (const file of ['proxy.js', 'codex-auth.js', 'codex-usage.js', 'util.js']) fs.copyFileSync(new URL(`../src/${file}`, import.meta.url), path.join(lib, file));
-  for (const file of ['request-apt.mjs', 'claude-host-mcp.mjs', 'network-client.mjs', 'network-tools.mjs', 'codex-auto.mjs']) fs.copyFileSync(new URL(`../src/runtime/${file}`, import.meta.url), path.join(root, file));
+  for (const file of ['request-apt.mjs', 'claude-host-mcp.mjs', 'network-client.mjs', 'network-tools.mjs', 'claude-network-hook.mjs', 'codex-auto.mjs']) fs.copyFileSync(new URL(`../src/runtime/${file}`, import.meta.url), path.join(root, file));
   const cli = path.join(pkg, typeof manifest.bin === 'string' ? manifest.bin : manifest.bin.pi);
   assert.deepEqual(await runUpdateProbe({ root, cli }), { ok: true, piVersion: PI_VERSION, extensions: sources });
 });

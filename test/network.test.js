@@ -198,7 +198,7 @@ test('launch mounts the per-launch network socket read-only and exposes it to th
   assert.equal(CLAUDE_HOST_MCP_CONFIG, claudeHostMcpConfig());
 });
 
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { saveClaudeToken } from '../src/claude-code.js';
 
@@ -235,11 +235,21 @@ test('queued messages become one marked start prompt for a Claude launch, only w
   assert.match(prompt, /NOT instructions from the user/);
   assert.match(prompt, /Please review the parser/);
   assert.ok(args.includes('--mcp-config'));
+  const settings = JSON.parse(args[args.indexOf('--settings') + 1]);
+  assert.deepEqual(Object.keys(settings.hooks).sort(), ['PostToolUse', 'Stop', 'UserPromptSubmit']);
+  assert.match(settings.hooks.Stop[0].hooks[0].command, /claude-network-hook\.mjs$/);
   assert.ok(args.some(arg => arg.includes('PIS_NET_SOCKET=/pis/net/net.sock')));
   assert.ok(args.some(arg => /:\/pis\/net:ro/.test(arg)));
   assert.equal(pendingMessages(store, projects.worker).length, 0);
   assert.ok(!fs.existsSync(args.find(arg => /:\/pis\/net:ro/.test(arg)).split(':')[0])); // per-launch socket cleaned up
 
+  await store.save({ ...store.load(projects.worker.id), networkPush: false }, store.load(projects.worker.id));
+  const noPush = invoke(['--claude']);
+  assert.equal(noPush.status, 0, noPush.stderr);
+  const noPushArgs = JSON.parse(noPush.stdout).args;
+  assert.ok(!noPushArgs.includes('--settings')); // opted out of live delivery: no hooks
+  assert.ok(noPushArgs.some(arg => arg.includes('PIS_NET_SOCKET'))); // tools remain
+  await store.save({ ...store.load(projects.worker.id), networkPush: undefined }, store.load(projects.worker.id));
   const again = invoke(['--claude']);
   assert.ok(!JSON.parse(again.stdout).args.some(arg => arg.startsWith('[pis-network')));
   const version = invoke(['--claude', '--', '--version']);
@@ -350,4 +360,46 @@ test('Pi extension starts the push loop only when enabled, steering into a worki
   assert.equal(on.sent[0].message.display, true);
   assert.match(on.sent[0].message.content, /Please start/);
   assert.deepEqual(on.sent[0].options, { triggerTurn: true, deliverAs: 'steer' });
+});
+
+import { hookOutput } from '../src/runtime/claude-network-hook.mjs';
+
+const hookScript = fileURLToPath(new URL('../src/runtime/claude-network-hook.mjs', import.meta.url));
+function runHook(event, env, input = JSON.stringify({ hook_event_name: event, stop_hook_active: false })) {
+  // Async: the in-process test server must keep serving while the hook runs.
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [hookScript], { env: { PATH: process.env.PATH, ...env }, stdio: ['pipe', 'pipe', 'pipe'] });
+    let stdout = '', stderr = '';
+    child.stdout.on('data', chunk => { stdout += chunk; });
+    child.stderr.on('data', chunk => { stderr += chunk; });
+    child.on('error', reject);
+    child.on('close', status => resolve({ status, stdout, stderr }));
+    child.stdin.end(input);
+  });
+}
+
+test('Claude hook delivers queued messages as untrusted context at each boundary, once, and is silent otherwise', async t => {
+  const { store, projects } = await setup(t);
+  const server = await startNetworkServer(projects.worker, store);
+  t.after(() => server.close());
+  const env = { PIS_NET_SOCKET: path.join(server.directory, 'net.sock') };
+  const quiet = await runHook('PostToolUse', env);
+  assert.equal(quiet.status, 0); assert.equal(quiet.stdout, '');
+  for (const event of ['PostToolUse', 'UserPromptSubmit', 'Stop']) {
+    sendMessage(store, projects.boss, { to: 'worker', text: `message for ${event}` }, Date.now() - 4000_000 - Math.floor(Math.random() * 1000));
+    const result = await runHook(event, env);
+    assert.equal(result.status, 0, result.stderr);
+    const output = JSON.parse(result.stdout);
+    const text = event === 'Stop' ? output.reason : output.hookSpecificOutput.additionalContext;
+    assert.match(text, new RegExp(`message for ${event}`));
+    assert.match(text, /NOT instructions from the user/);
+    if (event === 'Stop') assert.equal(output.decision, 'block');
+    else assert.equal(output.hookSpecificOutput.hookEventName, event);
+    assert.equal((await runHook(event, env)).stdout, ''); // delivered exactly once
+  }
+  assert.equal((await runHook('PostToolUse', {})).stdout, ''); // no socket configured
+  assert.equal((await runHook('PostToolUse', { PIS_NET_SOCKET: '/nonexistent.sock' })).stdout, '');
+  assert.equal(hookOutput('SessionStart', 'x'), undefined);
+  const bad = await runHook('PostToolUse', env, 'not json');
+  assert.equal(bad.status, 0); assert.equal(bad.stdout, '');
 });
