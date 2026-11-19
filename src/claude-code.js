@@ -70,6 +70,9 @@ function tokenPath(store) {
   return path.join(authDirectory(store), 'claude-oauth-token.json');
 }
 
+// Advisory only: setup-token tokens are normally about 108 characters (not a documented contract).
+export const CLAUDE_TOKEN_SUSPICIOUS_LENGTH = 90;
+
 export function validateClaudeToken(token) {
   assert(
     typeof token === 'string' && /^[\x21-\x7e]{20,4096}$/.test(token),
@@ -272,6 +275,16 @@ export async function loginClaude(
       maxBytes: 4096,
     })
   ).trim();
+  validateClaudeToken(token);
+  // A token cut at the end of a wrapped terminal line is accepted by the format check but then
+  // rejected by Anthropic with 401. Tokens printed by setup-token are normally ~100+ characters.
+  if (token.length < CLAUDE_TOKEN_SUSPICIOUS_LENGTH) {
+    output.write(
+      `\nThe pasted token is only ${token.length} characters, shorter than a normal setup-token (about 108). A token cut off at the end of a wrapped terminal line is rejected by Anthropic (401). Widen the terminal, run the command again and copy the whole token.\n`,
+    );
+    const answer = (await ask('Save this short token anyway? [y/N]: ')).toLowerCase();
+    assert(answer === 'y', 'Login cancelled; the saved Claude login was not changed.');
+  }
   await saveClaudeToken(store, token);
 }
 

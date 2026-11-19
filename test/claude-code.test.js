@@ -17,6 +17,7 @@ import {
 } from '../src/claude-code.js';
 
 const TOKEN = `sk-ant-oat01-${'x'.repeat(40)}`;
+const LONG_TOKEN = `sk-ant-oat01-${'z'.repeat(95)}`; // a normal-length setup-token
 
 function terminal() {
   const input = new PassThrough(), output = new PassThrough();
@@ -137,22 +138,22 @@ test('login runs isolated official setup-token, then saves the pasted token with
     assert.notEqual(options.cwd, root);
     assert.equal(options.cwd, options.env.CLAUDE_CONFIG_DIR);
     assert.ok(options.env.CLAUDE_CONFIG_DIR.startsWith(path.join(store.root, 'auth')));
-    setImmediate(() => tty.input.write(`${TOKEN}\r`));
+    setImmediate(() => tty.input.write(`${LONG_TOKEN}\r`));
     return 0;
   };
   const pending = loginClaude(store, { binary, execute, input: tty.input, output: tty.output });
   tty.input.write('\r');
   await pending;
   assert.deepEqual(calls.map(call => [call.program, call.args]), [[binary, ['setup-token']]]);
-  assert.equal(readClaudeToken(store), TOKEN);
-  assert.ok(!tty.text().includes(TOKEN));
+  assert.equal(readClaudeToken(store), LONG_TOKEN);
+  assert.ok(!tty.text().includes(LONG_TOKEN));
   assert.ok(!fs.readdirSync(path.join(store.root, 'auth')).some(name => name.startsWith('claude-login-')));
   // Failure of the official command keeps the previous login.
   const failing = terminal();
   const failed = loginClaude(store, { binary, execute: async () => 1, input: failing.input, output: failing.output });
   failing.input.write('y\r');
   await assert.rejects(failed, /setup-token failed/);
-  assert.equal(readClaudeToken(store), TOKEN);
+  assert.equal(readClaudeToken(store), LONG_TOKEN);
   // Skipping the command still requires a valid subscription token.
   const manual = terminal();
   const skipped = loginClaude(store, { binary, execute: async () => assert.fail('must not run'), input: manual.input, output: manual.output });
@@ -430,4 +431,27 @@ test('claude-check sends one token-count request and reports only status, reques
   assert.deepEqual(await checkClaudeToken(store, { upstream }), { status: 200, requestId: 'req_chk3', tokenKind: 'oat01', tokenLength: TOKEN.length });
   assert.equal(parse(['--claude-check']).action, 'claude-check');
   assert.throws(() => parse(['--project', 'abc12', '--claude-check']), /--project is not valid/);
+});
+
+test('login asks before saving a suspiciously short (possibly cut-off) token and keeps the old login when declined', async t => {
+  const { binary, store } = await fixture(t);
+  await saveClaudeToken(store, LONG_TOKEN);
+  const short = `sk-ant-oat01-${'s'.repeat(66)}`; // 79 characters, like a token cut at a wrapped line
+  assert.equal(short.length, 79);
+  const attempt = async answer => {
+    const tty = terminal();
+    const pending = loginClaude(store, { binary, execute: async () => { setImmediate(() => tty.input.write(`${short}\r`)); return 0; }, input: tty.input, output: tty.output });
+    tty.input.write('\r');
+    setTimeout(() => tty.input.write(`${answer}\r`), 80);
+    return { pending, tty };
+  };
+  const declined = await attempt('n');
+  await assert.rejects(declined.pending, /Login cancelled/);
+  assert.match(declined.tty.text(), /only 79 characters/);
+  assert.match(declined.tty.text(), /Widen the terminal/);
+  assert.ok(!declined.tty.text().includes(short));
+  assert.equal(readClaudeToken(store), LONG_TOKEN); // previous login untouched
+  const accepted = await attempt('y');
+  await accepted.pending;
+  assert.equal(readClaudeToken(store), short);
 });
