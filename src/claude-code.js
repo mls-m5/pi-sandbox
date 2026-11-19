@@ -283,9 +283,58 @@ export const CLAUDE_HOST_MCP_CONFIG = JSON.stringify({
   },
 });
 
-export function claudeCommand(args = []) {
-  // Unlike Pi, start a new session by default. Forward explicit -c/-r unchanged.
-  return ['claude', ...args];
+const CLAUDE_SESSION_OR_NONINTERACTIVE = new Set([
+  '-c',
+  '--continue',
+  '-r',
+  '--resume',
+  '--session-id',
+  '--from-pr',
+  '--fork-session',
+  '-p',
+  '--print',
+  '--help',
+  '-h',
+  '--version',
+  '-v',
+]);
+
+/**
+ * True when this project's Claude home already holds a session for the working
+ * directory. Claude stores them as <config>/projects/<cwd with non-alphanumerics -> '-'>/*.jsonl;
+ * if that layout differs we simply never add --continue (a new session), never fail.
+ */
+export function claudeHasSession(store, id, cwd) {
+  try {
+    const dir = path.join(
+      store.projectDir(id),
+      'claude-state',
+      '.claude',
+      'projects',
+      cwd.replace(/[^a-zA-Z0-9]/g, '-'),
+    );
+    return fs.readdirSync(dir).some((name) => name.endsWith('.jsonl'));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Like Pi, continue the latest session by default. Explicit session selection,
+ * print/management commands, --fresh and a project without a saved session start
+ * Claude exactly as given.
+ */
+export function claudeCommand(args = [], { fresh = false, hasSession = false } = {}) {
+  const explicit =
+    ['auth', 'doctor', 'mcp', 'install', 'update'].includes(args[0]) ||
+    args.some(
+      (arg) =>
+        CLAUDE_SESSION_OR_NONINTERACTIVE.has(arg) ||
+        arg.startsWith('--resume=') ||
+        arg.startsWith('--session-id=') ||
+        arg.startsWith('--print='),
+    );
+  return ['claude', ...(hasSession && !fresh && !explicit ? ['--continue'] : []), ...args];
 }
 
 function apiError(res, status, type, message, headers = {}) {

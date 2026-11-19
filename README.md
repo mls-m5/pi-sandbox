@@ -81,8 +81,9 @@ Install official Claude Code on the host, then:
 
 ```sh
 pis --login claude          # once per host: official setup-token, hidden paste
-pis --claude                # official Claude Code in the container (= --agent claude)
-pis --claude -- --continue  # resume explicitly (default is a new session)
+pis --claude                # official Claude Code in the container (= --agent claude); continues this directory's latest session when one exists
+pis --claude --fresh        # force a new session
+pis --claude -- --resume    # Claude's own session selector
 ```
 
 An interactive `pis --claude` without a saved login offers to log in first. Set `"agent": "claude"` via `pis --edit` for a persistent choice; Pi remains the default otherwise.

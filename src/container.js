@@ -17,6 +17,7 @@ import {
   CLAUDE_SANDBOX_BASE_URL,
   CLAUDE_SOCKET,
   claudeCommand,
+  claudeHasSession,
   claudeNeedsLogin,
   claudeState,
   hasLegacyClaudeCredential,
@@ -462,7 +463,14 @@ async function launchOnce(store, config, options) {
             : options.mode === 'exec'
               ? options.args
               : isClaude
-                ? claudeCommand(options.args)
+                ? claudeCommand(options.args, {
+                    fresh: options.fresh,
+                    hasSession: claudeHasSession(
+                      store,
+                      config.id,
+                      within(config.root, options.cwd) ? options.cwd : config.root,
+                    ),
+                  })
                 : piCommand(options.args, options.fresh);
         if (isClaude) {
           claudeState(store, config.id);

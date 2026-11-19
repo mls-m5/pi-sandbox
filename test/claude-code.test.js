@@ -11,7 +11,7 @@ import { completeConfig, defaults, validate } from '../src/config.js';
 import { parse } from '../src/cli.js';
 import { imagePlan, launchArgs, interactiveOutput, podmanEnvironment } from '../src/container.js';
 import {
-  CLAUDE_VERSION, claudeCommand, claudeNeedsLogin, claudeLoginEnvironment, claudeState, loginClaude,
+  CLAUDE_VERSION, claudeCommand, claudeHasSession, claudeNeedsLogin, claudeLoginEnvironment, claudeState, loginClaude,
   logoutClaudeToken, prepareClaudeProxy, readClaudeToken, removeLegacyClaudeCredentials, saveClaudeToken,
   startClaudeProxy, validateClaudeToken,
 } from '../src/claude-code.js';
@@ -73,6 +73,13 @@ test('Claude agent selection, --claude shorthand, image and placeholder-only lau
   assert.throws(() => parse(['--agent', 'other']), /--agent must/);
   assert.throws(() => parse(['--claude', '--login-claude']), /--agent is only/);
   assert.deepEqual(claudeCommand(['--continue']), ['claude', '--continue']);
+  const session = { hasSession: true };
+  assert.deepEqual(claudeCommand([], session), ['claude', '--continue']);
+  assert.deepEqual(claudeCommand(['hello'], session), ['claude', '--continue', 'hello']);
+  assert.deepEqual(claudeCommand([], { hasSession: false }), ['claude']);
+  assert.deepEqual(claudeCommand([], { ...session, fresh: true }), ['claude']);
+  for (const explicit of [['--continue'], ['-c'], ['--resume'], ['-r', 'abc'], ['--resume=abc'], ['--session-id', 'x'], ['-p', 'hi'], ['--print'], ['--version'], ['--help'], ['auth', 'status'], ['mcp', 'list']])
+    assert.deepEqual(claudeCommand(explicit, session), ['claude', ...explicit], explicit.join(' '));
   assert.equal(claudeNeedsLogin(['--version']), false);
   assert.equal(claudeNeedsLogin(['auth', 'status']), false);
   assert.equal(claudeNeedsLogin(['-p', 'hello']), true);
@@ -299,4 +306,17 @@ test('Claude environment selection never inherits API keys or alternative auth m
   process.env.ANTHROPIC_API_KEY = 'fake-key';
   try { assert.equal(podmanEnvironment(defaults('abc12', '/work/project')).ANTHROPIC_API_KEY, undefined); }
   finally { if (old === undefined) delete process.env.ANTHROPIC_API_KEY; else process.env.ANTHROPIC_API_KEY = old; }
+});
+
+test('Claude continues by default only when this project already has a session for the working directory', async t => {
+  const { store, config } = await fixture(t);
+  const cwd = config.root;
+  assert.equal(claudeHasSession(store, config.id, cwd), false);
+  const sessions = path.join(claudeState(store, config.id).config, 'projects');
+  const dir = path.join(sessions, cwd.replace(/[^a-zA-Z0-9]/g, '-'));
+  fs.mkdirSync(dir, { recursive: true });
+  assert.equal(claudeHasSession(store, config.id, cwd), false); // directory without a transcript
+  fs.writeFileSync(path.join(dir, 'abc.jsonl'), '{}\n');
+  assert.equal(claudeHasSession(store, config.id, cwd), true);
+  assert.equal(claudeHasSession(store, config.id, path.join(cwd, 'sub')), false);
 });
