@@ -25,6 +25,33 @@ const TOOLS = [
     },
     action: 'apt-packages',
   },
+  {
+    name: 'request_host_git',
+    description:
+      'Request ONE Git operation on the host, using host authentication only after the user approves it there. Claude Code stops for approval. Currently only args ["push", "REMOTE", "FULL_40_HEX_COMMIT:refs/heads/BRANCH"] are allowed: no shell, force, aliases or other commands. repo is relative to the registered project; use "." for its root. Commit changes inside the sandbox first and use the full commit hash. Submodules inside the project can be proposed individually using their relative path. After a successful push the session continues; do not claim success before the host reports it.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        repo: {
+          type: 'string',
+          description:
+            'Relative repository path in the project, usually ".". Ordinary .git directories only.',
+        },
+        args: {
+          type: 'array',
+          items: { type: 'string' },
+          minItems: 3,
+          maxItems: 3,
+          description:
+            'Git arguments without the git executable. Example: ["push", "origin", "FULL_COMMIT:refs/heads/main"]',
+        },
+        reason: { type: 'string', description: 'Why the push is needed' },
+      },
+      required: ['repo', 'args', 'reason'],
+      additionalProperties: false,
+    },
+    action: 'git-command',
+  },
 ];
 
 export function sendProposal(socketPath, data) {

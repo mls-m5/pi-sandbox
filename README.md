@@ -87,7 +87,7 @@ pis --claude -- --continue  # resume explicitly (default is a new session)
 
 An interactive `pis --claude` without a saved login offers to log in first. Set `"agent": "claude"` via `pis --edit` for a persistent choice; Pi remains the default otherwise.
 
-The subscription token stays on the host and is shared by all Claude projects. Containers get only Claude Code's fixed placeholder and a private Unix socket to a Claude-only host proxy that adds the token to Messages API calls. API keys (per-token billing) are refused. Processes in the container can use the socket while it runs but cannot read the token. Pi's proxy settings are ignored, not changed. In an interactive terminal Claude gets an image-owned MCP tool `request_apt_packages` (same host approval and restart flow as Pi; **new, unverified on a real host**); `request_host_git` is not yet available to Claude.
+The subscription token stays on the host and is shared by all Claude projects. Containers get only Claude Code's fixed placeholder and a private Unix socket to a Claude-only host proxy that adds the token to Messages API calls. API keys (per-token billing) are refused. Processes in the container can use the socket while it runs but cannot read the token. Pi's proxy settings are ignored, not changed. In an interactive terminal Claude gets the image-owned MCP tools `request_apt_packages` (verified on a real host) and `request_host_git` (same host approval and restart flow as Pi; **Git tool not yet verified on a real host**).
 
 Real `setup-token` login and real Claude Code use of the socket still need host verification; no live model calls have been made. See [Claude Code setup, security and testing limits](docs/claude-code.md).
 

@@ -29,7 +29,7 @@ test('MCP protocol: initialize, ping, tool list only with a socket, unknown meth
   assert.deepEqual(init.result.capabilities, { tools: {} });
   assert.deepEqual((await handle({ jsonrpc: '2.0', id: 2, method: 'ping' }, env)).result, {});
   const list = await handle({ jsonrpc: '2.0', id: 3, method: 'tools/list' }, env);
-  assert.deepEqual(list.result.tools.map(tool => tool.name), ['request_apt_packages']);
+  assert.deepEqual(list.result.tools.map(tool => tool.name), ['request_apt_packages', 'request_host_git']);
   assert.equal(list.result.tools[0].action, undefined);
   assert.deepEqual((await handle({ jsonrpc: '2.0', id: 4, method: 'tools/list' }, {})).result.tools, []);
   assert.equal((await handle({ jsonrpc: '2.0', id: 5, method: 'resources/list' }, env)).error.code, -32601);
@@ -49,6 +49,7 @@ test('tool call sends only the typed proposal to the real host socket and stops 
   assert.equal(requests.proposal, undefined);
   assert.equal((await callTool({ name: 'request_apt_packages', arguments: { packages: ['curl'], reason: 'r', approved: true } }, env, stop)).isError, true);
   assert.equal((await callTool({ name: 'request_host_git', arguments: {} }, env, stop)).isError, true);
+  assert.equal((await callTool({ name: 'request_shell', arguments: { command: 'id' } }, env, stop)).isError, true);
   assert.equal((await callTool({ name: 'request_apt_packages', arguments: ['curl'] }, env, stop)).isError, true);
   const ok = await callTool({ name: 'request_apt_packages', arguments: { packages: ['curl'], reason: 'task needs curl' } }, env, stop);
   assert.equal(ok.isError, false);
@@ -124,4 +125,33 @@ test('approved apt packages save against the stored config, so a per-launch --cl
   const saved = store.load(config.id);
   assert.deepEqual(saved.image.packages.slice(-1), ['jq']);
   assert.equal(saved.agent, 'pi');
+});
+
+test('Git tool sends only a typed push proposal; force, other commands and extra fields are refused by the host', async t => {
+  const { store, config } = await fixture(t);
+  const commit = 'a'.repeat(40);
+  const attempt = async args => {
+    const requests = await startAptRequestServer(config, store);
+    try {
+      let stops = 0;
+      const result = await callTool({ name: 'request_host_git', arguments: args }, { PIS_APT_SOCKET: path.join(requests.directory, 'request.sock') }, () => { stops++; });
+      return { result, stops, proposal: requests.proposal };
+    } finally { await requests.close(); }
+  };
+  for (const bad of [
+    { repo: '.', args: ['push', '--force', 'origin'], reason: 'x' },
+    { repo: '.', args: ['push', 'origin', `+${commit}:refs/heads/main`], reason: 'force' },
+    { repo: '.', args: ['push', 'origin', 'main'], reason: 'not an exact commit' },
+    { repo: '.', args: ['fetch', 'origin', `${commit}:refs/heads/main`], reason: 'other command' },
+    { repo: '.', args: ['push', 'origin', `${commit}:refs/heads/main`], reason: 'x', approved: true },
+  ]) {
+    const { result, stops, proposal } = await attempt(bad);
+    assert.equal(result.isError, true, JSON.stringify(bad));
+    assert.equal(stops, 0);
+    assert.equal(proposal, undefined);
+  }
+  const ok = await attempt({ repo: '.', args: ['push', 'origin', `${commit}:refs/heads/main`], reason: 'Publish reviewed work' });
+  assert.equal(ok.result.isError, false);
+  assert.equal(ok.stops, 1);
+  assert.deepEqual(ok.proposal, { type: 'git-push', repo: '.', remote: 'origin', commit, ref: 'refs/heads/main', reason: 'Publish reviewed work' });
 });
