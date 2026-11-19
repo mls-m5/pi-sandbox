@@ -9,17 +9,19 @@ test('GNOME display keeps two explicit slots across two-window, one-window and r
   const short = { used_percent: 25, reset_after_seconds: 3600, limit_window_seconds: 18000 };
   const weekly = { used_percent: 10, reset_after_seconds: 172800, limit_window_seconds: 604800 };
   const both = usageDisplay({ rate_limit: { primary_window: short, secondary_window: weekly } }, now, now);
-  assert.match(both.panel, /Short 75%.* \/ Week 90%/);
+  assert.equal(both.panel, '⬡ 75% 1h00 · 90% 2d00');
+  assert.equal(both.level, 75);
   const switched = usageDisplay({ rate_limit: { primary_window: null, secondary_window: weekly } }, now, now);
-  assert.match(switched.panel, /Primary — \/ Week 90%/);
+  assert.equal(switched.panel, '⬡ — · 90% 2d00');
   assert.match(switched.menu, /not reported for the selected account/);
   assert.doesNotMatch(switched.panel, /75%/);
+  assert.equal(switched.level, 90);
   assert.deepEqual(usageDisplay({ rate_limit: { primary_window: short, secondary_window: weekly } }, now, now), both);
   const reversed = usageDisplay({ rate_limit: { primary_window: weekly, secondary_window: null } }, now, now);
-  assert.match(reversed.panel, /Week 90%.* \/ Secondary —/);
+  assert.equal(reversed.panel, '⬡ 90% 2d00 · —');
   assert.equal(usageWindows({ rate_limit: { primary_window: weekly } }, now, now)[0].label, 'Weekly window');
   const invalid = usageDisplay({ rate_limit: { primary_window: { used_percent: 101 }, secondary_window: weekly } }, now, now);
-  assert.match(invalid.panel, /Primary —/);
+  assert.match(invalid.panel, /^⬡ — · /);
 });
 
 test('reported window duration overrides primary/secondary label guesses, without guessing from reset countdown', () => {
@@ -32,7 +34,7 @@ test('reported window duration overrides primary/secondary label guesses, withou
   assert.equal(windows[0].resetIn, '0d 1h');
   assert.equal(windows[1].label, 'Short window');
   assert.equal(windows[1].resetIn, '48h 0m');
-  assert.match(usageDisplay(data, now, now).panel, /Week 100%.*Short 0%/);
+  assert.equal(usageDisplay(data, now, now).panel, '⬡ 100% 0d01 · 0% 48h00');
 });
 
 test('GNOME reset countdown uses hours/minutes for short and days/hours for weekly windows', () => {
@@ -40,6 +42,8 @@ test('GNOME reset countdown uses hours/minutes for short and days/hours for week
   assert.equal(formatResetTime(now + (3 * 24 + 6) * 3600000, true, now), '3d 6h');
   assert.equal(formatResetTime(now + 1000, false, now), '0h 1m');
   assert.equal(formatResetTime(now + 1000, true, now), '0d 1h');
+  assert.equal(formatResetTime(now + 24 * 60000, false, now, true), '0h24');
+  assert.equal(formatResetTime(now + (6 * 24 + 3) * 3600000, true, now, true), '6d03');
   assert.equal(formatResetTime(now, false, now), 'now');
   assert.equal(formatResetTime(now - 1000, true, now), 'now');
   assert.equal(formatResetTime(null, false, now), 'unknown');

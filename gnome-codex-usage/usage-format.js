@@ -6,17 +6,20 @@ export function resetTimestamp(window, fetchedAt) {
   return null;
 }
 
-export function formatResetTime(resetAt, weekly, now = Date.now()) {
-  if (!Number.isFinite(resetAt)) return 'unknown';
+const pad = (value) => String(value).padStart(2, '0');
+
+// compact: '3h25' / '3d06' for the panel; default keeps the readable '3h 25m' / '3d 6h'.
+export function formatResetTime(resetAt, weekly, now = Date.now(), compact = false) {
+  if (!Number.isFinite(resetAt)) return compact ? '—' : 'unknown';
   const remaining = Math.max(0, resetAt - now);
   if (remaining === 0) return 'now';
   // Round up to the displayed unit rather than claiming reset prematurely.
   if (weekly) {
     const hours = Math.ceil(remaining / 3600000);
-    return `${Math.floor(hours / 24)}d ${hours % 24}h`;
+    return compact ? `${Math.floor(hours / 24)}d${pad(hours % 24)}` : `${Math.floor(hours / 24)}d ${hours % 24}h`;
   }
   const minutes = Math.ceil(remaining / 60000);
-  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+  return compact ? `${Math.floor(minutes / 60)}h${pad(minutes % 60)}` : `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
 
 export function usageWindows(data, fetchedAt, now = Date.now()) {
@@ -48,6 +51,7 @@ export function usageWindows(data, fetchedAt, now = Date.now()) {
         remaining: 100 - window.used_percent,
         resetAt,
         resetIn: formatResetTime(resetAt, weekly, now),
+        resetCompact: formatResetTime(resetAt, weekly, now, true),
       },
     ];
   });

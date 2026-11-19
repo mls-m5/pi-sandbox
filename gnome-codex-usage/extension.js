@@ -16,8 +16,17 @@ const UsageIndicator = GObject.registerClass(
   class UsageIndicator extends PanelMenu.Button {
     _init() {
       super._init(0.0, 'Codex Usage');
-      this._label = new St.Label({ text: 'Codex —', y_align: Clutter.ActorAlign.CENTER });
-      this.add_child(this._label);
+      this._codexPanel = '⬡ —';
+      this._claudePanel = '✻ —';
+      const box = new St.BoxLayout({ y_align: Clutter.ActorAlign.CENTER });
+      this._codexLabel = new St.Label({ y_align: Clutter.ActorAlign.CENTER });
+      this._separator = new St.Label({ text: ' │ ', y_align: Clutter.ActorAlign.CENTER });
+      this._claudeLabel = new St.Label({ y_align: Clutter.ActorAlign.CENTER });
+      box.add_child(this._codexLabel);
+      box.add_child(this._separator);
+      box.add_child(this._claudeLabel);
+      this.add_child(box);
+      this._paint();
       this._status = new PopupMenu.PopupMenuItem('Checking Codex usage…', { reactive: false });
       this.menu.addMenuItem(this._status);
       this._claudeStatus = new PopupMenu.PopupMenuItem('Claude: no data yet', { reactive: false });
@@ -38,9 +47,21 @@ const UsageIndicator = GObject.registerClass(
       this._refresh();
     }
 
-    _panelText() {
-      const parts = [this._codexPanel, this._claudePanel].filter(Boolean);
-      return parts.join(' | ');
+    // Each half is coloured by its own lowest remaining value: yellow < 25%, red < 10%.
+    _paint() {
+      for (const [label, text, level] of [
+        [this._codexLabel, this._codexPanel, this._codexLevel],
+        [this._claudeLabel, this._claudePanel, this._claudeLevel],
+      ]) {
+        label.set_text(text);
+        label.set_style(
+          Number.isFinite(level) && level < 10
+            ? 'color: #ff5555;'
+            : Number.isFinite(level) && level < 25
+              ? 'color: #f1c40f;'
+              : null,
+        );
+      }
     }
 
     _refresh() {
@@ -61,8 +82,9 @@ const UsageIndicator = GObject.registerClass(
           } catch (error) {
             if (this._destroyed) return;
             this._data = null;
-            this._codexPanel = 'Codex —';
-            this._label.set_text(this._panelText());
+            this._codexPanel = '⬡ —';
+            this._codexLevel = null;
+            this._paint();
             this._status.label.set_text(`Unavailable: ${error.message}`);
           } finally {
             this._process = null;
@@ -71,8 +93,9 @@ const UsageIndicator = GObject.registerClass(
       } catch (error) {
         this._process = null;
         this._data = null;
-        this._codexPanel = 'Codex —';
-        this._label.set_text(this._panelText());
+        this._codexPanel = '⬡ —';
+            this._codexLevel = null;
+        this._paint();
         this._status.label.set_text(`Unavailable: ${error.message}`);
       }
     }
@@ -89,7 +112,8 @@ const UsageIndicator = GObject.registerClass(
     _renderUsage() {
       const display = usageDisplay(this._data, this._fetchedAt);
       this._codexPanel = display.panel;
-      this._label.set_text(this._panelText());
+      this._codexLevel = display.level;
+      this._paint();
       this._status.label.set_text(display.menu);
     }
 
@@ -114,8 +138,9 @@ const UsageIndicator = GObject.registerClass(
           } catch (error) {
             if (this._destroyed) return;
             this._claudeData = null;
-            this._claudePanel = 'Claude —';
-            this._label.set_text(this._panelText());
+            this._claudePanel = '✻ —';
+            this._claudeLevel = null;
+            this._paint();
             this._claudeStatus.label.set_text(`Claude unavailable: ${error.message}`);
           } finally {
             this._claudeProcess = null;
@@ -124,7 +149,8 @@ const UsageIndicator = GObject.registerClass(
       } catch (error) {
         this._claudeProcess = null;
         this._claudeData = null;
-        this._claudePanel = 'Claude —';
+        this._claudePanel = '✻ —';
+            this._claudeLevel = null;
         this._claudeStatus.label.set_text(`Claude unavailable: ${error.message}`);
       }
     }
@@ -132,7 +158,8 @@ const UsageIndicator = GObject.registerClass(
     _renderClaude() {
       const display = claudeDisplay(this._claudeData, this._claudeFetchedAt);
       this._claudePanel = display.panel;
-      this._label.set_text(this._panelText());
+      this._claudeLevel = display.level;
+      this._paint();
       this._claudeStatus.label.set_text(display.menu);
     }
 

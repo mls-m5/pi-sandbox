@@ -56,10 +56,15 @@ test('GNOME Claude display shows both windows with staleness and explicit unknow
     secondary_window: { used_percent: 40, reset_at: reset7, limit_window_seconds: 604800, updated_at: now / 1000 - 600 },
   } };
   const both = claudeDisplay(data, now, now);
-  assert.match(both.panel, /^Claude 5h 80% \(1h 0m\) \/ Week 60% \(3d 0h\)$/);
+  assert.equal(both.panel, '✻ 80% 1h00 · 60% 3d00');
+  assert.equal(both.level, 60);
+  assert.match(both.menu, /resets in 1h 0m/);
+  const old = claudeDisplay({ rate_limit: { primary_window: { ...data.rate_limit.primary_window, updated_at: now / 1000 - 7200 }, secondary_window: data.rate_limit.secondary_window } }, now, now);
+  assert.equal(old.panel, '✻ ~80% 1h00 · 60% 3d00');
   assert.match(both.menu, /seen 10m ago/);
   const none = claudeDisplay({ rate_limit: {} }, now, now);
-  assert.equal(none.panel, 'Claude 5h — / Week —');
+  assert.equal(none.panel, '✻ — · —');
+  assert.equal(none.level, null);
 });
 
 test('proxy records usage from forwarded responses without altering them, and survives a failing hook', async t => {
