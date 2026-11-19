@@ -36,7 +36,8 @@ export const NETWORK_TOOLS = [
   {
     name: 'list_peers',
     op: 'peers',
-    description: 'List the other agents (projects) in your message network.',
+    description:
+      'Show your own project identity and list the other agents in your message network.',
     properties: {},
     required: [],
   },
@@ -76,13 +77,17 @@ export async function runNetworkTool(name, args, socketPath) {
     return { text: 'Message network is unavailable.', isError: true };
   }
   if (!result?.ok) return { text: `Not sent: ${result?.error || 'request failed'}`, isError: true };
-  if (tool.op === 'peers')
-    return {
-      text: result.peers.length
-        ? result.peers.map((p) => `${p.name} (id ${p.id}, ${p.agent})`).join('\n')
-        : 'No other agents are in your network.',
-      isError: false,
-    };
+  if (tool.op === 'peers') {
+    const address = (p) =>
+      `${p.name} (id ${p.id}, ${p.agent})${p.folder ? `, folder ${JSON.stringify(p.folder)}` : ''}`;
+    const lines = [];
+    if (result.self) lines.push(`You are ${address(result.self)} in network ${result.network}.`);
+    if (result.peers.length) {
+      lines.push('Other projects (address by name or id, not folder):');
+      lines.push(...result.peers.map(address));
+    } else lines.push('No other agents are in your network.');
+    return { text: lines.join('\n'), isError: false };
+  }
   if (tool.op === 'send')
     return {
       text: `Queued for ${result.sent.to}; replies go to ${result.sent.reply_to}. Do not send more until you get an answer.`,

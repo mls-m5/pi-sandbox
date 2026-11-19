@@ -18,7 +18,7 @@ Offered to Pi (extension `network-tools.mjs`) and Claude Code (MCP server `pis-h
 
 - `send_message(to, text, reply_to?)` — one short message; `reply_to` names who should get the answer (default: sender).
 - `receive_messages(wait_seconds?)` — up to 10 queued messages, oldest first; may wait up to 60 s.
-- `list_peers()`.
+- `list_peers()` — shows **your own** registered project name and ID first, then other projects on the same network. It also shows the folder basename as a hint, never the full host path. Address messages by registered name or project ID, not the folder hint. You can set a project name with `pis --edit`.
 
 Tool descriptions and errors tell the agent not to chat, acknowledge or send follow-ups.
 
