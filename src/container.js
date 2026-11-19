@@ -32,6 +32,7 @@ import {
   formatMessages,
   formatWakeNotice,
   markDelivered,
+  networkEvent,
   pendingMessages,
   startNetworkServer,
   startWakeWatcher,
@@ -547,9 +548,10 @@ async function launchOnce(store, config, options) {
             0,
             '--mcp-config',
             claudeHostMcpConfig({ apt: Boolean(claudeHostRequests), net: networkOn }),
-            ...(networkOn && config.networkPush !== false
-              ? ['--settings', claudeNetworkSettings()]
-              : []),
+            // Always followed by a flag: --mcp-config takes several values and would otherwise
+            // swallow a positional prompt that comes next.
+            '--settings',
+            networkOn && config.networkPush !== false ? claudeNetworkSettings() : '{}',
           );
         let proxy,
           invocation,
@@ -630,6 +632,7 @@ async function launchOnce(store, config, options) {
           )
             wake = startWakeWatcher({
               server: messageNetwork,
+              onFire: () => networkEvent(store, config, 'wake: idle with queued messages, stopping'),
               ...(options.wakeTiming || {}), // test-only knob; not reachable from the CLI
               hasMessages: () => pendingMessages(store, config, 1).length > 0,
               stopContainer: () =>
@@ -689,6 +692,7 @@ async function launchOnce(store, config, options) {
             console.error(
               `pis: network ${config.network}: Claude was idle with ${claimed.length} queued message${claimed.length === 1 ? '' : 's'}; restarting it with --continue so it reads them.`,
             );
+            networkEvent(store, config, `wake: restarting with ${claimed.length}`);
             return { type: RESTART, packages: [], notice: formatWakeNotice(config, claimed) };
           }
         }

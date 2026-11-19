@@ -247,7 +247,8 @@ test('queued messages become one marked start prompt for a Claude launch, only w
   const noPush = invoke(['--claude']);
   assert.equal(noPush.status, 0, noPush.stderr);
   const noPushArgs = JSON.parse(noPush.stdout).args;
-  assert.ok(!noPushArgs.includes('--settings')); // opted out of live delivery: no hooks
+  assert.deepEqual(JSON.parse(noPushArgs[noPushArgs.indexOf('--settings') + 1]), {}); // opted out of live delivery: no hooks
+  assert.ok(noPushArgs[noPushArgs.indexOf('--mcp-config') + 2].startsWith('--')); // a flag always follows the variadic --mcp-config
   assert.ok(noPushArgs.some(arg => arg.includes('PIS_NET_SOCKET'))); // tools remain
   await store.save({ ...store.load(projects.worker.id), networkPush: undefined }, store.load(projects.worker.id));
   const again = invoke(['--claude']);
@@ -540,4 +541,26 @@ test('messages keep working when other project files contain fields this pis ver
   assert.deepEqual(listPeers(store, projects.boss).map(p => p.name), ['worker']);
   fs.writeFileSync(store.configPath(projects.worker.id), '{broken');
   assert.deepEqual(listPeers(store, projects.boss), []);
+});
+
+test('PIS_NET_DEBUG writes content-free events for state, receive, send and wake; off by default', async t => {
+  const { store, projects } = await setup(t);
+  const log = path.join(store.root, 'networks', 'team-a', 'events.log');
+  const server = await startNetworkServer(projects.worker, store);
+  const boss = await startNetworkServer(projects.boss, store);
+  t.after(() => Promise.all([server.close(), boss.close()]));
+  const socket = path.join(server.directory, 'net.sock');
+  await request(socket, { op: 'state', state: 'idle' });
+  assert.equal(fs.existsSync(log), false);
+  process.env.PIS_NET_DEBUG = '1';
+  t.after(() => { delete process.env.PIS_NET_DEBUG; });
+  await request(socket, { op: 'state', state: 'idle' });
+  await request(path.join(boss.directory, 'net.sock'), { op: 'send', to: 'worker', text: 'SECRET body text' });
+  await request(socket, { op: 'receive' });
+  const text = fs.readFileSync(log, 'utf8');
+  assert.match(text, / worker state idle\n/);
+  assert.match(text, / boss send to worker\n/);
+  assert.match(text, / worker receive 1\n/);
+  assert.doesNotMatch(text, /SECRET/);
+  assert.equal(fs.statSync(log).mode & 0o777, 0o600);
 });

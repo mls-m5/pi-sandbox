@@ -37,6 +37,21 @@ function sub(store, network, ...parts) {
 
 const label = (project) => project.name || project.id;
 
+/**
+ * Optional diagnostics (host env PIS_NET_DEBUG=1): one line per event, never message text, in
+ * $PIS_HOME/networks/<network>/events.log, truncated when it grows past 256 KiB.
+ */
+export function networkEvent(store, config, event) {
+  if (process.env.PIS_NET_DEBUG !== '1' || !config.network) return;
+  try {
+    const file = path.join(networkDirectory(store, config.network), 'events.log');
+    if (fs.existsSync(file) && fs.statSync(file).size > 256 * 1024) fs.rmSync(file);
+    fs.appendFileSync(file, `${new Date().toISOString()} ${label(config)} ${event}\n`, { mode: 0o600 });
+  } catch {
+    // Diagnostics must never affect messaging.
+  }
+}
+
 // Peer lookup reads only the few fields it needs and ignores everything else. It deliberately
 // does NOT use the strict project validator: a pis process started before an upgrade rejects
 // newer (or any unrelated broken) project files, which must not stop messages between agents.
@@ -232,6 +247,7 @@ export async function handleRequest(store, config, request, context = {}) {
     // Idle/busy reports from the image-owned Claude hook; only recorded for the wake watcher.
     assert(['idle', 'busy'].includes(request.state), 'Invalid state.');
     context.setState?.(request.state);
+    networkEvent(store, config, `state ${request.state}`);
     return {};
   }
   if (request.op === 'peers')
@@ -243,7 +259,9 @@ export async function handleRequest(store, config, request, context = {}) {
   if (request.op === 'send') {
     if (Object.keys(request).some((key) => !['op', 'to', 'text', 'reply_to'].includes(key)))
       throw new Error('Unexpected field.');
-    return { sent: sendMessage(store, config, request) };
+    const sent = sendMessage(store, config, request);
+    networkEvent(store, config, `send to ${sent.to}`);
+    return { sent };
   }
   if (request.op === 'receive') {
     const wait = Math.min(
@@ -256,6 +274,7 @@ export async function handleRequest(store, config, request, context = {}) {
       await sleep(500);
       messages = receiveMessages(store, config);
     }
+    if (messages.length) networkEvent(store, config, `receive ${messages.length}`);
     return {
       count: messages.length,
       text: messages.length
@@ -343,6 +362,7 @@ export function startWakeWatcher({
   server,
   hasMessages,
   stopContainer,
+  onFire,
   idleMs = WAKE_IDLE_MS,
   intervalMs = 5000,
   now = Date.now,
@@ -352,6 +372,7 @@ export function startWakeWatcher({
     if (fired || server.idleSince === null || now() - server.idleSince < idleMs) return false;
     if (!hasMessages()) return false;
     fired = true;
+    onFire?.();
     await stopContainer();
     return true;
   };

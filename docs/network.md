@@ -44,6 +44,8 @@ Hooks cannot run while Claude sits idle at its prompt. The `Stop` hook therefore
 
 **Trade-off:** pis cannot see whether you are typing in the Claude window. A wake kills the session mid-input and discards any unsent text. Set `"networkWake": false` to disable it, or `"networkPush": false` to disable hooks (and therefore wake) altogether. Not applied to print mode, Pi (an idle Pi gets a new turn via push instead) or web RPC. Idle is only a hint and is never treated as "finished".
 
+**Diagnosing:** start the agent from a host shell with `PIS_NET_DEBUG=1 pis --claude`; the host then writes one content-free line per event (`state idle|busy`, `send to X`, `receive N`, `wake: …`) to `$PIS_HOME/networks/<network>/events.log`. No `state idle` after Claude finished a turn means its `Stop` hook did not run (check that the agent was started after the hook release, that `networkPush` is not false, and with `claude --debug=hooks` inside the container); `state idle` without a following `wake:` line means no message was queued or the minute had not passed.
+
 **Not verified:** the hook JSON shapes (`additionalContext`, `decision: "block"`) and that `--settings` merges with project settings were written from Claude Code's hook conventions, not exercised against 2.1.328 with a model, because that needs a real session. Verify on the host: send a message to a busy Claude and check it appears after the next tool call; send one to an idle Claude and confirm that it is read only on the next prompt.
 
 ## Not implemented / open
