@@ -450,6 +450,7 @@ export async function startClaudeProxy({
   maxBodyBytes = 32 * 1024 * 1024,
   idleTimeoutMs = 600_000,
   onResponseHeaders,
+  onEvent,
 }) {
   validateClaudeToken(token);
   const origin = new URL(upstream || CLAUDE_UPSTREAM);
@@ -471,13 +472,12 @@ export async function startClaudeProxy({
 
   async function handle(req, res) {
     if (req.method !== 'POST' || !ROUTE.test(req.url)) {
-      if (refused.size < 32)
-        refused.add(
-          `${req.method} ${req.url
-            .split('?')[0]
-            .replace(/[^A-Za-z0-9/_.-]/g, '_')
-            .slice(0, 80)}`,
-        );
+      const route = `${req.method} ${req.url
+        .split('?')[0]
+        .replace(/[^A-Za-z0-9/_.-]/g, '_')
+        .slice(0, 80)}`;
+      onEvent?.(`refused ${route} (not a model route; answered 404 locally)`);
+      if (refused.size < 32) refused.add(route);
       return apiError(res, 404, 'not_found_error', 'Only Claude model calls are forwarded.');
     }
     if (!/^application\/json(?:\s*;|$)/i.test(req.headers['content-type'] || ''))
@@ -547,6 +547,34 @@ export async function startClaudeProxy({
           upstreamResponse.destroy();
           return apiError(res, 502, 'api_error', 'Unsupported upstream content encoding.');
         }
+        if (onEvent) {
+          // Diagnostics only: status, request id and, for errors, Anthropic's error type/message.
+          const route = req.url.split('?')[0].replace(/[^A-Za-z0-9/_.-]/g, '_').slice(0, 80);
+          const requestId = String(upstreamResponse.headers['request-id'] || '-').replace(
+            /[^A-Za-z0-9_-]/g,
+            '',
+          );
+          const line = `POST ${route} -> ${status} request-id=${requestId}`;
+          if (status < 400) onEvent(line);
+          else {
+            let body = '';
+            upstreamResponse.on('data', (chunk) => {
+              if (body.length < 2048) body += chunk.toString('utf8');
+            });
+            upstreamResponse.on('end', () => {
+              let detail = '';
+              try {
+                const error = JSON.parse(body).error;
+                detail = ` error=${String(error.type)}: ${String(error.message)}`;
+              } catch {
+                detail = ' error=(unparsed body)';
+              }
+              onEvent(
+                `${line}${detail.split(token).join('[REDACTED]').replace(/[^\x20-\x7e]/g, '?').slice(0, 260)}`,
+              );
+            });
+          }
+        }
         try {
           onResponseHeaders?.(upstreamResponse.headers);
         } catch {
@@ -609,10 +637,36 @@ export async function startClaudeProxy({
   };
 }
 
+/**
+ * Diagnostic log: one line per event, no headers, bodies, prompts or tokens. It records the token
+ * KIND (e.g. oat01) and how long ago the host login file was saved, which tells an expired or
+ * replaced token from a proxy problem.
+ */
+export function claudeProxyLogger(store, token) {
+  const file = path.join(store.root, 'claude-proxy.log');
+  const write = (line) => {
+    try {
+      if (fs.existsSync(file) && fs.statSync(file).size > 256 * 1024) fs.rmSync(file);
+      fs.appendFileSync(file, `${new Date().toISOString()} ${line}\n`, { mode: 0o600 });
+    } catch {
+      // Diagnostics must never affect model traffic.
+    }
+  };
+  let saved = 'unknown';
+  try {
+    saved = `${Math.floor((Date.now() - fs.statSync(tokenPath(store)).mtimeMs) / 86400000)} day(s) ago`;
+  } catch {}
+  write(`proxy started: token kind=${token.match(/^sk-ant-(oat\d+)-/)?.[1] || 'unknown'}, login file saved ${saved}`);
+  return write;
+}
+
 /** Starts a per-launch Claude proxy in a private short runtime directory. */
 export async function prepareClaudeProxy(store, { upstream } = {}) {
   const token = readClaudeToken(store);
   assert(token, 'No Claude login saved. Run pis --login claude on the host.');
+  // PIS_CLAUDE_PROXY_DEBUG=1: content-free proxy events in $PIS_HOME/claude-proxy.log.
+  const onEvent =
+    process.env.PIS_CLAUDE_PROXY_DEBUG === '1' ? claudeProxyLogger(store, token) : undefined;
   // Fixed short parent avoids AF_UNIX path-length limits.
   const directory = fs.mkdtempSync('/tmp/pis-claude-');
   fs.chmodSync(directory, 0o700);
@@ -622,6 +676,7 @@ export async function prepareClaudeProxy(store, { upstream } = {}) {
       token,
       upstream,
       onResponseHeaders: (headers) => recordClaudeUsage(store, headers),
+      onEvent,
     });
     return {
       provider: 'claude',
@@ -630,6 +685,7 @@ export async function prepareClaudeProxy(store, { upstream } = {}) {
       requests: proxy.requests,
       async close() {
         try {
+          onEvent?.(`proxy closed after ${proxy.requests()} forwarded request(s)`);
           await proxy.close();
         } finally {
           fs.rmSync(directory, { recursive: true, force: true });

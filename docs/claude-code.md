@@ -48,6 +48,14 @@ The per-project `claude-state/` home (mounted at `/pis/home`, `CLAUDE_CONFIG_DIR
 - The proxy is Claude-only: it is started only for `agent: claude`, and launch arguments refuse to give it to Pi. Pi's `credentials.proxy` settings are kept unchanged for switching back and are never started in Claude mode. Anthropic's terms do not allow subscription OAuth to be used by other clients; this mode only routes the official Claude Code client's own calls.
 - Claude Code still has normal container networking for git, package managers and web tools. Only model authentication goes through the host.
 
+### Diagnosing 401 / "Please run /login"
+
+Start with `PIS_CLAUDE_PROXY_DEBUG=1 pis --claude` and read `$PIS_HOME/claude-proxy.log` (private, content-free, truncated above 256 KiB). It records when the proxy started with the token **kind** (e.g. `oat01`) and how long ago the host login file was saved, then one line per call (`POST /v1/messages -> 401 request-id=req_… error=authentication_error: …`), refused non-model routes, and the number of forwarded requests at exit. No headers, bodies, prompts or tokens are written. How to read it:
+
+- **`-> 401 … authentication_error` from upstream:** the host token itself is rejected by Anthropic (expired, revoked, logged out everywhere, wrong account). Run `pis --login claude` again. The login file age tells how old it is; a login file saved before the token was replaced elsewhere is stale.
+- **No 401 lines, or "proxy closed after 0 forwarded request(s)", but Claude shows 401:** the failing call did not go through the proxy. Container networking is open, so a request to another Anthropic endpoint (profile, usage, token refresh) can reach Anthropic directly with the fixed placeholder and get 401. Look for `refused …` lines naming such routes.
+- **200 lines but a 401 only in the Claude UI:** a stale `.credentials.json` in the sandbox (removed automatically at start when a host login exists, see below).
+
 ### Migration from the earlier per-project login
 
 Earlier versions (and a `/login` run inside the container) can leave real access/refresh tokens in `projects/<id>/claude-state/.claude/.credentials.json` (and a host snapshot `auth/claude-<id>.json`). Such a stale login can override the proxy placeholder and fail with `401 OAuth access token is invalid · Please run /login`. **Starting `pis --claude` now removes these old copies automatically when a host login is saved**, printing one line; sessions, settings, history and the global host token are untouched, and the removed tokens are not revoked at Anthropic. If no host login is saved the old copy is kept (it may be your only working login) with a warning; run `pis --login claude` and it is removed at the next start. Do not run `/login` inside the container: it stores real tokens in the sandbox again (they will be removed at the next start). `pis --logout-claude` still removes the saved global token as well and is not needed for this cleanup.

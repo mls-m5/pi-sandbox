@@ -11,7 +11,7 @@ import { completeConfig, defaults, validate } from '../src/config.js';
 import { parse } from '../src/cli.js';
 import { imagePlan, launchArgs, interactiveOutput, podmanEnvironment } from '../src/container.js';
 import {
-  CLAUDE_VERSION, claudeCommand, claudeHasSession, claudeNeedsLogin, claudeLoginEnvironment, claudeState, loginClaude,
+  CLAUDE_VERSION, claudeProxyLogger, claudeCommand, claudeHasSession, claudeNeedsLogin, claudeLoginEnvironment, claudeState, loginClaude,
   logoutClaudeToken, prepareClaudeProxy, readClaudeToken, removeLegacyClaudeCredentials, saveClaudeToken,
   startClaudeProxy, validateClaudeToken,
 } from '../src/claude-code.js';
@@ -358,4 +358,48 @@ test('launch removes a stale per-project Claude login only when a host login exi
 
   const quiet = invoke(['--claude', '--', '-p', 'x']);
   assert.doesNotMatch(quiet.stderr, /removed an old per-project/); // nothing left to remove
+});
+
+test('proxy diagnostics log status, request id and Anthropic error type without tokens, bodies or prompts', async t => {
+  const { base, store } = await fixture(t);
+  const { upstream } = await fakeAnthropic(t, (req, res, body) => {
+    if (body.includes('badtoken')) {
+      res.writeHead(401, { 'content-type': 'application/json', 'request-id': 'req_401abc' });
+      return res.end(JSON.stringify({ type: 'error', error: { type: 'authentication_error', message: `OAuth access token is invalid ${TOKEN}` } }));
+    }
+    res.writeHead(200, { 'content-type': 'application/json', 'request-id': 'req_ok1' });
+    res.end('{"ok":true,"secret_prompt_echo":"private"}');
+  });
+  const events = [];
+  const socketPath = path.join(base, 'diag.sock');
+  const proxy = await startClaudeProxy({ socketPath, token: TOKEN, upstream, onEvent: line => events.push(line) });
+  t.after(() => proxy.close());
+  assert.equal((await unixRequest(socketPath, { body: '{"prompt":"my private prompt"}' })).status, 200);
+  assert.equal((await unixRequest(socketPath, { body: '{"badtoken":true}' })).status, 401);
+  assert.equal((await unixRequest(socketPath, { method: 'GET', url: '/api/oauth/profile?x=secret' })).status, 404);
+  await new Promise(resolve => setTimeout(resolve, 50));
+  const text = events.join('\n');
+  assert.match(text, /POST \/v1\/messages -> 200 request-id=req_ok1/);
+  assert.match(text, /POST \/v1\/messages -> 401 request-id=req_401abc error=authentication_error: OAuth access token is invalid \[REDACTED\]/);
+  assert.match(text, /refused GET \/api\/oauth\/profile \(not a model route/);
+  for (const secret of [TOKEN, 'my private prompt', 'secret_prompt_echo', 'x=secret']) assert.ok(!text.includes(secret), secret);
+});
+
+test('PIS_CLAUDE_PROXY_DEBUG writes a private log with token kind and login age, and is off by default', async t => {
+  const { store } = await fixture(t);
+  await saveClaudeToken(store, TOKEN);
+  const log = path.join(store.root, 'claude-proxy.log');
+  const quiet = await prepareClaudeProxy(store);
+  await quiet.close();
+  assert.equal(fs.existsSync(log), false);
+  process.env.PIS_CLAUDE_PROXY_DEBUG = '1';
+  t.after(() => { delete process.env.PIS_CLAUDE_PROXY_DEBUG; });
+  const proxy = await prepareClaudeProxy(store);
+  await proxy.close();
+  const text = fs.readFileSync(log, 'utf8');
+  assert.match(text, /proxy started: token kind=oat01, login file saved 0 day\(s\) ago/);
+  assert.match(text, /proxy closed after 0 forwarded request\(s\)/);
+  assert.ok(!text.includes(TOKEN));
+  assert.equal(fs.statSync(log).mode & 0o777, 0o600);
+  assert.equal(typeof claudeProxyLogger, 'function');
 });
