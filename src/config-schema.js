@@ -8,6 +8,8 @@ export const HINTS = {
     'Pi install sources baked into the image, e.g. npm:pi-web-access@0.40.0. Use [] to disable defaults. Changes rebuild the image; no source paths or -e flags are needed.',
   updates:
     'Opt in once with pis --updates on (or all to include exact npm pins). Only tested Pi patch/npm image updates activate on later launches. Off freezes the current managed release; rollback disables automatic updates.',
+  network:
+    'Optional message network: give projects the same name (see examples.network) so their running agents can exchange short messages via the host. Delete the field for no messaging. See docs/network.md.',
   image:
     'packages are apt names; extraInstructions are trusted single-line RUN instructions. Never put credentials here.',
   mounts:
@@ -35,7 +37,7 @@ export const PROJECT_SCHEMA = {
       type: 'string',
       pattern: '^[a-z0-9][a-z0-9-]{0,31}$',
       description:
-        'Optional message network. Projects with the same network name can exchange short messages through the host (send_message/receive_messages/list_peers). Omit for no messaging.',
+        'Optional message network. Projects with the same network name can exchange short messages through the host (send_message/receive_messages/list_peers). Omit for no messaging. Example: "team-a".',
     },
     id: {
       type: 'string',

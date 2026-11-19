@@ -230,9 +230,14 @@ export function validate(config, { storage, home = os.homedir(), identity, paths
   if (config.examples !== undefined) {
     object(
       config.examples,
-      ['mounts', 'extraInstructions', 'credentials', 'extensions'],
+      ['mounts', 'extraInstructions', 'credentials', 'extensions', 'network'],
       'examples',
     );
+    if (config.examples.network !== undefined)
+      assert(
+        typeof config.examples.network === 'string' && NETWORK_PATTERN.test(config.examples.network),
+        'examples.network must be a valid network name.',
+      );
     if (config.examples.extensions !== undefined) extensionManifest(config.examples.extensions);
     if (config.examples.credentials !== undefined) {
       object(
@@ -297,6 +302,7 @@ export function completeConfig(input) {
     ],
     extraInstructions: ['RUN npm install -g typescript'],
     extensions: ['npm:@beyona/pi-zai-usage@1.1.0'],
+    network: 'team-a',
     credentials: {},
   });
   fill(config.examples?.credentials, {

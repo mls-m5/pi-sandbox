@@ -29,6 +29,9 @@ test('network is validated, optional and shown in the editor schema', async t =>
   const { projects } = await setup(t);
   assert.equal(projects.boss.network, 'team-a');
   assert.equal(projects.loner.network, undefined);
+  assert.equal(projects.loner.examples.network, 'team-a'); // inert example in every config
+  assert.match(projects.loner.hints.network, /Optional message network/);
+  assert.throws(() => validate({ ...projects.boss, examples: { ...projects.boss.examples, network: 'Bad Name' } }, { paths: false }), /examples.network/);
   for (const bad of ['Team', 'a b', '', '-x', 'x'.repeat(33), 5])
     assert.throws(() => validate({ ...projects.boss, network: bad }, { paths: false }), /network must be/);
 });
