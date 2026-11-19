@@ -50,7 +50,7 @@ The per-project `claude-state/` home (mounted at `/pis/home`, `CLAUDE_CONFIG_DIR
 
 ### Migration from the earlier per-project login
 
-Earlier versions copied real access/refresh tokens into `projects/<id>/claude-state/.claude/.credentials.json`. Launches warn if that file still exists. Run `pis --logout-claude` in the project to remove the saved global token **and** that project's old copies (sessions are kept), then `pis --login claude` again. Old copies are not revoked at Anthropic.
+Earlier versions (and a `/login` run inside the container) can leave real access/refresh tokens in `projects/<id>/claude-state/.claude/.credentials.json` (and a host snapshot `auth/claude-<id>.json`). Such a stale login can override the proxy placeholder and fail with `401 OAuth access token is invalid · Please run /login`. **Starting `pis --claude` now removes these old copies automatically when a host login is saved**, printing one line; sessions, settings, history and the global host token are untouched, and the removed tokens are not revoked at Anthropic. If no host login is saved the old copy is kept (it may be your only working login) with a warning; run `pis --login claude` and it is removed at the next start. Do not run `/login` inside the container: it stores real tokens in the sandbox again (they will be removed at the next start). `pis --logout-claude` still removes the saved global token as well and is not needed for this cleanup.
 
 ## Host apt and Git requests from Claude (experimental)
 

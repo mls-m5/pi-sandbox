@@ -146,14 +146,25 @@ export async function logoutClaudeToken(store) {
 }
 
 /** Removes real-token copies left by the earlier per-project login design. */
+// Removes only the old per-project login copies (sandbox .credentials.json and the host snapshot);
+// sessions, settings and the global token are untouched. The caller must hold the project lock.
+export function purgeLegacyClaudeCredentials(store, id) {
+  const state = claudeState(store, id);
+  const removed = [state.legacyCredential, path.join(authDirectory(store), `claude-${id}.json`)]
+    .filter((file) => {
+      try {
+        fs.lstatSync(file);
+        return true;
+      } catch {
+        return false;
+      }
+    })
+    .map((file) => (fs.rmSync(file, { force: true }), file));
+  return removed.length;
+}
+
 export async function removeLegacyClaudeCredentials(store, id) {
-  return store.projectLock(id, async () => {
-    const state = claudeState(store, id);
-    const removed = [state.legacyCredential, path.join(authDirectory(store), `claude-${id}.json`)]
-      .filter((file) => fs.existsSync(file))
-      .map((file) => (fs.rmSync(file, { force: true }), file));
-    return removed.length;
-  });
+  return store.projectLock(id, async () => purgeLegacyClaudeCredentials(store, id));
 }
 
 export function hasLegacyClaudeCredential(store, id) {

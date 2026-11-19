@@ -320,3 +320,42 @@ test('Claude continues by default only when this project already has a session f
   assert.equal(claudeHasSession(store, config.id, cwd), true);
   assert.equal(claudeHasSession(store, config.id, path.join(cwd, 'sub')), false);
 });
+
+test('launch removes a stale per-project Claude login only when a host login exists, keeping sessions', async t => {
+  const { base, store, config } = await fixture(t);
+  const bin = path.join(base, 'bin'); fs.mkdirSync(bin);
+  fs.writeFileSync(path.join(bin, 'podman'), `#!${process.execPath}
+    const args = process.argv.slice(2);
+    if (args[0] === 'info') console.log(JSON.stringify({host:{security:{rootless:true,selinuxEnabled:false},serviceIsRemote:false}}));
+    else if (args[0] === 'run') console.log(JSON.stringify({ args }));
+    else if (args[0] === 'container') process.exitCode = 1;
+  `, { mode: 0o700 });
+  const cli = fileURLToPath(new URL('../bin/pis.js', import.meta.url));
+  const invoke = args => spawnSync(process.execPath, [cli, ...args], {
+    cwd: config.root, encoding: 'utf8', timeout: 15000,
+    env: { ...process.env, PIS_HOME: store.root, PIS_AUTO_PRUNE: '0', PATH: `${bin}:${process.env.PATH}` },
+  });
+  const state = claudeState(store, config.id);
+  const history = path.join(state.config, 'history.jsonl');
+  const snapshot = path.join(store.root, 'auth', `claude-${config.id}.json`);
+  const stale = () => { fs.writeFileSync(state.legacyCredential, '{"claudeAiOauth":{"accessToken":"old-expired"}}', { mode: 0o600 }); fs.mkdirSync(path.dirname(snapshot), { recursive: true, mode: 0o700 }); fs.writeFileSync(snapshot, '{}', { mode: 0o600 }); fs.writeFileSync(history, 'keep'); };
+
+  // Without a saved host login the only working login might be the old one: keep it, warn.
+  stale();
+  const kept = invoke(['--claude', '--', '--version']);
+  assert.equal(kept.status, 0, kept.stderr);
+  assert.ok(fs.existsSync(state.legacyCredential));
+  assert.match(kept.stderr, /still in this sandbox state and no host login is saved/);
+
+  await saveClaudeToken(store, TOKEN);
+  const cleaned = invoke(['--claude', '--', '-p', 'x']);
+  assert.equal(cleaned.status, 0, cleaned.stderr);
+  assert.match(cleaned.stderr, /removed an old per-project Claude login/);
+  assert.ok(!fs.existsSync(state.legacyCredential) && !fs.existsSync(snapshot));
+  assert.equal(fs.readFileSync(history, 'utf8'), 'keep'); // sessions/history untouched
+  assert.equal(readClaudeToken(store), TOKEN); // the global host token is untouched
+  assert.ok(!cleaned.stderr.includes('old-expired') && !cleaned.stdout.includes('old-expired'));
+
+  const quiet = invoke(['--claude', '--', '-p', 'x']);
+  assert.doesNotMatch(quiet.stderr, /removed an old per-project/); // nothing left to remove
+});

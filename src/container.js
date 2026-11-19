@@ -21,6 +21,7 @@ import {
   claudeNeedsLogin,
   claudeState,
   hasLegacyClaudeCredential,
+  purgeLegacyClaudeCredentials,
   prepareClaudeProxy,
   claudeHostMcpConfig,
   claudeNetworkSettings,
@@ -526,10 +527,19 @@ async function launchOnce(store, config, options) {
                 : piCommand(agentArgs, options.fresh);
         if (isClaude) {
           claudeState(store, config.id);
-          if (hasLegacyClaudeCredential(store, config.id))
-            console.error(
-              'pis: warning: an old per-project Claude login with REAL tokens is still in this sandbox state. Remove it with pis --logout-claude.',
-            );
+          if (hasLegacyClaudeCredential(store, config.id)) {
+            if (claudeToken) {
+              // A stale login inside the sandbox can override the proxy placeholder and fail with
+              // 401. The host token (via the proxy) is the only supported credential.
+              purgeLegacyClaudeCredentials(store, config.id);
+              console.error(
+                'pis: removed an old per-project Claude login from the sandbox state; the host token via the proxy is used. Sessions are kept. The old token is not revoked at Anthropic.',
+              );
+            } else
+              console.error(
+                'pis: warning: an old per-project Claude login with REAL tokens is still in this sandbox state and no host login is saved. Run pis --login claude, then it is removed at the next start.',
+              );
+          }
         } else privateDir(path.join(store.projectDir(config.id), 'state'));
         // Claude can only propose host actions through the image-owned MCP server; the
         // user still approves on the host after the container has stopped.
