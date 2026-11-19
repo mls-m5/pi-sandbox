@@ -6,7 +6,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { Store } from '../src/store.js';
-import { startAptRequestServer } from '../src/apt-requests.js';
+import { applyAptProposal, startAptRequestServer } from '../src/apt-requests.js';
 import { launchArgs, restartOptions } from '../src/container.js';
 import { CLAUDE_HOST_MCP_CONFIG, claudeCommand } from '../src/claude-code.js';
 import { callTool, handle } from '../src/runtime/claude-host-mcp.mjs';
@@ -111,4 +111,17 @@ test('restart after approval keeps the Claude agent selection and sends the noti
   assert.deepEqual(next.args.slice(0, 1), ['--continue']);
   assert.match(next.args[1], /apt packages curl/);
   assert.deepEqual(claudeCommand(next.args).slice(0, 2), ['claude', '--continue']);
+});
+
+test('approved apt packages save against the stored config, so a per-launch --claude override neither fails nor persists', async t => {
+  const { store, config } = await fixture(t);
+  const stored = store.load(config.id);
+  assert.equal(stored.agent, 'pi');
+  const proposal = { type: 'apt-packages', packages: ['jq'], reason: 'test' };
+  // The in-memory --claude override differs from disk and is refused by stale-config protection.
+  await assert.rejects(applyAptProposal(store, { ...stored, agent: 'claude' }, proposal), /Configuration changed/);
+  await applyAptProposal(store, stored, proposal);
+  const saved = store.load(config.id);
+  assert.deepEqual(saved.image.packages.slice(-1), ['jq']);
+  assert.equal(saved.agent, 'pi');
 });

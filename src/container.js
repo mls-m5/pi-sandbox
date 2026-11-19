@@ -362,6 +362,8 @@ async function launchOnce(store, config, options) {
       async () => {
         // Re-read and validate after acquiring exclusivity (configuration may have changed).
         config = store.load(config.id);
+        // A per-launch --claude/--agent override must never be saved or break stale-config checks.
+        const storedConfig = config;
         if (options.agent) config = { ...config, agent: options.agent };
         const isClaude = config.agent === 'claude';
         if (options.addDefaultExtensions)
@@ -618,7 +620,7 @@ async function launchOnce(store, config, options) {
             return status;
           }
           if (await approveAptProposal(proposal)) {
-            await applyAptProposal(store, config, proposal);
+            await applyAptProposal(store, storedConfig, proposal);
             console.error(
               `pis: packages added to ${store.configPath(config.id)}. Rebuilding and restarting Pi with the latest session…`,
             );
