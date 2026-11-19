@@ -42,6 +42,7 @@ import {
   removeLegacyClaudeCredentials,
 } from './claude-code.js';
 import { readTerminalLine } from './terminal-input.js';
+import { readClaudeUsage } from './claude-usage.js';
 import {
   CONTAINER_HOME,
   BASE_IMAGE,
@@ -89,6 +90,7 @@ Usage:
   pis --import-codex FILE [--codex-account NAME]
   pis --logout-codex [--codex-account NAME] # remove only that local profile
   pis --codex-usage [--codex-account NAME] # sanitized quota, no auto-switch
+  pis --claude-usage                 # cached Claude 5h/7d usage seen by the proxy
   pis --codex-accounts               # aliases, active account, explicit pool
   pis --codex-use NAME               # change live proxies' subsequent requests
   pis --codex-rename NEW [--codex-account OLD] # rename without signing in again
@@ -292,6 +294,7 @@ export function parse(argv) {
         '--login-mistral',
         '--logout-mistral',
         '--codex-usage',
+        '--claude-usage',
         '--codex-accounts',
         '--login-status',
         '--help',
@@ -379,6 +382,7 @@ export function parse(argv) {
         'logout-mistral',
         'login-claude',
         'codex-usage',
+        'claude-usage',
         'codex-accounts',
         'codex-use',
         'codex-rename',
@@ -575,6 +579,10 @@ export async function main(argv = process.argv.slice(2)) {
     console.log(
       `Removed local Codex profile ${account}; other profiles remain. Tokens are not revoked. If it was active, select another profile explicitly with --codex-use.`,
     );
+    return 0;
+  }
+  if (options.action === 'claude-usage') {
+    console.log(JSON.stringify(readClaudeUsage(store)));
     return 0;
   }
   if (options.action === 'codex-usage') {

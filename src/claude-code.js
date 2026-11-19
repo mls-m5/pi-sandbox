@@ -6,6 +6,7 @@ import https from 'node:https';
 import { pipeline } from 'node:stream';
 import { assert, atomicWrite, run, withLock, within } from './util.js';
 import { SecretRedactor } from './proxy.js';
+import { recordClaudeUsage } from './claude-usage.js';
 import { readTerminalLine } from './terminal-input.js';
 
 // Official npm package, which installs Anthropic's unmodified native binary.
@@ -353,6 +354,7 @@ export async function startClaudeProxy({
   maxConcurrent = 16,
   maxBodyBytes = 32 * 1024 * 1024,
   idleTimeoutMs = 600_000,
+  onResponseHeaders,
 }) {
   validateClaudeToken(token);
   const origin = new URL(upstream || CLAUDE_UPSTREAM);
@@ -450,6 +452,11 @@ export async function startClaudeProxy({
           upstreamResponse.destroy();
           return apiError(res, 502, 'api_error', 'Unsupported upstream content encoding.');
         }
+        try {
+          onResponseHeaders?.(upstreamResponse.headers);
+        } catch {
+          // Usage caching is best effort and must never affect model traffic.
+        }
         const headers = { 'cache-control': 'no-store' };
         for (const [name, value] of Object.entries(upstreamResponse.headers)) {
           if (!FORWARDED_RESPONSE_HEADERS.has(name) && !name.startsWith('anthropic-ratelimit-'))
@@ -519,6 +526,7 @@ export async function prepareClaudeProxy(store, { upstream } = {}) {
       socketPath: path.join(directory, path.basename(CLAUDE_SOCKET)),
       token,
       upstream,
+      onResponseHeaders: (headers) => recordClaudeUsage(store, headers),
     });
     return {
       provider: 'claude',

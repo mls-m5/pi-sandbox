@@ -1,6 +1,6 @@
 # Codex Usage GNOME Shell extension
 
-A small GNOME Shell panel extension that displays the **remaining** Codex subscription quota. It deliberately does not read OAuth files itself: it invokes the host-side `pis --codex-usage` command, which refreshes credentials and returns only sanitized numeric quota windows.
+A small GNOME Shell panel extension that displays the **remaining** Codex subscription quota and, beside it, the last-seen Claude 5-hour and weekly usage. It deliberately does not read OAuth files itself: it invokes the host-side `pis --codex-usage` command, which refreshes credentials and returns only sanitized numeric quota windows.
 
 ## Requirements
 
@@ -30,3 +30,9 @@ Countdowns update locally every minute while upstream usage is fetched every fiv
 Install/run this on the host, not inside the sandbox. If GNOME has user extensions globally disabled, enable them in the Extensions app (or deliberately set `org.gnome.shell disable-user-extensions` to false). A newly copied extension may need a logout/login to be discovered, especially on Wayland. Repository edits do not automatically update the installed copy: rerun `install.sh` and reload as described above.
 
 `~/.local/bin/pis` must also select a compatible Node >=22.19. A symlink to `bin/pis.js` uses `/usr/bin/env node` and can pick up an old Node in GNOME's PATH. On the development host this was solved with a launcher explicitly using Pi's bundled Node; see [host-local operational pitfalls](../docs/development.md#host-local-operational-pitfalls). The extension deliberately calls the absolute launcher path because setting `~/.config/environment.d` did not update GNOME's PATH in the tested session.
+
+## Claude usage (cached, experimental)
+
+The panel appends e.g. `| Claude 5h 80% (2h 10m) / Week 60% (4d 2h)`. The values are **not fetched from Anthropic**: the host Claude proxy records the numeric `anthropic-ratelimit-unified-5h/7d-utilization` and `-reset` headers of responses it already forwards into a private `$PIS_HOME/claude-usage.json` (0600, numbers/timestamps only), and the widget reads that cache through `pis --claude-usage` every five minutes. No extra request or quota is used. Values therefore update only while Claude Code is used; the menu shows how long ago each was seen. A window whose reset time has passed, or one never observed, shows `—` (unknown, not 0%). Claude failures never hide the Codex display, and vice versa.
+
+**Unverified:** the header names/format (utilization as a 0–1 fraction, reset as epoch seconds) are undocumented Anthropic behaviour inferred from Claude Code, covered only by fake-upstream tests. Check on the host after a real Claude Code reply with `pis --claude-usage`; if it prints `{"rate_limit":{}}`, the headers differ and the parser needs adjusting. Rerun `install.sh` and reload Shell as described above to load the new widget code.

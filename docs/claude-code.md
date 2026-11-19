@@ -52,6 +52,10 @@ The per-project `claude-state/` home (mounted at `/pis/home`, `CLAUDE_CONFIG_DIR
 
 Earlier versions copied real access/refresh tokens into `projects/<id>/claude-state/.claude/.credentials.json`. Launches warn if that file still exists. Run `pis --logout-claude` in the project to remove the saved global token **and** that project's old copies (sessions are kept), then `pis --login claude` again. Old copies are not revoked at Anthropic.
 
+## Cached usage display
+
+The proxy also stores the numeric 5-hour/7-day utilization and reset times from `anthropic-ratelimit-unified-*` response headers in `$PIS_HOME/claude-usage.json` (private, no other header or body data; best effort, failures never affect traffic). `pis --claude-usage` prints the sanitized cache and the GNOME widget shows it ([details and unverified header format](../gnome-codex-usage/README.md#claude-usage-cached-experimental)). It updates only while Claude Code is used.
+
 ## Image and unavailable Pi features
 
 Claude images add pinned `@anthropic-ai/claude-code@2.1.328` (the version whose Unix-socket placeholder mode was inspected). npm lifecycle scripts are disabled; the package's `install.cjs` is then run explicitly to place its platform-native binary, and `claude --version` checks the build. The binary is unmodified. Runtime `DISABLE_UPDATES=1` keeps updates controlled by image rebuilds. No credentials are supplied to builds. The version bump changes Claude image fingerprints, so the next Claude launch rebuilds.
