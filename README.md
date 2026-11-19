@@ -208,6 +208,8 @@ pis --relocate k7m2q            # Associate that project with the current direct
 
 Relocation preserves project identity and state. It does not rewrite additional absolute mount paths.
 
+To start a new project from an existing one's settings, run `pis --new --name NEW --from OLD_ID_OR_NAME` in the new directory. It copies `agent`, `image` (packages and instructions), `mounts`, `credentials`, `extensions` and `updates`; it does **not** copy the ID, root, sessions, sandbox state or managed-update receipts. Mount paths stay absolute, and the first start builds the image (shared layers are reused by Podman's cache). Later edits to either project are independent. An unknown source registers nothing.
+
 ## Configuration and packages
 
 `pis --edit` opens a temporary draft using `$VISUAL`, `$EDITOR`, or `vim`. Only valid configuration is saved. Invalid edits leave the previous configuration intact; interactive use offers retry/discard, while noninteractive use retains the draft and reports its location.

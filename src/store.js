@@ -106,7 +106,8 @@ export class Store {
       return config;
     });
   }
-  async register(cwd, name) {
+  // template: selector (id or name) of an existing project whose reusable settings are copied.
+  async register(cwd, name, template) {
     return this.lock(async () => {
       const root = directory(cwd),
         all = this.all();
@@ -116,7 +117,16 @@ export class Store {
       do {
         id = Array.from({ length: 5 }, () => alphabet[randomInt(alphabet.length)]).join('');
       } while (all.some((p) => p.id === id || p.name === id) || fs.existsSync(this.projectDir(id)));
-      const config = validate(defaults(id, root, name), { storage: this.root });
+      let config = defaults(id, root, name);
+      if (template) {
+        const source = all.find((p) => p.id === template || p.name === template);
+        assert(source, `Unknown template project: ${template}. Use pis --list.`);
+        // Only reusable settings: never identity, root, sessions, sandbox state or update receipts.
+        const stored = this.load(source.id, false);
+        for (const key of ['agent', 'image', 'mounts', 'credentials', 'extensions', 'updates'])
+          if (stored[key] !== undefined) config[key] = structuredClone(stored[key]);
+      }
+      config = validate(config, { storage: this.root });
       this.unique([...all, config]);
       privateDir(this.projectDir(id));
       privateDir(path.join(this.projectDir(id), 'state'));

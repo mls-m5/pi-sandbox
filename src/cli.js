@@ -76,7 +76,7 @@ Usage:
   pis --logout-claude                # also removes this project's old per-project copies
   pis [--project ID_OR_NAME] --bash
   pis [--project ID_OR_NAME] --exec -- PROGRAM [ARGS...]
-  pis --new [--name NAME]
+  pis --new [--name NAME] [--from PROJECT]  # --from copies another project's settings
   pis --list
   pis --relocate ID_OR_NAME
   pis [--project ID_OR_NAME] --edit | --check | --show | --build | --rebuild
@@ -219,6 +219,7 @@ export function parse(argv) {
         '--project',
         '--agent',
         '--name',
+        '--from',
         '--codex-account',
         '--codex-use',
         '--codex-rename',
@@ -357,6 +358,7 @@ export function parse(argv) {
     '--wait-codex is only valid for a normal Pi launch without --fresh or trailing arguments.',
   );
   assert(!options.name || action === 'new', '--name is only valid with --new.');
+  assert(!options.from || action === 'new', '--from is only valid with --new.');
   assert(
     !options.dryRun || ['prune', 'unlock'].includes(action),
     '--dry-run is only valid with --prune or --unlock.',
@@ -597,9 +599,9 @@ export async function main(argv = process.argv.slice(2)) {
     return 0;
   }
   if (options.action === 'new') {
-    const config = await store.register(cwd, options.name);
+    const config = await store.register(cwd, options.name, options.from);
     console.log(
-      `Registered ${config.id}${config.name ? ` (${config.name})` : ''}: ${config.root}\nConfiguration: ${store.configPath(config.id)}\nRun pis --edit to customize, then pis to start.`,
+      `Registered ${config.id}${config.name ? ` (${config.name})` : ''}: ${config.root}\nConfiguration: ${store.configPath(config.id)}${options.from ? `\nSettings copied from ${options.from} (image, mounts, credentials, extensions, updates, agent); sessions and state are not copied. The first start builds the image.` : ''}\nRun pis --edit to customize, then pis to start.`,
     );
     return 0;
   }
