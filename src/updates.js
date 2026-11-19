@@ -12,7 +12,7 @@ import { imagePlan, PI_VERSION } from './container.js';
 
 const exec = promisify(execFile);
 const DAY = 86400000,
-  MIN_AGE = 2 * DAY;
+  MIN_AGE = 7 * DAY; // cooldown: let the community notice compromised releases first
 const PI_PACKAGE = '@earendil-works/pi-coding-agent';
 const VERSION = /^(0|[1-9]\d{0,5})\.(0|[1-9]\d{0,5})\.(0|[1-9]\d{0,5})$/;
 const INTEGRITY = /^sha512-[A-Za-z0-9+/]{86}==$/;

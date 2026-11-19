@@ -276,7 +276,7 @@ pis --updates rollback  # Previous retained image, updates disabled; NOT a state
 
 Checks run in a detached credential-free worker, at most daily after enable/start/exit. Exact candidates are built separately, SHA-512 checked and probed in a read-only, network-disabled container. They activate only on a later launch after a bounded private Pi-state backup. No task is interrupted/replayed and the update notice does not trigger a model turn. Default policy is off; `extensions: []` and declared sources remain unchanged. `PIS_AUTO_UPDATE=0` suppresses scheduling/activation. `--rebuild` selects the declared baseline for that invocation, not a reset of the active managed pointer.
 
-Initial scope: Pi's pinned minor line (1.5.x), compatible stable npm plugin lines, no Git/watchdog, Claude or state-installed plugin updates. Backups cover persisted `.pi`, not project files or the whole home; image rollback does not revert migrated state. Real Pi 1.5/Web Access fake-service probes passed, but the complete new Podman build path still needs host verification. [Policy, rollback, backup and test details](docs/updates.md).
+Initial scope: Pi's pinned minor line (1.5.x), compatible stable npm plugin lines released at least 7 days ago, no Git/watchdog, Claude or state-installed plugin updates. Backups cover persisted `.pi`, not project files or the whole home; image rollback does not revert migrated state. Real Pi 1.5/Web Access fake-service probes passed, but the complete new Podman build path still needs host verification. [Policy, rollback, backup and test details](docs/updates.md).
 
 ## User-approved host Git
 

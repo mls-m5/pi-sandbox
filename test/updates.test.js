@@ -21,7 +21,7 @@ const piName = '@earendil-works/pi-coding-agent';
 const integrity = `sha512-${Buffer.alloc(64, 7).toString('base64')}`;
 function packument(name, versions, latest = versions.at(-1), young = []) {
   return {
-    'dist-tags': { latest }, time: Object.fromEntries(versions.map(version => [version, new Date(now - (young.includes(version) ? DAY : 4 * DAY)).toISOString()])),
+    'dist-tags': { latest }, time: Object.fromEntries(versions.map(version => [version, new Date(now - (young.includes(version) ? 6 * DAY : 9 * DAY)).toISOString()])),
     versions: Object.fromEntries(versions.map(version => [version, { name, version, dist: { integrity, tarball: 'https://untrusted.invalid/do-not-follow', secret: 'do-not-persist' } }])),
   };
 }
