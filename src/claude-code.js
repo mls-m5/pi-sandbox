@@ -271,6 +271,18 @@ export function claudeNeedsLogin(args = []) {
   );
 }
 
+// Image-owned MCP server exposing only typed host proposals (never approvals).
+export const CLAUDE_HOST_MCP_CONFIG = JSON.stringify({
+  mcpServers: {
+    'pis-host': {
+      type: 'stdio',
+      command: '/usr/local/bin/node',
+      args: ['/opt/pis/claude-host-mcp.mjs'],
+      env: { PIS_APT_SOCKET: '/pis/apt/request.sock' },
+    },
+  },
+});
+
 export function claudeCommand(args = []) {
   // Unlike Pi, start a new session by default. Forward explicit -c/-r unchanged.
   return ['claude', ...args];

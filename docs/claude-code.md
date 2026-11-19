@@ -52,6 +52,12 @@ The per-project `claude-state/` home (mounted at `/pis/home`, `CLAUDE_CONFIG_DIR
 
 Earlier versions copied real access/refresh tokens into `projects/<id>/claude-state/.claude/.credentials.json`. Launches warn if that file still exists. Run `pis --logout-claude` in the project to remove the saved global token **and** that project's old copies (sessions are kept), then `pis --login claude` again. Old copies are not revoked at Anthropic.
 
+## Host apt requests from Claude (experimental)
+
+Interactive `pis --claude` starts the same typed proposal socket as Pi (mounted read-only at `/pis/apt`) and passes `--mcp-config` for an image-owned stdio MCP server, `/opt/pis/claude-host-mcp.mjs` (dependency-free, tool `mcp__pis-host__request_apt_packages`; Claude Code may ask permission on first use). The tool can only **suggest**: it sends the validated-by-host apt proposal, returns, and sends `SIGTERM` to its parent (Claude Code). When the container ends, pis removes/verifies it, then shows the usual host prompt with a fresh two-digit code. Approval adds the packages, rebuilds and restarts `claude --continue "<notice>"`; the notice starts a model turn (uses tokens). Decline changes nothing. Your own MCP servers are not disabled. Not offered for `--bash`/`--exec`, print mode, web or non-TTY runs. `request_host_git` for Claude is planned, not implemented.
+
+Offline tests cover the MCP protocol, the real proposal socket, rejection of malformed/extra-field requests and that an accepted request SIGTERMs the parent process. **Not verified on a real host:** that Claude Code loads the config and shows the tool, that SIGTERM exits it cleanly with the session saved, and that `--continue` resumes it. If SIGTERM turns out unclean, replace the stop mechanism (e.g. a signal the image wrapper watches).
+
 ## Cached usage display
 
 The proxy also stores the numeric 5-hour/7-day utilization and reset times from `anthropic-ratelimit-unified-*` response headers in `$PIS_HOME/claude-usage.json` (private, no other header or body data; best effort, failures never affect traffic). `pis --claude-usage` prints the sanitized cache and the GNOME widget shows it ([details and unverified header format](../gnome-codex-usage/README.md#claude-usage-cached-experimental)). It updates only while Claude Code is used.

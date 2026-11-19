@@ -21,6 +21,7 @@ import {
   claudeState,
   hasLegacyClaudeCredential,
   prepareClaudeProxy,
+  CLAUDE_HOST_MCP_CONFIG,
   readClaudeToken,
 } from './claude-code.js';
 import { schedulePrune } from './prune.js';
@@ -195,8 +196,8 @@ export function launchArgs(
   const isClaude = config.agent === 'claude';
   const claudeProxy = proxy?.provider === 'claude';
   assert(
-    !isClaude || ((!proxy || claudeProxy) && !aptRequests && !codexAuto),
-    'Claude Code does not use Pi proxy/approval sockets.',
+    !isClaude || ((!proxy || claudeProxy) && !aptRequests?.gitOnly && !codexAuto),
+    'Claude Code does not use Pi proxy/quota sockets or the web Git-only socket.',
   );
   // The Claude subscription proxy is only ever offered to official Claude Code.
   assert(
@@ -326,7 +327,7 @@ export function restartOptions(options, installedPackages = [], actionNotice) {
   const notice =
     actionNotice ||
     (installedPackages.length
-      ? `[pis] The user approved the apt packages ${installedPackages.join(', ')}. The sandbox image has now been built successfully with these packages and Pi has restarted. Continue the previous task using the newly available tools; you do not need to request these packages again.`
+      ? `[pis] The user approved the apt packages ${installedPackages.join(', ')}. The sandbox image has now been built successfully with these packages and the agent has restarted. Continue the previous task using the newly available tools; you do not need to request these packages again.`
       : undefined);
   return {
     ...options,
@@ -468,6 +469,18 @@ async function launchOnce(store, config, options) {
               'pis: warning: an old per-project Claude login with REAL tokens is still in this sandbox state. Remove it with pis --logout-claude.',
             );
         } else privateDir(path.join(store.projectDir(config.id), 'state'));
+        // Claude can only propose host actions through the image-owned MCP server; the
+        // user still approves on the host after the container has stopped.
+        const claudeHostRequests =
+          isClaude &&
+          options.mode === 'pi' &&
+          !options.webRpc &&
+          interactiveOutput(command) &&
+          !options.stdio &&
+          process.stdin.isTTY &&
+          process.stdout.isTTY &&
+          process.stderr.isTTY;
+        if (claudeHostRequests) command.splice(1, 0, '--mcp-config', CLAUDE_HOST_MCP_CONFIG);
         let proxy,
           invocation,
           aptRequests,
@@ -499,6 +512,7 @@ async function launchOnce(store, config, options) {
             1,
             command.indexOf('--') === -1 ? command.length : command.indexOf('--'),
           );
+          if (claudeHostRequests) aptRequests = await startAptRequestServer(config, store);
           if (options.webRpc && options.webGitApproval)
             aptRequests = await startAptRequestServer(config, store, { gitOnly: true });
           if (
@@ -594,7 +608,7 @@ async function launchOnce(store, config, options) {
                 return {
                   type: RESTART,
                   packages: [],
-                  notice: `[pis] The user approved a host Git push. Git reported success pushing commit ${push.commit} to ${push.url}, branch ${push.ref}. Pi has restarted. Continue the previous task; do not repeat this push.`,
+                  notice: `[pis] The user approved a host Git push. Git reported success pushing commit ${push.commit} to ${push.url}, branch ${push.ref}. The agent has restarted. Continue the previous task; do not repeat this push.`,
                 };
               }
               console.error('pis: Git push declined; no host push was executed.');
