@@ -68,6 +68,20 @@ Interactive `pis --claude` starts the same typed proposal socket as Pi (mounted 
 
 Offline tests cover the MCP protocol, the real proposal socket, rejection of malformed/extra-field requests and that an accepted request SIGTERMs the parent process. **Verified on a real host (apt):** the tool appears, SIGTERM stops Claude, the host prompt, rebuild and `--continue` restart work. **Verified on a real host (Git push):** one approved push of an exact commit to `main` through this tool succeeded and Claude restarted with the continuation notice. The user also reported the session continuing after restart; whether the earlier conversation history was fully preserved was not independently checked. If SIGTERM ever proves unclean, replace the stop mechanism (e.g. a signal the image wrapper watches).
 
+## Waiting out a usage limit (`--wait-claude`)
+
+```sh
+pis --claude --wait-claude
+```
+
+Opt-in, per launch, interactive Claude only. The host proxy already sees every model response. When one is HTTP 429 and its headers (exhausted `anthropic-ratelimit-unified-5h/7d` window, the overall `-unified-reset`, or `retry-after`) show a reset at least one minute and at most eight days away, and no successful model response follows within 30 seconds, pis stops the container, **waits on the host until the reset plus five minutes** (checked in one-minute steps, so host suspend is handled; Ctrl-C cancels), and restarts Claude with `--continue` and a fixed English notice asking it to review state before repeating tool actions. The wait makes **no upstream requests**, and the restart uses tokens like any new turn.
+
+- A limit that is shorter, unknown or not a 429 is left to Claude's own retries (the `API error · retrying` messages).
+- If the limit is hit three times in a row without any successful request, pis stops waiting and exits.
+- At startup the same wait happens first when the cached usage (`pis --claude-usage`) already shows an exhausted window.
+- The wrapper keeps running and holds no container while waiting, so keep the host awake and the terminal alive (e.g. `tmux`). It is not a detached scheduler.
+- The unified rate-limit headers are undocumented and **unverified against a real exhausted account**; the logic is covered by fake-upstream tests only. If it does not trigger, run with `PIS_CLAUDE_PROXY_DEBUG=1` and check the status/headers recorded in `$PIS_HOME/claude-proxy.log`.
+
 ## Cached usage display
 
 The proxy also stores the numeric 5-hour/7-day utilization and reset times from `anthropic-ratelimit-unified-*` response headers in `$PIS_HOME/claude-usage.json` (private, no other header or body data; best effort, failures never affect traffic). `pis --claude-usage` prints the sanitized cache and the GNOME widget shows it ([details and unverified header format](../gnome-codex-usage/README.md#claude-usage-cached-experimental)). It updates only while Claude Code is used.

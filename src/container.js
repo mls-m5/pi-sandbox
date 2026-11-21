@@ -39,6 +39,13 @@ import {
   startWakeWatcher,
 } from './network.js';
 import { startAptRequestServer, applyAptProposal, approveAptProposal } from './apt-requests.js';
+import {
+  CLAUDE_RESUME_NOTICE,
+  CLAUDE_WAIT_MAX_FRUITLESS,
+  cachedClaudeLimit,
+  startLimitWatcher,
+  waitForClaudeReset,
+} from './claude-wait.js';
 import { imagePlan } from './image-plan.js';
 import { withDefaultExtensions } from './extensions.js';
 export { BASE_IMAGE, PI_VERSION, containerfile, imagePlan } from './image-plan.js';
@@ -376,6 +383,7 @@ export function restartOptions(options, installedPackages = [], actionNotice) {
     rebuild: false,
     buildOnly: false,
     waitCodex: false,
+    waitClaudeStartup: false,
     installedPackages: [...installedPackages],
     args: ['--continue', ...(notice ? [notice] : [])],
   };
@@ -386,7 +394,7 @@ export async function launch(store, config, options) {
     const result = await launchOnce(store, config, options);
     if (result?.type !== RESTART) return result;
     // launchOnce has released the project lock and closed all old sockets.
-    options = restartOptions(options, result.packages, result.notice);
+    options = { ...restartOptions(options, result.packages, result.notice), ...result.options };
   }
 }
 
@@ -446,6 +454,19 @@ async function launchOnce(store, config, options) {
           );
           requireSavedPiSession(store, config.id);
           options = restartOptions(options, [], CODEX_RESUME_NOTICE);
+        }
+        if (options.waitClaude && options.waitClaudeStartup !== false && isClaude && !options.buildOnly) {
+          const limit = cachedClaudeLimit(store);
+          if (limit !== null && limit > Date.now()) {
+            const waited = await waitForClaudeReset(limit, options.claudeWait);
+            if (!waited.ok) return waited.exitCode;
+            const current = store.load(config.id);
+            assert(
+              isDeepStrictEqual(config, options.agent ? { ...current, agent: options.agent } : current),
+              'Project configuration changed while waiting; no agent was started.',
+            );
+            options = restartOptions(options, [], CLAUDE_RESUME_NOTICE);
+          }
         }
         const claudeToken = isClaude && !options.buildOnly ? readClaudeToken(store) : undefined;
         assert(
@@ -569,6 +590,7 @@ async function launchOnce(store, config, options) {
           codexAuto,
           messageNetwork,
           wake,
+          limitWatch,
           status,
           proposal,
           containerStopped = false;
@@ -577,7 +599,10 @@ async function launchOnce(store, config, options) {
           // carry a host approval; the user is prompted only after Podman exits.
           if (isClaude && claudeToken) {
             progress('Preparing Claude subscription proxy…');
-            proxy = await prepareClaudeProxy(store, { upstream: options.claudeUpstream });
+            proxy = await prepareClaudeProxy(store, {
+              upstream: options.claudeUpstream,
+              onResponse: (status, headers) => limitWatch?.observe(status, headers),
+            });
           } else if (!isClaude && config.credentials.proxy) {
             progress(`Preparing ${config.credentials.proxy.provider} credential proxy…`);
             options.startupProgress?.('preparing_proxy');
@@ -631,6 +656,14 @@ async function launchOnce(store, config, options) {
           }
           progress('Starting container (first start after a build can take longer)…');
           options.startupProgress?.('starting_container');
+          const stopContainer = () =>
+            new Promise((resolve) => {
+              const child = spawn('podman', ['stop', '--time', '5', invocation.name], {
+                stdio: 'ignore',
+              });
+              child.on('error', resolve);
+              child.on('close', resolve);
+            });
           // Interactive Claude cannot be pushed to. When it has reported idle (Stop hook) with
           // messages queued, stop it so the restart below can feed it the messages.
           if (
@@ -645,14 +678,16 @@ async function launchOnce(store, config, options) {
               onFire: () => networkEvent(store, config, 'wake: idle with queued messages, stopping'),
               ...(options.wakeTiming || {}), // test-only knob; not reachable from the CLI
               hasMessages: () => pendingMessages(store, config, 1).length > 0,
-              stopContainer: () =>
-                new Promise((resolve) => {
-                  const child = spawn('podman', ['stop', '--time', '5', invocation.name], {
-                    stdio: 'ignore',
-                  });
-                  child.on('error', resolve);
-                  child.on('close', resolve);
-                }),
+              stopContainer,
+            });
+          if (isClaude && options.waitClaude && interactiveOutput(command))
+            limitWatch = startLimitWatcher({
+              stopContainer,
+              onFire: (resetAt) =>
+                console.error(
+                  `pis: Claude usage limit reached (reset ${new Date(resetAt).toISOString()}); stopping the agent to wait.`,
+                ),
+              ...(options.claudeWatchTiming || {}), // test-only knob
             });
           status = await run('podman', invocation.args, {
             env: podmanEnvironment(config),
@@ -661,6 +696,7 @@ async function launchOnce(store, config, options) {
           proposal = aptRequests?.proposal;
         } finally {
           wake?.stop();
+          limitWatch?.stop();
           // Covers interrupted attached clients that leave their container running.
           if (invocation) {
             spawnSync('podman', ['rm', '--force', '--time', '1', invocation.name], {
@@ -694,6 +730,24 @@ async function launchOnce(store, config, options) {
               );
             }
           }
+        }
+        if (limitWatch?.fired && !proposal) {
+          assert(containerStopped, 'Cannot confirm sandbox shutdown; no restart was performed.');
+          const fruitless = limitWatch.succeeded === 0 ? (options.claudeFruitless || 0) + 1 : 0;
+          if (fruitless > CLAUDE_WAIT_MAX_FRUITLESS) {
+            console.error(
+              'pis: the Claude limit was hit again without any successful request; not waiting again. Start pis --claude --wait-claude to retry.',
+            );
+            return status;
+          }
+          const waited = await waitForClaudeReset(limitWatch.resetAt, options.claudeWait);
+          if (!waited.ok) return waited.exitCode;
+          return {
+            type: RESTART,
+            packages: [],
+            notice: CLAUDE_RESUME_NOTICE,
+            options: { waitClaudeStartup: false, claudeFruitless: fruitless },
+          };
         }
         if (wake?.fired && !proposal) {
           assert(containerStopped, 'Cannot confirm sandbox shutdown; no restart was performed.');

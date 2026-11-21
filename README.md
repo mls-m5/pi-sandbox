@@ -83,6 +83,7 @@ Install official Claude Code on the host, then:
 pis --login claude          # once per host: official setup-token, hidden paste
 pis --claude                # official Claude Code in the container (= --agent claude); continues this directory's latest session when one exists
 pis --claude --fresh        # force a new session
+pis --claude --wait-claude  # on a usage limit: stop, wait for the reset (+5 min), continue the session
 pis --claude -- --resume    # Claude's own session selector
 ```
 

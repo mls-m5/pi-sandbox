@@ -589,7 +589,7 @@ export async function startClaudeProxy({
           }
         }
         try {
-          onResponseHeaders?.(upstreamResponse.headers);
+          onResponseHeaders?.(upstreamResponse.headers, status);
         } catch {
           // Usage caching is best effort and must never affect model traffic.
         }
@@ -728,7 +728,7 @@ export async function checkClaudeToken(store, { upstream } = {}) {
 }
 
 /** Starts a per-launch Claude proxy in a private short runtime directory. */
-export async function prepareClaudeProxy(store, { upstream } = {}) {
+export async function prepareClaudeProxy(store, { upstream, onResponse } = {}) {
   const token = readClaudeToken(store);
   assert(token, 'No Claude login saved. Run pis --login claude on the host.');
   // PIS_CLAUDE_PROXY_DEBUG=1: content-free proxy events in $PIS_HOME/claude-proxy.log.
@@ -742,7 +742,10 @@ export async function prepareClaudeProxy(store, { upstream } = {}) {
       socketPath: path.join(directory, path.basename(CLAUDE_SOCKET)),
       token,
       upstream,
-      onResponseHeaders: (headers) => recordClaudeUsage(store, headers),
+      onResponseHeaders: (headers, status) => {
+        recordClaudeUsage(store, headers);
+        onResponse?.(status, headers);
+      },
       onEvent,
     });
     return {

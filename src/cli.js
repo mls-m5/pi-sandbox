@@ -71,6 +71,7 @@ Usage:
   pis --forward --help              # Ports, known hosts and shutdown details
   pis [--project ID_OR_NAME] [--agent pi|claude] [--fresh] [-- AGENT_ARGS...]
   pis [--project ID_OR_NAME] --claude [-- CLAUDE_ARGS...] # same as --agent claude
+  pis [--project ID_OR_NAME] --claude --wait-claude # on a usage limit, wait for reset, continue
   pis [--project ID_OR_NAME] --wait-codex # wait for quota, resume saved Pi task
   pis [--project ID_OR_NAME] [--fresh] --auto-wait-codex [-- PI_ARGS...]
   pis --login claude                 # global Claude subscription token (setup-token)
@@ -127,6 +128,10 @@ the host must confirm exhaustion, then waits and continues the SAME session.
 Escape, new input/session/model changes or /codex-auto off cancel pending resume.
 Auto mode needs extensions and saved sessions; print/JSON/RPC are unsupported.
 Agent arguments belong after --. Explicit Pi session selectors override continuation.
+--wait-claude: when Claude hits its usage limit (HTTP 429 with a reset time >= 1 min away,
+seen by the host proxy) and makes no successful request for 30 s, pis stops the agent, waits
+until reset + 5 min (Ctrl-C cancels) and restarts it with --continue and a fixed notice. It also
+waits at startup if the cached usage shows an exhausted window. No extra upstream requests.
 Claude starts a new session by default; use --claude -- --continue to resume.
 --login claude runs official host "claude setup-token" (~/.local/bin/claude or
 PIS_CLAUDE_BIN) and saves the subscription token on the host for all projects.
@@ -280,6 +285,9 @@ export function parse(argv) {
     } else if (key === '--auto-wait-codex' && equals === -1) {
       assert(!options.autoWaitCodex, 'Repeated option: --auto-wait-codex');
       options.autoWaitCodex = true;
+    } else if (key === '--wait-claude' && equals === -1) {
+      assert(!options.waitClaude, 'Repeated option: --wait-claude');
+      options.waitClaude = true;
     } else if (key === '--wait-codex' && equals === -1) {
       assert(!options.waitCodex, 'Repeated option: --wait-codex');
       options.waitCodex = true;
@@ -375,6 +383,10 @@ export function parse(argv) {
         !args.length &&
         (!options.agent || options.agent === 'pi')),
     '--wait-codex is only valid for a normal Pi launch without --fresh or trailing arguments.',
+  );
+  assert(
+    !options.waitClaude || (!action && !mode && options.agent !== 'pi'),
+    '--wait-claude is only valid for a normal Claude launch.',
   );
   assert(!options.name || action === 'new', '--name is only valid with --new.');
   assert(!options.from || action === 'new', '--from is only valid with --new.');
@@ -795,6 +807,10 @@ export async function main(argv = process.argv.slice(2)) {
     assert(answer.toLowerCase() !== 'n', 'No Claude login saved. Run pis --login claude.');
     await loginClaude(store);
   }
+  assert(
+    !options.waitClaude || config.agent === 'claude',
+    '--wait-claude needs the Claude agent (--claude or project agent claude).',
+  );
   return launch(store, config, {
     ...options,
     cwd,
